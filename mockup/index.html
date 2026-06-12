@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remonte — design board v1</title>
+<style>
+/* ---------- palette ---------- */
+:root{
+  --bg:#070a0f;          /* page behind the phones */
+  --panel:#0c1117;       /* phone screen background */
+  --card:#121a24;        /* cards */
+  --card2:#16202c;       /* raised cards / sheet */
+  --ink:#eaf1f7;         /* primary text */
+  --sub:#8fa1b3;         /* secondary text */
+  --mut:#5b6e80;         /* muted text */
+  --line:rgba(148,178,204,.13);
+  --cy:#56dbe8;          /* glacier cyan — accent + run */
+  --cy-ink:#03262b;      /* text on cyan */
+  --bike:#8e9df8;        /* bike hue */
+  --sand:#e6d3a3;        /* target lines */
+  --bad:#ef6a5e;
+  --z1:#5b8def; --z2:#41c98b; --z3:#e6c94d; --z4:#f08a3c; --z5:#ef5350;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  line-height:1.4;
+}
+/* ---------- board chrome ---------- */
+.board-head{max-width:1320px;margin:0 auto;padding:44px 28px 8px}
+.board-head h1{font-size:30px;letter-spacing:.26em;font-weight:800}
+.board-head h1 em{color:var(--cy);font-style:normal}
+.board-head p{color:var(--sub);max-width:760px;margin-top:10px;font-size:15px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;align-items:center}
+.legend .lab{font-size:11px;letter-spacing:.12em;color:var(--mut);text-transform:uppercase;margin-right:2px}
+.board{display:flex;flex-wrap:wrap;gap:44px 34px;justify-content:center;padding:36px 20px 10px;max-width:1380px;margin:0 auto;align-items:flex-start}
+.shot{width:392px}
+.cap{color:var(--sub);font-size:13.5px;line-height:1.5;margin:14px 6px 0;text-align:left}
+.cap b{color:var(--ink);font-weight:650}
+/* ---------- phone frame ---------- */
+.phone{
+  position:relative;width:392px;background:var(--panel);
+  border:1px solid #25303d;border-radius:52px;overflow:hidden;
+  box-shadow:0 36px 80px rgba(0,0,0,.55), inset 0 0 0 5px #10161e;
+  display:flex;flex-direction:column;min-height:780px;
+}
+.statusbar{height:52px;display:flex;align-items:center;justify-content:space-between;padding:8px 30px 0;font-size:14px;font-weight:600;flex:none}
+.island{position:absolute;top:13px;left:50%;transform:translateX(-50%);width:96px;height:26px;border-radius:14px;background:#000}
+.sb-right{display:flex;gap:5px;align-items:center}
+.sb-right i{display:block;background:var(--ink);border-radius:1.5px}
+.sb-cell{width:16px;height:10px;clip-path:polygon(0 100%,25% 60%,25% 100%,45% 30%,45% 100%,70% 10%,70% 100%,100% 0,100% 100%)}
+.sb-batt{width:22px;height:11px;border-radius:3px;background:transparent!important;border:1px solid var(--sub);position:relative}
+.sb-batt:after{content:"";position:absolute;inset:1.5px 30% 1.5px 1.5px;background:var(--ink);border-radius:1px}
+.screen{flex:1;display:flex;flex-direction:column;padding:6px 18px 14px;gap:12px;overflow:hidden}
+/* ---------- tab bar ---------- */
+.tabbar{flex:none;border-top:1px solid var(--line);display:flex;padding:8px 6px 12px;background:rgba(9,13,18,.9)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--mut);font-size:10.5px;font-weight:600;letter-spacing:.02em;padding-top:4px;min-height:48px;position:relative}
+.tab svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.tab.on{color:var(--cy)}
+.tab .dot{position:absolute;top:2px;right:24%;width:8px;height:8px;border-radius:50%;background:var(--cy)}
+.homebar{flex:none;height:5px;width:120px;border-radius:3px;background:#2c3947;margin:0 auto 8px}
+/* ---------- shared components ---------- */
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
+.eyebrow .cyt{color:var(--cy)}
+.h-date{font-size:21px;font-weight:750;letter-spacing:-.01em;margin-top:2px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:750;letter-spacing:.04em}
+.chip svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.zc1{background:rgba(91,141,239,.16);color:#8fb2f5}
+.zc2{background:rgba(65,201,139,.15);color:#6fdcab}
+.zc3{background:rgba(230,201,77,.14);color:#ecd97c}
+.zc4{background:rgba(240,138,60,.15);color:#f5ab6e}
+.zc5{background:rgba(239,83,80,.15);color:#f58783}
+.runc{background:rgba(86,219,232,.13);color:var(--cy)}
+.bikec{background:rgba(142,157,248,.14);color:var(--bike)}
+.restc{background:rgba(143,161,179,.12);color:var(--sub)}
+.btn{display:flex;align-items:center;justify-content:center;height:52px;border-radius:15px;background:var(--cy);color:var(--cy-ink);font-size:17px;font-weight:750;letter-spacing:.01em}
+.btn.ghost{background:transparent;border:1.5px solid var(--line);color:var(--sub);font-weight:650}
+.btn.mini{height:44px;font-size:15px;border-radius:12px}
+.linkrow{display:flex;align-items:center;gap:8px;min-height:44px;color:var(--cy);font-size:14.5px;font-weight:600}
+.bignum{font-size:84px;font-weight:800;letter-spacing:-.045em;line-height:.95;font-variant-numeric:tabular-nums}
+.bignum small{font-size:22px;font-weight:650;letter-spacing:0;color:var(--sub);margin-left:6px}
+.midnum{font-size:38px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.unit{font-size:14px;color:var(--sub);font-weight:600}
+/* ---------- today ---------- */
+.t-chips{display:flex;gap:8px;margin-bottom:14px}
+.t-bpm{margin-top:14px}
+.t-bpm .lab, .t-pace .lab{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);margin-bottom:2px}
+.t-pace{margin-top:12px}
+.t-pace .v{font-size:21px;font-weight:750;font-variant-numeric:tabular-nums}
+.t-pace .v span{color:var(--mut);font-weight:600;font-size:14px}
+.t-note{margin-top:12px;color:var(--sub);font-size:14px;line-height:1.45}
+.t-actions{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.weekmini{display:flex;align-items:center;gap:7px;justify-content:center;color:var(--mut);font-size:12.5px;font-weight:600}
+.weekmini .d{width:9px;height:9px;border-radius:50%;background:#22303e;display:inline-block}
+.weekmini .d.f{background:var(--cy)}
+.weekmini .d.s{background:transparent;border:1.5px solid var(--mut)}
+.weekmini .d.t{background:transparent;border:2px solid var(--cy)}
+/* ---------- sheet ---------- */
+.scrim{position:absolute;inset:0;background:rgba(3,6,9,.62);backdrop-filter:blur(2px);z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--card2);border-radius:30px 30px 0 0;padding:10px 20px 26px;z-index:6;box-shadow:0 -24px 60px rgba(0,0,0,.6)}
+.grab{width:42px;height:5px;border-radius:3px;background:#33425263;background:#334252;margin:4px auto 14px}
+.sh-title{font-size:20px;font-weight:750}
+.sh-sub{color:var(--sub);font-size:13.5px;margin-top:1px}
+.frow{display:flex;align-items:center;justify-content:space-between;min-height:52px;border-bottom:1px solid var(--line)}
+.frow .l{color:var(--sub);font-size:15px;font-weight:600}
+.frow .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.frow .v.empty{color:var(--mut);font-weight:600}
+.step{display:flex;align-items:center;gap:14px}
+.stepbtn{width:44px;height:44px;border-radius:12px;border:1.5px solid var(--line);color:var(--cy);font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.rpe{display:flex;gap:5px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
+.rpe .l{color:var(--sub);font-size:15px;font-weight:600;margin-right:6px}
+.rpe i{width:26px;height:30px;border-radius:8px;background:#1b2734;color:var(--sub);font-style:normal;font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.rpe i.on{background:var(--cy);color:var(--cy-ink)}
+/* ---------- week ---------- */
+.tot{display:flex;flex-direction:column;gap:10px}
+.tot .row{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:650}
+.tot .row .nm{width:38px;color:var(--sub)}
+.bar{flex:1;height:9px;border-radius:5px;background:#1a2530;overflow:hidden;position:relative}
+.bar i{position:absolute;inset:0;right:auto;border-radius:5px}
+.tot .qty{width:96px;text-align:right;color:var(--sub);font-variant-numeric:tabular-nums;font-size:12.5px}
+.days{display:flex;flex-direction:column}
+.day{display:flex;align-items:center;gap:12px;min-height:55px;border-bottom:1px solid var(--line);padding:4px 2px}
+.day:last-child{border-bottom:none}
+.day.today{background:rgba(86,219,232,.06);border-radius:14px;border-bottom-color:transparent;padding:4px 10px;margin:0 -8px}
+.day .dt{width:34px;text-align:center}
+.day .dt b{display:block;font-size:15px;font-weight:750}
+.day .dt span{font-size:10px;color:var(--mut);font-weight:700;letter-spacing:.08em}
+.day .ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
+.day .ic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.day .tx{flex:1;min-width:0}
+.day .tx b{display:block;font-size:15px;font-weight:700}
+.day .tx span{display:block;font-size:12.5px;color:var(--mut);font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{width:26px;height:26px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
+.st svg{width:15px;height:15px;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.st.done{background:rgba(86,219,232,.16)}.st.done svg{stroke:var(--cy)}
+.st.skip{background:#1a242f}.st.skip svg{stroke:var(--mut)}
+.st.pend{border:1.5px dashed #46586b}
+.st.now{border:2px solid var(--cy)}
+.mix{display:flex;gap:12px}
+.mix .half{flex:1;display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:10px 12px}
+.mix .half .lab{font-size:13px;color:var(--sub);font-weight:650}
+.mix .half .lab b{display:block;color:var(--ink);font-size:19px;font-weight:800}
+.mix .ud{display:flex;flex-direction:column;gap:5px}
+.mix .ud i{width:44px;height:25px;border-radius:8px;border:1.5px solid var(--line);color:var(--cy);display:flex;align-items:center;justify-content:center;font-style:normal;font-weight:800;font-size:14px}
+.unlock{display:flex;gap:12px;align-items:center}
+.unlock .pips{display:flex;gap:5px}
+.unlock .pips i{width:11px;height:11px;border-radius:50%;background:#22303e}
+.unlock .pips i.f{background:var(--cy)}
+.unlock p{font-size:13.5px;color:var(--sub)}
+.unlock p b{color:var(--ink)}
+.fab{position:absolute;right:18px;bottom:96px;width:54px;height:54px;border-radius:18px;background:var(--card2);border:1px solid var(--line);color:var(--cy);font-size:28px;font-weight:600;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 26px rgba(0,0,0,.5);z-index:4}
+/* ---------- check-in ---------- */
+.steps{display:flex;gap:6px;margin-top:10px}
+.steps i{height:4px;border-radius:2px;flex:1;background:#22303e}
+.steps i.f{background:var(--cy)}
+.recap{display:flex;flex-wrap:wrap;gap:7px}
+.recap .chip{background:#16202c;border:1px solid var(--line);color:var(--sub);font-weight:650}
+.recap .chip b{color:var(--ink)}
+.prop .top{display:flex;align-items:baseline;gap:10px}
+.prop .rate{font-size:56px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--cy)}
+.prop .rec{font-size:11px;font-weight:750;letter-spacing:.1em;color:var(--cy);text-transform:uppercase;border:1px solid rgba(86,219,232,.4);padding:3px 8px;border-radius:999px}
+.prop .why{color:var(--sub);font-size:14px;margin-top:4px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:34px;background:transparent;margin-top:6px}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(90deg,#3a2b2b 0%,#22303e 57%,#1d3a40 100%)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;height:26px;border-radius:50%;background:var(--cy);margin-top:-10px;box-shadow:0 2px 10px rgba(86,219,232,.5)}
+input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:#22303e}
+input[type=range]::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background:var(--cy);border:none}
+.ticks{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;font-weight:700;margin-top:-2px}
+.nextline{display:flex;align-items:baseline;gap:8px;margin-top:12px}
+.nextline .unit{font-weight:650}
+.preview{margin-top:10px;border-top:1px solid var(--line)}
+.pv{display:flex;align-items:center;gap:10px;min-height:38px;border-bottom:1px solid var(--line);font-size:14px}
+.pv:last-child{border-bottom:none}
+.pv .d{width:34px;color:var(--mut);font-weight:750;font-size:12px;letter-spacing:.06em}
+.pv .s{flex:1;font-weight:650}
+.pv .m{font-variant-numeric:tabular-nums;font-weight:750}
+.pv .m span{color:var(--mut);font-weight:600;font-size:12px}
+.foot{color:var(--mut);font-size:12.5px;margin-top:10px;line-height:1.45}
+/* ---------- progress ---------- */
+.pc{display:flex;flex-direction:column;gap:8px}
+.pc .hd{display:flex;align-items:baseline;justify-content:space-between}
+.pc .stat{display:flex;align-items:baseline;gap:8px}
+.legend2{display:flex;gap:14px;flex-wrap:wrap;color:var(--mut);font-size:11.5px;font-weight:650}
+.legend2 i{display:inline-block;width:9px;height:9px;border-radius:2.5px;margin-right:5px;vertical-align:-1px}
+.callout{background:rgba(86,219,232,.07);border:1px solid rgba(86,219,232,.22);border-radius:14px;padding:10px 12px;font-size:13.5px;color:var(--sub);line-height:1.45}
+.callout b{color:var(--cy)}
+.cells{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;margin-top:4px}
+.cells i{height:26px;border-radius:6px;background:#1a2530}
+.cells i.cur{outline:2px solid var(--cy);outline-offset:-2px;background:#152b30}
+svg text{font-family:inherit}
+/* ---------- settings ---------- */
+.group{margin-top:4px}
+.group .gh{font-size:11px;font-weight:750;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin:10px 4px 7px}
+.srow{display:flex;align-items:center;min-height:50px;gap:10px;padding:2px 2px;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:none}
+.srow .l{flex:1;font-size:15px;font-weight:650}
+.srow .l span{display:block;font-size:12px;color:var(--mut);font-weight:550;margin-top:1px}
+.srow .v{font-size:15px;font-weight:700;color:var(--sub);font-variant-numeric:tabular-nums}
+.srow .v.add{color:var(--cy)}
+.srow .v.danger{color:var(--bad)}
+.srow .chev{color:var(--mut);font-size:17px}
+.zt{display:flex;flex-direction:column}
+.zt .zr{display:flex;align-items:center;gap:10px;min-height:40px;border-bottom:1px solid var(--line);font-size:14px}
+.zt .zr:last-of-type{border-bottom:none}
+.zt .zr .range{flex:1;font-weight:750;font-variant-numeric:tabular-nums}
+.zt .zr .pct{color:var(--mut);font-size:12.5px;font-variant-numeric:tabular-nums}
+.zt .zr .what{color:var(--mut);font-size:12.5px;width:74px}
+.laychips{display:flex;gap:4px}
+.laychips i{width:24px;height:24px;border-radius:7px;font-style:normal;font-size:10.5px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.lr{background:rgba(86,219,232,.16);color:var(--cy)}
+.lb{background:rgba(142,157,248,.16);color:var(--bike)}
+.lx{background:#1a242f;color:var(--mut)}
+/* ---------- footer notes ---------- */
+.notes{max-width:1320px;margin:30px auto 70px;padding:0 28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.note{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px}
+.note h3{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin-bottom:12px}
+.note p{color:var(--sub);font-size:13.5px;line-height:1.55}
+.note p b{color:var(--ink)}
+.sw{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.sw i{width:34px;height:34px;border-radius:10px;border:1px solid var(--line)}
+.sw span{font-size:11px;color:var(--mut);align-self:center}
+.typ{font-variant-numeric:tabular-nums}
+.typ .a{font-size:46px;font-weight:800;letter-spacing:-.04em}
+.typ .b{font-size:15px;font-weight:650;color:var(--sub)}
+.typ .c{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
+@media (max-width:440px){.shot,.phone{width:100%}.board{padding:24px 12px}}
+</style>
+</head>
+<body>
+
+<header class="board-head">
+  <h1>REM<em>O</em>NTE <span style="font-size:13px;letter-spacing:.18em;color:var(--mut);font-weight:700">· DESIGN BOARD V1</span></h1>
+  <p>Dark only · glacier cyan accent · system type, oversized numerals. Four tabs (Today, Week, Progress, Settings) — the Sunday check-in lives on the Week tab, per spec. Every number below comes from the real rules: max HR 183 → Z2 = 110–128 bpm, plan starting Monday 15 June. Frames show different moments in the plan (captions say which).</p>
+  <div class="legend">
+    <span class="lab">Zones</span>
+    <span class="chip zc1">Z1 92–110</span><span class="chip zc2">Z2 110–128</span><span class="chip zc3">Z3 128–146</span><span class="chip zc4">Z4 146–165</span><span class="chip zc5">Z5 165–183</span>
+    <span class="lab" style="margin-left:10px">Sports</span>
+    <span class="chip runc">RUN</span><span class="chip bikec">RIDE</span>
+  </div>
+</header>
+
+<main class="board">
+
+<!-- ============ 1 · TODAY ============ -->
+<section class="shot">
+  <div class="phone">
+    <div class="island"></div>
+    <div class="statusbar"><span>09:41</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen">
+      <div>
+        <div class="eyebrow">Friday 3 July · <span class="cyt">Week 3</span></div>
+        <div class="h-date">Today</div>
+      </div>
+      <div class="card">
+        <div class="t-chips"><span class="chip runc">EASY RUN</span><span class="chip zc2">ZONE 2</span></div>
+        <div class="bignum">45<small>min</small></div>
+        <div class="t-bpm">
+          <div class="lab">Heart rate target</div>
+          <div class="midnum">110–128 <span class="unit">bpm</span></div>
+        </div>
+        <div class="t-pace">
+          <div class="lab">Pace · estimate</div>
+          <div class="v">≈ 7:12–7:42 /km <span>learned from your last 7 easy runs</span></div>
+        </div>
+        <p class="t-note">Keep it conversational — walk breaks are fine. Easy is the whole point: same heart rate, faster pace is how the engine comes back.</p>
+        <div class="t-actions">
+          <div class="btn">Log this session</div>
+          <div class="btn ghost">Skip today</div>
+        </div>
+      </div>
+      <div class="linkrow">Yesterday's ride isn't logged — add it in 30 s &nbsp;→</div>
+      <div style="flex:1"></div>
+      <div class="weekmini"><span class="d f"></span><span class="d f"></span><span class="d s"></span><span class="d f"></span><span class="d t"></span><span class="d"></span><span class="d"></span>&nbsp; Week 3 · 3 of 6 done</div>
+    </div>
+    <div class="tabbar">
+      <div class="tab on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>Today</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Week</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>Progress</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2" fill="#0c1117"/><circle cx="15" cy="12" r="2" fill="#0c1117"/><circle cx="7" cy="16.5" r="2" fill="#0c1117"/></svg>Settings</div>
+    </div>
+    <div class="homebar"></div>
+  </div>
+  <p class="cap"><b>Today — the only screen you need mid-warm-up.</b> Duration and bpm ceiling are the heroes. Pace is an estimate, never a command, and the copy normalizes genuinely easy running. The unlogged-yesterday link is a quiet one-tap, not a guilt banner.</p>
+</section>
+
+<!-- ============ 2 · QUICK LOG ============ -->
+<section class="shot">
+  <div class="phone">
+    <div class="island"></div>
+    <div class="statusbar"><span>09:41</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen">
+      <div>
+        <div class="eyebrow">Friday 3 July · <span class="cyt">Week 3</span></div>
+        <div class="h-date">Today</div>
+      </div>
+      <div class="card">
+        <div class="t-chips"><span class="chip runc">EASY RUN</span><span class="chip zc2">ZONE 2</span></div>
+        <div class="bignum">45<small>min</small></div>
+        <div class="t-bpm"><div class="lab">Heart rate target</div><div class="midnum">110–128 <span class="unit">bpm</span></div></div>
+      </div>
+    </div>
+    <div class="scrim"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="sh-title">Log · Easy run</div>
+      <div class="sh-sub">Friday 3 July — pre-filled with the plan</div>
+      <div class="frow"><span class="l">Duration</span>
+        <span class="step"><span class="stepbtn">−</span><span class="v" style="font-size:21px">45 min</span><span class="stepbtn">+</span></span>
+      </div>
+      <div class="frow"><span class="l">Distance</span><span class="v">6.2 km</span></div>
+      <div class="frow"><span class="l">Avg heart rate</span><span class="v">124 bpm</span></div>
+      <div class="rpe"><span class="l">RPE</span><i>1</i><i>2</i><i>3</i><i class="on">4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i><i>10</i></div>
+      <div class="frow" style="border-bottom:none"><span class="l">Note</span><span class="v empty">optional</span></div>
+      <div class="btn" style="margin-top:8px">Save session</div>
+    </div>
+  </div>
+  <p class="cap"><b>Quick log — ≤ 30 seconds, ≤ 3 taps.</b> Opens pre-filled with the planned duration; if you ran it as planned it's Log → Save. Distance, HR, RPE and note are optional extras. The same sheet serves unplanned activities (run / ride / other) from the Week tab's + button.</p>
+</section>
+
+<!-- ============ 3 · WEEK ============ -->
+<section class="shot">
+  <div class="phone">
+    <div class="island"></div>
+    <div class="statusbar"><span>09:41</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen" style="gap:10px">
+      <div>
+        <div class="eyebrow">Jun 29 – Jul 5</div>
+        <div class="h-date">Week 3</div>
+      </div>
+      <div class="card" style="padding:13px 16px">
+        <div class="tot">
+          <div class="row"><span class="nm">Run</span><span class="bar"><i style="width:33%;background:var(--cy)"></i></span><span class="qty">41 / 125 min</span></div>
+          <div class="row"><span class="nm">Ride</span><span class="bar"><i style="width:25%;background:var(--bike)"></i></span><span class="qty">72 / 290 min</span></div>
+        </div>
+      </div>
+      <div class="card days" style="padding:4px 14px">
+        <div class="day"><div class="dt"><b>29</b><span>MON</span></div><div class="ic runc"><svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg></div><div class="tx"><b>Easy run · 40 min</b><span>41 min · 7:24 /km · 128 bpm</span></div><div class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></div></div>
+        <div class="day"><div class="dt"><b>30</b><span>TUE</span></div><div class="ic bikec"><svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-6.5h4.5L18 17M10 10.5L8.5 7H6.5M14.5 10.5L13 7h2.5"/></svg></div><div class="tx"><b>Easy ride · 70 min</b><span>72 min · 131 bpm</span></div><div class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></div></div>
+        <div class="day"><div class="dt"><b>1</b><span>WED</span></div><div class="ic runc"><svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg></div><div class="tx"><b>Easy run · 40 min</b><span>skipped — gone, no debt</span></div><div class="st skip"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></div></div>
+        <div class="day"><div class="dt"><b>2</b><span>THU</span></div><div class="ic bikec"><svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-6.5h4.5L18 17M10 10.5L8.5 7H6.5M14.5 10.5L13 7h2.5"/></svg></div><div class="tx"><b>Easy ride · 75 min</b><span>not logged yet</span></div><div class="st pend"></div></div>
+        <div class="day today"><div class="dt"><b>3</b><span>FRI</span></div><div class="ic runc"><svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg></div><div class="tx"><b>Easy run · 45 min</b><span>today · Z2 · 110–128 bpm</span></div><div class="st now"></div></div>
+        <div class="day"><div class="dt"><b>4</b><span>SAT</span></div><div class="ic bikec"><svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-6.5h4.5L18 17M10 10.5L8.5 7H6.5M14.5 10.5L13 7h2.5"/></svg></div><div class="tx"><b>Long ride · 145 min</b><span>Z2 · steady — the week's anchor</span></div><div class="st pend" style="border-style:solid;border-color:#2c3947"></div></div>
+        <div class="day"><div class="dt"><b>5</b><span>SUN</span></div><div class="ic restc"><svg viewBox="0 0 24 24"><path d="M20 13.5A8.5 8.5 0 1 1 10.5 4a7 7 0 0 0 9.5 9.5z"/></svg></div><div class="tx"><b>Rest</b><span>check-in opens here Sunday</span></div><div class="st" style="background:none"></div></div>
+      </div>
+      <div class="mix">
+        <div class="half"><span class="lab">Runs<b>3</b></span><span class="ud"><i>+</i><i>−</i></span></div>
+        <div class="half"><span class="lab">Rides<b>3</b></span><span class="ud"><i>+</i><i>−</i></span></div>
+      </div>
+      <div class="card unlock" style="padding:13px 16px">
+        <div class="pips"><i class="f"></i><i class="f"></i><i></i><i></i></div>
+        <p><b>Intervals unlock after 3 consistent weeks — 2 done.</b> Easy weeks now buy harder sessions later.</p>
+      </div>
+    </div>
+    <div class="fab">+</div>
+    <div class="tabbar">
+      <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>Today</div>
+      <div class="tab on"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Week</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>Progress</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2" fill="#0c1117"/><circle cx="15" cy="12" r="2" fill="#0c1117"/><circle cx="7" cy="16.5" r="2" fill="#0c1117"/></svg>Settings</div>
+    </div>
+    <div class="homebar"></div>
+  </div>
+  <p class="cap"><b>Week — status at a glance.</b> Done / skipped / pending / today per day, totals vs target per sport, steppers to change the mix (re-layout never puts runs on consecutive days — it warns once if you force it), and an honest locked state showing progress toward intervals, not just a padlock. The + button logs any unplanned activity.</p>
+</section>
+
+<!-- ============ 4 · CHECK-IN ============ -->
+<section class="shot">
+  <div class="phone">
+    <div class="island"></div>
+    <div class="statusbar"><span>19:32</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen" style="gap:11px">
+      <div>
+        <div class="eyebrow">Sunday · <span class="cyt">Week 2 done</span></div>
+        <div class="h-date">Check-in</div>
+        <div class="steps"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i></i></div>
+      </div>
+      <div class="recap">
+        <span class="chip"><b>96 %</b>&nbsp;complete</span>
+        <span class="chip">felt&nbsp;<b>4 / 5</b></span>
+        <span class="chip"><b>87.1</b>&nbsp;kg</span>
+        <span class="chip">HRV&nbsp;<b>44</b>&nbsp;ms</span>
+      </div>
+      <div class="card prop">
+        <div class="eyebrow">Next week's volume</div>
+        <div class="top"><span class="rate" id="rateTxt">+7 %</span><span class="rec">recommended</span></div>
+        <p class="why">You hit the week and felt good — grow.</p>
+        <input type="range" min="-20" max="15" value="7" step="1" id="rateSlider" aria-label="volume change">
+        <div class="ticks"><span>−20 %</span><span>0</span><span>+15 %</span></div>
+        <div class="nextline"><span class="midnum" id="totTxt">6 h 55</span><span class="unit">next week · 6 h 25 this week</span></div>
+        <div class="preview" id="pvList">
+          <div class="pv"><span class="d">MON</span><span class="s">Easy run</span><span class="m"><span id="o0">40 → </span><b id="p0">40</b> <span>min</span></span></div>
+          <div class="pv"><span class="d">TUE</span><span class="s">Easy ride</span><span class="m"><span id="o1">65 → </span><b id="p1">70</b> <span>min</span></span></div>
+          <div class="pv"><span class="d">WED</span><span class="s">Easy run</span><span class="m"><span id="o2">35 → </span><b id="p2">40</b> <span>min</span></span></div>
+          <div class="pv"><span class="d">THU</span><span class="s">Easy ride</span><span class="m"><span id="o3">70 → </span><b id="p3">75</b> <span>min</span></span></div>
+          <div class="pv"><span class="d">FRI</span><span class="s">Easy run</span><span class="m"><span id="o4">40 → </span><b id="p4">45</b> <span>min</span></span></div>
+          <div class="pv"><span class="d">SAT</span><span class="s">Long ride</span><span class="m"><span id="o5">135 → </span><b id="p5">145</b> <span>min</span></span></div>
+        </div>
+        <p class="foot">Runs grow max +10 % per week — anything extra goes to the bike. Week 4 will be a deload: everything at 60 %, long ride capped at 90 min.</p>
+      </div>
+      <div class="btn">Lock in week 3</div>
+      <div style="flex:1"></div>
+    </div>
+    <div class="tabbar">
+      <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>Today</div>
+      <div class="tab on"><div class="dot"></div><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Week</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>Progress</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2" fill="#0c1117"/><circle cx="15" cy="12" r="2" fill="#0c1117"/><circle cx="7" cy="16.5" r="2" fill="#0c1117"/></svg>Settings</div>
+    </div>
+    <div class="homebar"></div>
+  </div>
+  <p class="cap"><b>Sunday check-in — the app's one animated moment.</b> Weight, feel and HRV are captured in the earlier steps (chips above). The engine pre-selects its recommendation; the slider overrides it and the durations re-compute live. <b>Drag the slider — this mockup computes for real</b>, including the run +10 % cap. The cyan dot on the Week tab is the check-in badge.</p>
+</section>
+
+<!-- ============ 5 · PROGRESS ============ -->
+<section class="shot">
+  <div class="phone" style="min-height:1150px">
+    <div class="island"></div>
+    <div class="statusbar"><span>09:41</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen" style="gap:11px">
+      <div class="h-date">Progress</div>
+      <div class="card pc">
+        <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow" style="letter-spacing:.04em">LAST 12 WEEKS</span></div>
+        <div id="ridge"></div>
+        <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:var(--bike)"></i>ride</span><span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span><span><i style="background:#2a3744"></i>deload cols</span></div>
+      </div>
+      <div class="card pc">
+        <div class="hd"><span class="eyebrow">Weight</span></div>
+        <div class="stat"><span class="midnum">87.4</span><span class="unit">kg now</span><span style="flex:1"></span><span class="unit" style="color:var(--sand)">target 80.0</span></div>
+        <div id="weight"></div>
+        <div class="callout">Same fitness at 80 kg → <b>VO₂ ≈ 46.8</b> (42.8 today). Lighter chassis, same engine.</div>
+        <div class="btn ghost mini">Add weigh-in</div>
+      </div>
+      <div class="card pc">
+        <div class="hd"><span class="eyebrow">Pace at easy HR</span><span class="chip zc2" style="font-size:11px">Z2 · 119 bpm</span></div>
+        <div class="stat"><span class="midnum">7:08</span><span class="unit">/km · 38 s faster than week 1</span></div>
+        <div id="pace"></div>
+      </div>
+      <div class="card pc">
+        <div class="hd"><span class="eyebrow">VO₂ max · Garmin</span></div>
+        <div class="stat"><span class="midnum">42.8</span><span class="unit">peak 48.7 · May 2025</span></div>
+        <div id="vo2"></div>
+        <div class="btn ghost mini">Add reading</div>
+      </div>
+      <div class="card pc">
+        <div class="hd"><span class="eyebrow">Consistency</span><span class="eyebrow" style="letter-spacing:.04em;color:var(--cy)">STREAK · 5 WEEKS ≥ 80 %</span></div>
+        <div class="cells" id="cells"></div>
+      </div>
+    </div>
+    <div class="tabbar">
+      <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>Today</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Week</div>
+      <div class="tab on"><svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>Progress</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2" fill="#0c1117"/><circle cx="15" cy="12" r="2" fill="#0c1117"/><circle cx="7" cy="16.5" r="2" fill="#0c1117"/></svg>Settings</div>
+    </div>
+    <div class="homebar"></div>
+  </div>
+  <p class="cap"><b>Progress — full scroll shown, set a few months in (illustrative data).</b> The alpine signature: weekly volume drawn as a <b>mountain ridge</b> — run is the cyan snowcap on the ride's rock, the sand dashes are each week's target, deloads sit as gentle cols between peaks. Then weight vs the 80 kg line with the VO₂-at-target carrot, pace at easy HR (the clearest rebuild signal), VO₂ readings, and the 12-week consistency strip.</p>
+</section>
+
+<!-- ============ 6 · SETTINGS ============ -->
+<section class="shot">
+  <div class="phone" style="min-height:1010px">
+    <div class="island"></div>
+    <div class="statusbar"><span>09:41</span><span class="sb-right"><i class="sb-cell"></i><i class="sb-batt"></i></span></div>
+    <div class="screen" style="gap:8px">
+      <div class="h-date">Settings</div>
+      <div class="group">
+        <div class="gh">Heart rate</div>
+        <div class="card" style="padding:4px 16px">
+          <div class="srow"><span class="l">Max HR</span><span class="v">183 bpm</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Resting HR<span>adding it switches zones to Karvonen</span></span><span class="v add">Add</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Lactate threshold<span>optional — enables LTHR-based zones</span></span><span class="v add">Add</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Zone method</span><span class="v">% of max HR</span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="gh">Zones · tap to edit</div>
+        <div class="card zt" style="padding:4px 16px">
+          <div class="zr"><span class="chip zc1">Z1</span><span class="what">recovery</span><span class="range">92 – 110</span><span class="pct">50–60 %</span><span class="chev">›</span></div>
+          <div class="zr"><span class="chip zc2">Z2</span><span class="what">easy</span><span class="range">110 – 128</span><span class="pct">60–70 %</span><span class="chev">›</span></div>
+          <div class="zr"><span class="chip zc3">Z3</span><span class="what">steady</span><span class="range">128 – 146</span><span class="pct">70–80 %</span><span class="chev">›</span></div>
+          <div class="zr"><span class="chip zc4">Z4</span><span class="what">threshold</span><span class="range">146 – 165</span><span class="pct">80–90 %</span><span class="chev">›</span></div>
+          <div class="zr"><span class="chip zc5">Z5</span><span class="what">max</span><span class="range">165 – 183</span><span class="pct">90–100 %</span><span class="chev">›</span></div>
+          <div class="srow" style="border-top:1px solid var(--line)"><span class="l" style="color:var(--cy);font-weight:650">Customize zones<span>your own bpm bounds — overrides the formula; plans &amp; charts update everywhere</span></span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="gh">Plan</div>
+        <div class="card" style="padding:4px 16px">
+          <div class="srow"><span class="l">Target weight</span><span class="v">80.0 kg</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Weekly growth</span><span class="v">+7 %</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Deload</span><span class="v">every 4th week</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Weekly layout</span><span class="laychips"><i class="lr">M</i><i class="lb">T</i><i class="lr">W</i><i class="lb">T</i><i class="lr">F</i><i class="lb">S</i><i class="lx">S</i></span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="gh">Data — yours, on this phone</div>
+        <div class="card" style="padding:4px 16px">
+          <div class="srow"><span class="l">Export JSON<span>last export · 12 days ago</span></span><span class="v add">Export</span></div>
+          <div class="srow"><span class="l">Import JSON</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Import Garmin CSV</span><span class="chev">›</span></div>
+          <div class="srow"><span class="l">Reset all data</span><span class="v danger">Reset…</span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+    </div>
+    <div class="tabbar">
+      <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>Today</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Week</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>Progress</div>
+      <div class="tab on"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2" fill="#0c1117"/><circle cx="15" cy="12" r="2" fill="#0c1117"/><circle cx="7" cy="16.5" r="2" fill="#0c1117"/></svg>Settings</div>
+    </div>
+    <div class="homebar"></div>
+  </div>
+  <p class="cap"><b>Settings — every physiological number is editable</b> (your request from today): max HR, resting HR, optional lactate threshold, zone method, or fully custom bpm bounds per zone — and weight via weigh-ins anywhere (check-in, Progress, here). Change any of them and every bpm range, plan target and chart recomputes. Data section: export / import JSON, Garmin CSV import, reset behind a confirm; a quiet banner appears if you haven't exported in 30 days.</p>
+</section>
+
+</main>
+
+<!-- ---------- design notes ---------- -->
+<section class="notes">
+  <div class="note">
+    <h3>Palette — dark only</h3>
+    <div class="sw">
+      <i style="background:#070a0f"></i><i style="background:#0c1117"></i><i style="background:#121a24"></i><i style="background:#56dbe8"></i><i style="background:#8e9df8"></i><i style="background:#e6d3a3"></i>
+      <span>bg · screen · card · glacier cyan · ride · target sand</span>
+    </div>
+    <div class="sw">
+      <i style="background:#5b8def"></i><i style="background:#41c98b"></i><i style="background:#e6c94d"></i><i style="background:#f08a3c"></i><i style="background:#ef5350"></i>
+      <span>Z1 → Z5, one cool→hot ramp used everywhere</span>
+    </div>
+    <p>Run and ride are told apart by icon + hue (cyan vs periwinkle), never by competing palettes. Zone colors are reserved for intensity only.</p>
+  </div>
+  <div class="note">
+    <h3>Type — numbers are the heroes</h3>
+    <p class="typ"><span class="a">45</span> <span class="b">min · 110–128 bpm</span><br><span class="c">Eyebrow labels · letter-spaced caps</span></p>
+    <p style="margin-top:10px">System font stack (offline constraint), compensated with a hard scale: 84 px duration, 38 px bpm, 11 px eyebrows. Tabular numerals throughout. Every tap target ≥ 44 px.</p>
+  </div>
+  <div class="note">
+    <h3>Motion &amp; tone</h3>
+    <p><b>One orchestrated moment:</b> the check-in proposal slides up and the durations re-compute live under the slider (try it on frame 4). Everything else is instant. <code style="color:var(--cy)">prefers-reduced-motion</code> honored.</p>
+    <p style="margin-top:10px">Copy never shames: "skipped — gone, no debt", "pick up where you left off". The locked-intervals card shows progress toward unlocking, not a padlock.</p>
+  </div>
+</section>
+
+<script>
+/* ---------- chart builders (prototype of charts.js) ---------- */
+function svg(w,h,inner){return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="display:block">${inner}</svg>`;}
+
+/* — the ridge: 12 weeks, run snowcap on ride rock, target dashes, deload cols — */
+(function(){
+  const d=[ // hours {run, bike, target?, deload?}
+    {r:.9,b:2.3},{r:1.7,b:4.1},{r:.5,b:1.6},
+    {r:1.75,b:4.15,t:6.0},{r:1.9,b:4.6,t:6.4},{r:2.0,b:4.6,t:6.9},
+    {r:1.2,b:3.0,t:4.1,dl:1},{r:2.1,b:5.0,t:7.4},{r:2.4,b:5.4,t:7.9},
+    {r:2.5,b:5.8,t:8.5},{r:1.5,b:3.5,t:5.1,dl:1},{r:2.7,b:5.9,t:8.8}];
+  const W=352,H=158,base=H-16,max=9.6,gap=3,n=d.length,bw=(W-gap*(n-1))/n;
+  const y=v=>base-(v/max)*(base-10);
+  let s="";
+  // faint far ridge for depth
+  let far="M0 "+base; d.forEach((p,i)=>{far+=` L${(i+.5)*(bw+gap)} ${y((p.r+p.b)*.62+1.8)}`}); far+=` L${W} ${base} Z`;
+  s+=`<path d="${far}" fill="rgba(86,219,232,.05)"/>`;
+  d.forEach((p,i)=>{
+    const x=i*(bw+gap), tot=p.r+p.b, op=p.dl?0.45:1;
+    s+=`<g opacity="${op}">`;
+    s+=`<rect x="${x}" y="${y(p.b)}" width="${bw}" height="${base-y(p.b)}" fill="#5d6ccc"/>`;
+    s+=`<rect x="${x}" y="${y(tot)}" width="${bw}" height="${y(p.b)-y(tot)}" rx="2.5" fill="#56dbe8"/></g>`;
+    if(p.t)s+=`<line x1="${x-1}" y1="${y(p.t)}" x2="${x+bw+1}" y2="${y(p.t)}" stroke="#e6d3a3" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    if(p.dl)s+=`<text x="${x+bw/2}" y="${H-3}" fill="#5b6e80" font-size="9" text-anchor="middle" font-weight="700">col</text>`;
+  });
+  s+=`<line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="rgba(148,178,204,.2)"/>`;
+  s+=`<text x="${W}" y="${y(8.8)-5}" fill="#5b6e80" font-size="9.5" text-anchor="end" font-weight="650">8 h 48</text>`;
+  document.getElementById("ridge").innerHTML=svg(W,H,s);
+})();
+
+/* — weight: raw dots, EMA α=.25, target 80 — */
+(function(){
+  const pts=[[0,86.5],[30,88.5],[65,87.5],[80,87.6],[92,87.2],[185,87.4],[205,87.1],[226,86.6],[247,86.1],[268,85.6]];
+  const W=352,H=140,L=8,R=46,T=10,B=22;
+  const x=d=>L+d/268*(W-L-R), y=v=>T+(89.5-v)/(89.5-79.0)*(H-T-B);
+  let s=`<line x1="${L}" y1="${y(80)}" x2="${W-R+30}" y2="${y(80)}" stroke="#e6d3a3" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+  s+=`<text x="${W}" y="${y(80)+3.5}" fill="#e6d3a3" font-size="10" text-anchor="end" font-weight="700">80 kg</text>`;
+  s+=`<polyline points="${pts.map(p=>x(p[0])+","+y(p[1])).join(" ")}" fill="none" stroke="rgba(143,161,179,.4)" stroke-width="1.3"/>`;
+  pts.forEach(p=>{s+=`<circle cx="${x(p[0])}" cy="${y(p[1])}" r="2.4" fill="#8fa1b3"/>`});
+  let e=pts[0][1],ep=[];pts.forEach(p=>{e=.25*p[1]+.75*e;ep.push([x(p[0]),y(e)])});
+  s+=`<polyline points="${ep.map(p=>p.join(",")).join(" ")}" fill="none" stroke="#56dbe8" stroke-width="2.2"/>`;
+  s+=`<text x="${L}" y="${H-4}" fill="#5b6e80" font-size="9.5" font-weight="650">Dec</text><text x="${x(268)}" y="${H-4}" fill="#5b6e80" font-size="9.5" text-anchor="end" font-weight="650">Aug</text>`;
+  document.getElementById("weight").innerHTML=svg(W,H,s);
+})();
+
+/* — pace at easy HR (sec/km, lower = better = higher on chart) — */
+(function(){
+  const v=[466,458,460,448,442,444,435,428],W=352,H=104,T=14,B=18,L=8,R=8;
+  const x=i=>L+i/(v.length-1)*(W-L-R), y=s=>T+(s-420)/(478-420)*(H-T-B);
+  let s=`<polyline points="${v.map((p,i)=>x(i)+","+y(p)).join(" ")}" fill="none" stroke="#56dbe8" stroke-width="2.2"/>`;
+  v.forEach((p,i)=>{s+=`<circle cx="${x(i)}" cy="${y(p)}" r="2.6" fill="${i===v.length-1?'#56dbe8':'#365562'}"/>`});
+  s+=`<text x="${x(0)}" y="${y(466)+14}" fill="#5b6e80" font-size="9.5" font-weight="650">7:46 · wk 1</text>`;
+  s+=`<text x="${x(7)}" y="${y(428)-7}" fill="#9be8f0" font-size="10" text-anchor="end" font-weight="750">7:08</text>`;
+  document.getElementById("pace").innerHTML=svg(W,H,s);
+})();
+
+/* — VO2 readings — */
+(function(){
+  const v=[47.3,47.3,48.7,46.7,41.8,42.4,43.3,42.8],W=352,H=88,T=10,B=16,L=8,R=8;
+  const x=i=>L+i/(v.length-1)*(W-L-R), y=s=>T+(50-s)/(50-40.5)*(H-T-B);
+  let s=`<polyline points="${v.map((p,i)=>x(i)+","+y(p)).join(" ")}" fill="none" stroke="rgba(142,157,248,.8)" stroke-width="2"/>`;
+  v.forEach((p,i)=>{s+=`<circle cx="${x(i)}" cy="${y(p)}" r="2.4" fill="${i===v.length-1?'#8e9df8':'#3b4470'}"/>`});
+  s+=`<text x="${x(0)}" y="${H-2}" fill="#5b6e80" font-size="9.5" font-weight="650">Jul 24</text><text x="${x(7)}" y="${H-2}" fill="#5b6e80" font-size="9.5" text-anchor="end" font-weight="650">Jun 26</text>`;
+  document.getElementById("vo2").innerHTML=svg(W,H,s);
+})();
+
+/* — consistency cells — */
+(function(){
+  const pct=[15,55,20,90,100,85,95,80,95,90,85,40];
+  document.getElementById("cells").innerHTML=pct.map((p,i)=>{
+    const cur=i===pct.length-1;
+    const bg=p>=80?`rgba(86,219,232,${.35+p/100*.55})`:p>=50?"rgba(86,219,232,.28)":"rgba(86,219,232,.10)";
+    return `<i style="background:${cur?'':bg}" class="${cur?'cur':''}"></i>`;
+  }).join("");
+})();
+
+/* — check-in: live preview (real rules: +10% run cap, Sat double share, round to 5) — */
+(function(){
+  const baseRun=115, baseBike=270, baseTot=385;          // week 2
+  const oldS=[40,65,35,70,40,135];                        // week 2 sessions Mon..Sat
+  const r5=v=>Math.round(v/5)*5;
+  const slider=document.getElementById("rateSlider");
+  function apply(){
+    const r=+slider.value/100;
+    const tot=baseTot*(1+r);
+    const run=Math.min(baseRun*1.10, baseRun/baseTot*tot);
+    const bike=tot-run;
+    const r1=r5(run/3), r3=r5(run-2*r1);
+    const sat=Math.min(r5(bike/2),210), b1=r5((bike-sat)/2), b2=r5(bike-sat-b1);
+    const out=[r1,b1,r1,b2,r3,sat];
+    out.forEach((m,i)=>document.getElementById("p"+i).textContent=m);
+    const sum=out.reduce((a,b)=>a+b,0);
+    document.getElementById("totTxt").textContent=Math.floor(sum/60)+" h "+String(sum%60).padStart(2,"0");
+    const pr=+slider.value;
+    document.getElementById("rateTxt").textContent=(pr>0?"+":"")+pr+" %";
+    document.getElementById("rateTxt").style.color = pr>=0 ? "var(--cy)" : "var(--sand)";
+    document.querySelector(".prop .rec").style.opacity = pr===7 ? 1 : .35;
+  }
+  slider.addEventListener("input",apply); apply();
+})();
+</script>
+</body>
+</html>
