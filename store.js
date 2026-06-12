@@ -1,0 +1,162 @@
+/* Remonte storage — single localStorage document, write-through, with a
+   migration chain and corrupt-data recovery (spec §8). */
+import { generateWeek1 } from "./engine.js";
+
+export const KEY = "remonte.v1";
+export const SCHEMA_VERSION = 1;
+
+export function uid() {
+  return (crypto.randomUUID && crypto.randomUUID()) ||
+    "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+export function defaultSettings() {
+  return {
+    maxHR: 183,
+    restingHR: null,
+    lthr: null,
+    customZones: null,
+    zoneMethod: "pctmax",
+    targetWeightKg: 80.0,
+    growthRate: 0.07,
+    deloadEvery: 4,
+    hrvBaselineLow: 42,
+    layout: { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" },
+    qualityUnlocked: false,
+    lastExportAt: null,
+  };
+}
+
+const SEED_WEIGHINS = [
+  { date: "2025-12-05", kg: 86.5 }, { date: "2026-01-04", kg: 88.5 },
+  { date: "2026-02-08", kg: 87.5 }, { date: "2026-02-23", kg: 87.6 },
+  { date: "2026-03-07", kg: 87.2 }, { date: "2026-06-08", kg: 87.4 },
+];
+
+const SEED_VO2 = [
+  { date: "2024-07-01", value: 47.3 }, { date: "2025-02-01", value: 47.3 },
+  { date: "2025-05-01", value: 48.7 }, { date: "2025-07-01", value: 46.7 },
+  { date: "2025-10-01", value: 41.8 }, { date: "2026-01-01", value: 42.4 },
+  { date: "2026-04-01", value: 43.3 }, { date: "2026-06-01", value: 42.8 },
+];
+
+const SEED_LOGS = [
+  ["2026-05-01", "bike", 155, 24.23, 145], ["2026-05-05", "run", 27, 5.02, 169],
+  ["2026-05-09", "bike", 91, 32.26, 133],  ["2026-05-14", "bike", 70, 16.28, 123],
+  ["2026-05-19", "run", 28, 5.01, 164],    ["2026-05-20", "bike", 75, 30.28, 143],
+  ["2026-05-22", "run", 35, 5.84, 171],    ["2026-05-23", "bike", 230, 33.97, 129],
+  ["2026-05-24", "bike", 54, 17.45, 118],  ["2026-05-26", "run", 35, 5.49, 169],
+  ["2026-05-28", "bike", 65, 30.08, 154],  ["2026-06-01", "bike", 93, 18.04, 125],
+  ["2026-06-02", "run", 30, 5.47, 170],    ["2026-06-03", "bike", 169, 35.42, 126],
+  ["2026-06-05", "run", 41, 7.04, 166],    ["2026-06-06", "run", 38, 6.51, 167],
+  ["2026-06-07", "bike", 212, 39.48, 133], ["2026-06-11", "bike", 170, 70.71, 141],
+  ["2026-06-12", "run", 42, 7.01, 167],
+];
+
+export function seedLogs() {
+  return SEED_LOGS.map(([date, sport, min, km, avgHR], i) => ({
+    id: "seed-" + (i + 1), date, sport, min, km, avgHR, source: "seed",
+  }));
+}
+
+export function initDoc(startDate, todayISO) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    createdAt: todayISO,
+    settings: defaultSettings(),
+    weeks: [generateWeek1(startDate)],
+    logs: seedLogs(),
+    checkins: [],
+    weighIns: SEED_WEIGHINS.map(w => ({ ...w })),
+    vo2History: SEED_VO2.map(v => ({ ...v })),
+  };
+}
+
+/* ---- load / save ---- */
+
+export function load() {
+  let raw;
+  try { raw = localStorage.getItem(KEY); } catch { return null; }
+  if (raw == null) return null;
+  try {
+    const doc = JSON.parse(raw);
+    if (!doc || typeof doc !== "object" || typeof doc.schemaVersion !== "number") throw new Error("shape");
+    return migrate(doc);
+  } catch {
+    const err = new Error("Stored data is unreadable");
+    err.corrupt = true;
+    err.raw = raw;
+    throw err;
+  }
+}
+
+export function save(doc) {
+  localStorage.setItem(KEY, JSON.stringify(doc));
+}
+
+export function wipe() {
+  localStorage.removeItem(KEY);
+}
+
+/* ---- migrations: add a step per schema bump; each takes vN → vN+1 ---- */
+
+const MIGRATIONS = {};
+
+export function migrate(doc) {
+  let d = doc;
+  while (d.schemaVersion < SCHEMA_VERSION) {
+    const step = MIGRATIONS[d.schemaVersion];
+    if (!step) break;
+    d = step(d);
+  }
+  // settings keys added after first release get safe defaults
+  d.settings = { ...defaultSettings(), ...d.settings };
+  for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
+  return d;
+}
+
+/* ---- import / export ---- */
+
+export function validateImport(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return { ok: false, error: "Not valid JSON" }; }
+  if (!parsed || typeof parsed !== "object") return { ok: false, error: "Not a Remonte export" };
+  if (typeof parsed.schemaVersion !== "number") return { ok: false, error: "Missing schemaVersion — not a Remonte export" };
+  if (parsed.schemaVersion > SCHEMA_VERSION) return { ok: false, error: "Export is from a newer app version" };
+  for (const k of ["settings", "logs"]) {
+    if (!(k in parsed)) return { ok: false, error: `Missing "${k}" — not a Remonte export` };
+  }
+  return { ok: true, doc: migrate(parsed) };
+}
+
+/* Merge: union of records (current wins on conflicts), current settings kept. */
+export function mergeDocs(current, incoming) {
+  const out = structuredClone(current);
+  const logSig = l => l.id || `${l.date}|${l.sport}|${l.min}|${l.time || ""}`;
+  const have = new Set(out.logs.map(logSig));
+  for (const l of incoming.logs || []) {
+    if (!have.has(logSig(l))) { out.logs.push(l); have.add(logSig(l)); }
+  }
+  out.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  const byDate = (cur, inc) => {
+    const dates = new Set(cur.map(x => x.date));
+    return cur.concat((inc || []).filter(x => !dates.has(x.date)))
+              .sort((a, b) => (a.date < b.date ? -1 : 1));
+  };
+  out.weighIns = byDate(out.weighIns, incoming.weighIns);
+  out.vo2History = byDate(out.vo2History, incoming.vo2History);
+
+  const weekIds = new Set(out.weeks.map(w => w.id));
+  for (const w of incoming.weeks || []) if (!weekIds.has(w.id)) out.weeks.push(w);
+  out.weeks.sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
+  out.weeks.forEach((w, i) => { w.weekNum = i + 1; });
+
+  const ciIds = new Set(out.checkins.map(c => c.weekId));
+  for (const c of incoming.checkins || []) if (!ciIds.has(c.weekId)) out.checkins.push(c);
+  return out;
+}
+
+export function exportText(doc) {
+  return JSON.stringify(doc, null, 1);
+}
