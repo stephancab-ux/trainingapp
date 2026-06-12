@@ -11,8 +11,10 @@ const svg = (w, h, inner) =>
 
 /* The alpine signature: weekly volume as a mountain ridge. Run is the cyan
    snowcap on the ride's rock; sand dashes mark each week's target; deload
-   weeks render faded, as cols between peaks. vol: engine.weeklyVolume(). */
-export function ridgeChart(vol, { width = 352, height = 158 } = {}) {
+   weeks render faded, as cols between peaks. vol: engine.weeklyVolume().
+   Pass `selected` to highlight one column; transparent hit rects carry
+   data-wi for tap-to-inspect. */
+export function ridgeChart(vol, { width = 352, height = 158, selected = null } = {}) {
   if (!vol.length) return "";
   const W = width, H = height, base = H - 16;
   const max = Math.max(60, ...vol.map(v => Math.max(v.run + v.bike, v.target || 0))) * 1.07;
@@ -24,21 +26,27 @@ export function ridgeChart(vol, { width = 352, height = 158 } = {}) {
   s += `<path d="${far} L${W} ${base} Z" fill="rgba(86,219,232,.05)"/>`;
   vol.forEach((p, i) => {
     const x = i * (bw + gap), tot = p.run + p.bike;
-    const op = p.isDeload ? 0.45 : 1;
+    const dim = selected != null && selected !== i;
+    const op = (p.isDeload ? 0.45 : 1) * (dim ? 0.45 : 1);
     s += `<g opacity="${op}">`;
     s += `<rect x="${x}" y="${y(p.bike)}" width="${bw}" height="${Math.max(0, base - y(p.bike))}" fill="${BIKE}"/>`;
     s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(tot))}" rx="2.5" fill="${CY}"/>`;
     s += `</g>`;
-    if (p.target) s += `<line x1="${x - 1}" y1="${y(p.target)}" x2="${x + bw + 1}" y2="${y(p.target)}" stroke="${SAND}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    if (p.target) s += `<line x1="${x - 1}" y1="${y(p.target)}" x2="${x + bw + 1}" y2="${y(p.target)}" stroke="${SAND}" stroke-width="1.6" stroke-dasharray="4 3" opacity="${dim ? 0.4 : 1}"/>`;
     if (p.isDeload) s += `<text x="${x + bw / 2}" y="${H - 3}" fill="${MUT}" font-size="9" text-anchor="middle" font-weight="700">col</text>`;
     if (p.current) s += `<rect x="${x - 1}" y="${Math.min(y(tot), y(p.target || 0)) - 4}" width="${bw + 2}" height="2" rx="1" fill="rgba(86,219,232,.5)"/>`;
+    if (selected === i) s += `<rect x="${x - 1.5}" y="${Math.min(y(Math.max(tot, p.target || 0, 30))) - 3}" width="${bw + 3}" height="${base - Math.min(y(Math.max(tot, p.target || 0, 30))) + 3}" rx="3" fill="none" stroke="rgba(86,219,232,.8)" stroke-width="1.5"/>`;
   });
   s += `<line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="${LINE}"/>`;
   const peak = Math.max(...vol.map(v => v.run + v.bike));
-  if (peak > 0) {
+  if (peak > 0 && selected == null) {
     const hh = Math.floor(peak / 60), mm = Math.round(peak % 60);
     s += `<text x="${W}" y="${y(peak) - 5}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${hh} h ${String(mm).padStart(2, "0")}</text>`;
   }
+  // hit targets last so they sit on top
+  vol.forEach((_, i) => {
+    s += `<rect data-wi="${i}" x="${i * (bw + gap) - gap / 2}" y="0" width="${bw + gap}" height="${H}" fill="transparent" style="cursor:pointer"/>`;
+  });
   return svg(W, H, s);
 }
 

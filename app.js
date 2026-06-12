@@ -35,21 +35,50 @@ const ICONS = {
 };
 const sportClass = sp => sp === "run" ? "runc" : sp === "bike" ? "bikec" : "restc";
 
+/* Workout-type tags on logs (v1.1). Purely descriptive — no plan math. */
+const LOG_TYPES = {
+  run:  [["easy", "Easy"], ["tempo", "Tempo"], ["intervals", "Intervals"], ["hills", "Hills"], ["long", "Long"]],
+  bike: [["easy", "Easy"], ["climb", "Climbing"], ["intervals", "Intervals"], ["long", "Long"]],
+};
+const TYPE_NAME = {
+  run:  { easy: "Easy run", tempo: "Tempo run", intervals: "Interval run", hills: "Hill run", long: "Long run" },
+  bike: { easy: "Easy ride", climb: "Climbing ride", intervals: "Interval ride", long: "Long ride" },
+};
+function logTitle(l) {
+  return TYPE_NAME[l.sport]?.[l.type] ||
+    (l.sport === "bike" ? "Ride" : l.sport[0].toUpperCase() + l.sport.slice(1));
+}
+
 function kindLabel(s) {
   if (s.sport === "rest") return "Rest";
   if (s.kind === "long") return "Long ride";
-  if (s.kind === "quality") return s.sport === "run" ? "Run intervals" : "Ride intervals";
+  if (s.kind === "quality") {
+    const t = E.QUALITY_TEMPLATES[s.qualityTemplate];
+    if (t) return t.name;
+    return s.sport === "run" ? "Run intervals" : "Ride intervals";
+  }
   return s.sport === "run" ? "Easy run" : "Easy ride";
 }
 
 const bounds = () => E.zoneBounds(doc.settings);
 function zoneInfo(s) {
   const b = bounds();
-  if (s.qualityTemplate?.startsWith("bike")) {
+  const t = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
+  if (t && t.sport === "bike" && t.family === "intervals") {
     return { label: "Z3–Z4", lo: b[2].lo, hi: b[3].hi, cls: "zc3" };
   }
   const z = s.zone || 2;
   return { label: `Zone ${z}`, lo: b[z - 1].lo, hi: b[z - 1].hi, cls: `zc${z}` };
+}
+
+/* Quality unlock state — the engine's gate, or wide open when the user
+   flipped the manual override in Settings. */
+function qstate() {
+  if (doc.settings.qualityOverride) {
+    return { run: true, bike: true, override: true,
+             progress: { done: 3, needed: 3, sinceRun: 2 } };
+  }
+  return E.qualityState(weekHistory());
 }
 
 /* ---------------- overlays ---------------- */
@@ -63,12 +92,58 @@ function openSheet(html) {
   overlayRoot().innerHTML =
     `<div class="scrim"></div><div class="sheet" role="dialog"><div class="grab"></div>${html}</div>`;
   const scrim = overlayRoot().querySelector(".scrim");
+  const sheet = overlayRoot().querySelector(".sheet");
   scrim.addEventListener("click", closeOverlay);
   requestAnimationFrame(() => {
     scrim.classList.add("show");
-    overlayRoot().querySelector(".sheet").classList.add("show");
+    sheet.classList.add("show");
   });
-  return overlayRoot().querySelector(".sheet");
+  wireSheetDrag(sheet, scrim);
+  return sheet;
+}
+
+/* Swipe-down to dismiss. The drag engages after 8 px so taps on buttons
+   inside still click; gestures starting on text inputs are left alone. */
+function wireSheetDrag(sheet, scrim) {
+  let startY = 0, dy = 0, dragging = false, t0 = 0;
+  sheet.addEventListener("pointerdown", e => {
+    if (e.target.closest("input, select, textarea")) return;
+    if (sheet.scrollTop > 0) return;
+    startY = e.clientY; dy = 0; dragging = false; t0 = performance.now();
+    sheet.addEventListener("pointermove", onMove);
+    sheet.addEventListener("pointerup", onUp);
+    sheet.addEventListener("pointercancel", onUp);
+  });
+  function onMove(e) {
+    dy = Math.max(0, e.clientY - startY);
+    if (!dragging && dy > 8) {
+      dragging = true;
+      sheet.setPointerCapture(e.pointerId);
+      sheet.style.transition = "none";
+    }
+    if (dragging) {
+      sheet.style.transform = `translateX(-50%) translateY(${dy}px)`;
+      scrim.style.opacity = String(Math.max(0, 1 - dy / 320));
+    }
+  }
+  function onUp(e) {
+    sheet.removeEventListener("pointermove", onMove);
+    sheet.removeEventListener("pointerup", onUp);
+    sheet.removeEventListener("pointercancel", onUp);
+    if (!dragging) return;
+    sheet.addEventListener("click", ev => { ev.stopPropagation(); ev.preventDefault(); },
+      { capture: true, once: true });
+    const fast = dy > 40 && (performance.now() - t0) < 250;
+    sheet.style.transition = "";
+    if (dy > 100 || fast) {
+      sheet.style.transform = `translateX(-50%) translateY(110%)`;
+      scrim.style.opacity = "0";
+      setTimeout(closeOverlay, 240);
+    } else {
+      sheet.style.transform = "";
+      scrim.style.opacity = "";
+    }
+  }
 }
 function openModal(title, body, buttons) {
   overlayRoot().innerHTML =
@@ -282,7 +357,7 @@ function renderToday() {
   } else {
     const z = zoneInfo(s);
     const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
-    const pace = s.sport === "run" ? E.paceHint(doc.logs, bounds(), s.kind === "quality" ? 4 : 2) : null;
+    const pace = s.sport === "run" ? E.paceHint(doc.logs, bounds(), s.kind === "quality" ? 4 : 2, doc.settings.easyPace) : null;
     card = `<div class="card">
       <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip ${z.cls}">${z.label.toUpperCase()}</span>${st.kind === "skipped" ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
       <div class="bignum">${s.targetMin}<small>min</small></div>
@@ -292,7 +367,7 @@ function renderToday() {
         <div class="t-pace-v">${tpl.label}</div>
         <p class="row-sub" style="margin-top:3px">${E.QUALITY_WARMUP}</p></div>` : ""}
       ${pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
-        <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
+        <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : pace.manual ? "your pace setting — easy runs will tune this" : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
       ${s.note ? `<p class="row-sub" style="margin-top:10px">${esc(s.note)}</p>` : ""}
       ${s.kind === "easy" && s.sport === "run" ? `<p class="t-note">Keep it conversational — walk breaks are fine. Same heart rate, faster pace is how the engine comes back.</p>` : ""}
       ${s.kind === "long" ? `<p class="t-note">Steady and unhurried — this ride is the week's anchor.</p>` : ""}
@@ -326,28 +401,33 @@ function renderToday() {
     `<div class="weekmini">${dots}&nbsp; Week ${week.weekNum} · ${doneN} of ${totN} done</div>`;
 
   $("#td-log")?.addEventListener("click", () =>
-    openLogSheet({ date: t, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s) }));
+    openLogSheet({ date: t, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }));
   $("#td-edit")?.addEventListener("click", () =>
     openLogSheet({ date: t, sport: s.sport, log: st.log, title: kindLabel(s) }));
   $("#td-skip")?.addEventListener("click", () => openSkip(week, s));
   $("#td-checkin")?.addEventListener("click", () => openCheckin(due || week));
   $("#td-yest")?.addEventListener("click", () => {
     const ys = yWeek.sessions[E.dayIndex(yDate)];
-    openLogSheet({ date: yDate, sport: ys.sport, prefillMin: ys.targetMin, title: kindLabel(ys) });
+    openLogSheet({ date: yDate, sport: ys.sport, prefillMin: ys.targetMin, title: kindLabel(ys), type: typeOfSession(ys) });
   });
 }
 
 /* ---------------- logging ---------------- */
 
-function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null }) {
+function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null }) {
   const isEdit = !!log;
   let min = isEdit ? log.min : prefillMin;
   let rpe = isEdit ? (log.rpe || null) : null;
+  let typ = isEdit ? (log.type || null) : (type || (sport !== "other" ? "easy" : null));
+  const typeRow = LOG_TYPES[sport] ? `
+    <div class="type-row"><span class="l">Type</span><span class="opts">${LOG_TYPES[sport].map(([k, lab]) =>
+      `<button data-ty="${k}" class="${typ === k ? "on" : ""}">${lab}</button>`).join("")}</span></div>` : "";
   const sheet = openSheet(`
     <div class="sh-title">${isEdit ? "Edit" : "Log"} · ${esc(title || sport)}</div>
     <div class="sh-sub">${fmtDate(date)}${isEdit ? "" : " — pre-filled with the plan"}</div>
     <div class="frow"><span class="l">Duration</span>
       <span class="stepper"><button data-d="-5">−</button><span class="v" id="lg-min">${min} min</span><button data-d="5">+</button></span></div>
+    ${typeRow}
     <div class="frow"><span class="l">Distance</span><input type="number" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>
     <div class="frow"><span class="l">Avg heart rate</span><input type="number" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
@@ -359,6 +439,10 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null }) 
   sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => {
     min = Math.max(5, min + parseInt(b.dataset.d, 10));
     sheet.querySelector("#lg-min").textContent = `${min} min`;
+  }));
+  sheet.querySelectorAll("[data-ty]").forEach(b => b.addEventListener("click", () => {
+    typ = b.dataset.ty;
+    sheet.querySelectorAll("[data-ty]").forEach(x => x.classList.toggle("on", x.dataset.ty === typ));
   }));
   sheet.querySelectorAll("[data-rpe]").forEach(b => b.addEventListener("click", () => {
     rpe = rpe === +b.dataset.rpe ? null : +b.dataset.rpe;
@@ -372,11 +456,12 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null }) 
     persist(() => {
       if (isEdit) {
         Object.assign(log, { min, km: km ?? undefined, avgHR: hr ?? undefined,
-                             rpe: rpe ?? undefined, note: note || undefined });
+                             rpe: rpe ?? undefined, note: note || undefined,
+                             type: typ ?? undefined });
       } else {
         doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
                         avgHR: hr ?? undefined, rpe: rpe ?? undefined,
-                        note: note || undefined, source: "manual" });
+                        note: note || undefined, type: typ ?? undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
     });
@@ -488,7 +573,8 @@ function renderWeek() {
     let sub = "", stIcon = "";
     if (st.kind === "done") {
       const l = st.log;
-      sub = [`${l.min} min`, l.km ? `${l.km} km` : "", l.sport === "run" && l.km ? E.fmtPace(l.min * 60 / l.km) + " /km" : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ");
+      const tyTag = l.type && l.type !== "easy" ? (l.type === "climb" ? "climbing" : l.type) : "";
+      sub = [tyTag, `${l.min} min`, l.km ? `${l.km} km` : "", l.sport === "run" && l.km ? E.fmtPace(l.min * 60 / l.km) + " /km" : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ");
       stIcon = `<span class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></span>`;
     } else if (st.kind === "skipped") {
       sub = "skipped — gone, no debt";
@@ -536,13 +622,15 @@ function renderWeek() {
         <button id="bike-dn" ${bikes <= 0 ? "disabled" : ""}>−</button></span></div>
     </div>
     ${unlockCard()}
+    ${comingWeeksCard()}
     <button class="linkrow" id="wk-history">All activity →</button>`;
 
   page.querySelectorAll("[data-di]").forEach(b => b.addEventListener("click", () => {
     const s = week.sessions[+b.dataset.di];
     const st = sessionStatus(week, s);
-    if (st.kind === "done") openLogSheet({ date: st.date, sport: s.sport, log: st.log, title: kindLabel(s) });
-    else openLogSheet({ date: st.date, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s) });
+    if (st.kind === "done") openLogSheet({ date: st.date, sport: s.sport, log: st.log, title: kindLabel(s), type: typeOfSession(s) });
+    else if (s.kind === "quality") openWorkoutChooser(week, s, st);
+    else openLogSheet({ date: st.date, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) });
   }));
   $("#wk-checkin")?.addEventListener("click", () => openCheckin(due));
   $("#wk-history").addEventListener("click", openHistory);
@@ -563,7 +651,7 @@ function sportLogged(week, sport) {
 function changeMix(week, runCount, bikeCount) {
   const idx = weekIndex(week);
   const prev = idx > 0 ? doc.weeks[idx - 1] : null;
-  const qs = E.qualityState(weekHistory());
+  const qs = qstate();
   const ci = doc.checkins.find(c => c.weekId === week.id);
   const { week: newWeek, warnings } = E.relayoutWeek({
     week, runCount, bikeCount,
@@ -585,9 +673,12 @@ function changeMix(week, runCount, bikeCount) {
 }
 
 function unlockCard() {
-  const qs = E.qualityState(weekHistory());
+  const qs = qstate();
   let pips, text;
-  if (!qs.run) {
+  if (qs.override) {
+    pips = [true, true, true, true];
+    text = `<b>Intervals unlocked manually</b> — the consistency gate is off (Settings → Plan).`;
+  } else if (!qs.run) {
     pips = [0, 1, 2].map(i => i < qs.progress.done).concat([null]);
     text = `<b>Intervals unlock after 3 consistent weeks — ${qs.progress.done} done.</b> Easy weeks now buy harder sessions later.`;
   } else if (!qs.bike) {
@@ -602,6 +693,72 @@ function unlockCard() {
     <p>${text}</p></div>`;
 }
 
+/* Read-only projection of the next 3 weeks at the default growth rate. */
+function comingWeeksCard() {
+  if (!doc.weeks.length) return "";
+  const q = qstate();
+  const proj = E.projectWeeks({ weeks: doc.weeks, settings: doc.settings,
+                                quality: { run: q.run, bike: q.bike } });
+  if (!proj.length) return "";
+  const ratePct = Math.round(doc.settings.growthRate * 100);
+  return `<div class="card" style="padding:13px 16px">
+    <div class="eyebrow" style="margin-bottom:10px">Coming weeks</div>
+    ${proj.map(p => `<div class="cw">
+      <span class="d"><b>W${p.weekNum}</b><span>${fmtShort(p.startDate)}</span></span>
+      <span class="t"><b>${fmtDur(p.total)}</b><span>run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}</span></span>
+      ${p.isDeload ? `<span class="chip" style="color:var(--sand);border-color:rgba(230,211,163,.35)">DELOAD</span>`
+        : p.hasQuality ? `<span class="chip zc4">intervals</span>` : ""}
+    </div>`).join("")}
+    <p class="row-sub" style="margin-top:9px">Projection at your default +${ratePct} % — each week is set for real at the Sunday check-in.</p>
+  </div>`;
+}
+
+/* The planned session's workout type, used to prefill the log sheet. */
+function typeOfSession(s) {
+  if (!s || s.sport === "rest") return null;
+  if (s.kind === "long") return "long";
+  if (s.kind === "quality") return E.QUALITY_TEMPLATES[s.qualityTemplate]?.family || "intervals";
+  return "easy";
+}
+
+/* Tap a planned quality session: log it, or swap the workout type. */
+function openWorkoutChooser(week, s, st) {
+  const cur = E.QUALITY_TEMPLATES[s.qualityTemplate];
+  const count = doc.weeks.reduce((a, w) =>
+    a + w.sessions.filter(x => x.sport === s.sport && x.kind === "quality").length, 0);
+  const intervalKey = cur?.family === "intervals" ? s.qualityTemplate
+    : s.sport === "run" ? (count >= 4 ? "runQ2" : "runQ1") : (count >= 4 ? "bikeQ2" : "bikeQ1");
+  const keys = s.sport === "run" ? [intervalKey, "runTempo", "runHills"] : [intervalKey, "bikeClimb"];
+
+  const sheet = openSheet(`
+    <div class="sh-title">${kindLabel(s)} · ${s.targetMin} min</div>
+    <div class="sh-sub">${fmtDate(st.date)} — ${E.QUALITY_WARMUP.toLowerCase()}</div>
+    <button class="btn" id="qc-log">Log this session</button>
+    <div class="sh-sub" style="margin-top:16px;text-transform:uppercase;letter-spacing:.08em;font-size:11px">Swap the workout</div>
+    ${keys.map(k => {
+      const t = E.QUALITY_TEMPLATES[k];
+      const on = k === s.qualityTemplate;
+      return `<button class="srow" data-q="${k}">
+        <span class="l">${t.name}<span>${t.label}</span></span>
+        ${on ? `<span class="v" style="color:var(--cy)">current</span>` : `<span class="chev">›</span>`}
+      </button>`;
+    }).join("")}
+  `);
+  sheet.querySelector("#qc-log").addEventListener("click", () => {
+    closeOverlay();
+    openLogSheet({ date: st.date, sport: s.sport, prefillMin: s.targetMin,
+                   title: kindLabel(s), type: typeOfSession(s) });
+  });
+  sheet.querySelectorAll("[data-q]").forEach(b => b.addEventListener("click", () => {
+    const k = b.dataset.q;
+    if (k === s.qualityTemplate) { closeOverlay(); return; }
+    const t = E.QUALITY_TEMPLATES[k];
+    closeOverlay();
+    persist(() => { s.qualityTemplate = k; s.zone = t.zone; });
+    toast(`${t.name} on ${fmtShort(st.date)}`);
+  }));
+}
+
 function openHistory() {
   const logs = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1)).slice(0, 50);
   const sheet = openSheet(`
@@ -614,14 +771,14 @@ function openHistory() {
         l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ");
       return `<button class="hrow" data-id="${l.id}">
         <span class="ic ${sportClass(l.sport)}" style="width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center">${ICONS[l.sport] || ICONS.other}</span>
-        <span class="hd2"><b>${l.sport === "bike" ? "Ride" : l.sport[0].toUpperCase() + l.sport.slice(1)} · ${l.min} min</b><span>${fmtShort(l.date)}${extra ? " · " + extra : ""}${l.note ? " · " + esc(l.note) : ""}</span></span>
+        <span class="hd2"><b>${logTitle(l)} · ${l.min} min</b><span>${fmtShort(l.date)}${extra ? " · " + extra : ""}${l.note ? " · " + esc(l.note) : ""}</span></span>
         <span class="src">${l.source.toUpperCase()}</span></button>`;
     }).join("") || `<p class="note-sub" style="padding:14px 0">Nothing yet.</p>`}
   `);
   sheet.querySelectorAll("[data-id]").forEach(b => b.addEventListener("click", () => {
     const log = doc.logs.find(l => l.id === b.dataset.id);
     closeOverlay();
-    openLogSheet({ date: log.date, sport: log.sport, log, title: log.sport });
+    openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
   }));
 }
 
@@ -687,7 +844,8 @@ function openCheckin(week) {
     const prevLoad = E.lastLoadWeek(doc.weeks);
     const nextIsDeload = E.isDeloadWeek(nextNum, doc.settings.deloadEvery);
     const history = weekHistory().concat([{ completion, feel: state.feel, isDeload: week.isDeload }]);
-    const qs = E.qualityState(history);
+    const qs = doc.settings.qualityOverride
+      ? { run: true, bike: true, override: true } : E.qualityState(history);
     const recap = `<div class="recap">
       <span class="chip"><b>${Math.round(completion * 100)} %</b>&nbsp;complete</span>
       <span class="chip">felt&nbsp;<b>${state.feel} / 5</b></span>
@@ -792,6 +950,20 @@ const ordinal = n => n + ({ 1: "st", 2: "nd", 3: "rd" }[n % 10 > 3 || [11, 12, 1
 
 /* ---------------- PROGRESS ---------------- */
 
+let ridgeSel = null;
+
+function ridgeDetail(vol) {
+  if (ridgeSel == null || !vol[ridgeSel]) return "";
+  const p = vol[ridgeSel];
+  const tot = p.run + p.bike;
+  const parts = [];
+  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}` : "no activity logged");
+  if (p.target) parts.push(`${Math.round((tot / p.target) * 100)} % of the ${fmtDur(p.target)} target`);
+  else parts.push("no plan that week");
+  if (p.isDeload) parts.push(`<span style="color:var(--sand)">deload</span>`);
+  return `<div class="callout">${fmtShort(p.start)} – ${fmtShort(E.addDays(p.start, 6))} · ${parts.join(" · ")}</div>`;
+}
+
 function renderProgress() {
   const page = $('[data-page="progress"]');
   const t = todayISO();
@@ -810,16 +982,17 @@ function renderProgress() {
   const easyRuns = doc.logs.filter(l => l.sport === "run" && (l.min || 0) >= 20 && l.km > 0 &&
     l.avgHR != null && l.avgHR >= 105 && l.avgHR <= 155).sort((a, b) => (a.date < b.date ? -1 : 1));
   const pPts = easyRuns.map(l => ({ x: dayOff(l.date, easyRuns[0]?.date || t), y: l.min * 60 / l.km }));
-  const hint = E.paceHint(doc.logs, bounds(), 2);
+  const hint = E.paceHint(doc.logs, bounds(), 2, doc.settings.easyPace);
 
   const cons = E.consistency({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
 
   page.innerHTML = `
     <h1 class="page">Progress</h1>
     <div class="card pc">
-      <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow" style="letter-spacing:.04em">LAST 12 WEEKS</span></div>
-      ${C.ridgeChart(vol)}
+      <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow" style="letter-spacing:.04em">${ridgeSel == null ? "LAST 12 WEEKS · TAP A WEEK" : "TAP AGAIN TO CLEAR"}</span></div>
+      ${C.ridgeChart(vol, { selected: ridgeSel })}
       <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span><span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span><span><i style="background:#2a3744"></i>deload cols</span></div>
+      ${ridgeDetail(vol)}
     </div>
     <div class="card pc">
       <div class="hd"><span class="eyebrow">Weight</span></div>
@@ -832,7 +1005,7 @@ function renderProgress() {
       <div class="hd"><span class="eyebrow">Pace at easy HR</span><span class="chip zc2" style="font-size:11px">Z2 · ${E.zoneMid(bounds(), 2)} bpm</span></div>
       ${hint.learned
         ? `<div class="stat"><span class="midnum">${E.fmtPace((hint.lo + hint.hi) / 2)}</span><span class="unit">/km · learned from ${hint.n} easy runs</span></div>`
-        : `<div class="stat"><span class="midnum" style="color:var(--sub)">${E.fmtPace(hint.lo)}–${E.fmtPace(hint.hi)}</span><span class="unit">/km · starting estimate</span></div>`}
+        : `<div class="stat"><span class="midnum" style="color:var(--sub)">${E.fmtPace(hint.lo)}–${E.fmtPace(hint.hi)}</span><span class="unit">/km · ${hint.manual ? "your pace setting" : "starting estimate"}</span></div>`}
       ${pPts.length >= 2
         ? C.lineChart(pPts, { height: 110, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)], lastLabel: E.fmtPace(pPts[pPts.length - 1].y), invert: true })
         : `<p class="row-sub">Run easy (Z2, ≤ ${bounds()[1].hi} bpm for 20+ min) and this chart wakes up — same heart rate getting faster is the clearest rebuild signal.</p>`}
@@ -848,6 +1021,10 @@ function renderProgress() {
       ${cons.cells.length ? `<div class="cells">${C.consistencyCells(cons.cells)}</div>` : `<p class="row-sub">Your first week is in progress — this strip fills as weeks complete.</p>`}
     </div>`;
 
+  page.querySelectorAll("[data-wi]").forEach(r => r.addEventListener("click", () => {
+    ridgeSel = ridgeSel === +r.dataset.wi ? null : +r.dataset.wi;
+    renderProgress();
+  }));
   $("#pg-weigh").addEventListener("click", () => openValueSheet({
     title: "Add weigh-in", label: "Weight", suffix: "kg", step: "0.1",
     value: lastW ? lastW.kg : "", withDate: true,
@@ -917,8 +1094,10 @@ function renderSettings() {
     </div></div>
     <div class="group"><div class="gh">Plan</div><div class="scard">
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
-      <button class="srow" id="st-gr"><span class="l">Weekly growth</span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
+      <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
       <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
+      <button class="srow" id="st-pace"><span class="l">Easy pace<span>your run pace hint until the app has learned</span></span><span class="v ${st.easyPace ? "" : "add"}">${st.easyPace ? `${E.fmtPace(st.easyPace.lo)}–${E.fmtPace(st.easyPace.hi)}` : "Auto"}</span><span class="chev">›</span></button>
+      <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
         <span class="laychips">${E.DAYS.map(d => `<i class="${lay[d] === "run" ? "lr" : lay[d] === "rest" ? "lx" : "lb"}">${d[0].toUpperCase()}</i>`).join("")}</span><span class="chev">›</span></button>
     </div></div>
@@ -963,6 +1142,23 @@ function renderSettings() {
     title: "Deload cadence", label: "Every Nth week", value: st.deloadEvery, min: 2, max: 8,
     onSave: v => { st.deloadEvery = Math.round(v); },
   }));
+  $("#st-pace").addEventListener("click", openPaceSheet);
+  $("#st-quality").addEventListener("click", () => {
+    const qs = qstate();
+    if (st.qualityOverride) {
+      openModal("Put the gate back?", "Interval sessions return behind the consistency gate (3 of the last 4 weeks ≥ 80 %). Already-planned sessions stay as they are.", [
+        { label: "Re-lock the gate", fn: () => { persist(() => { st.qualityOverride = false; }); toast("Gate back on"); } },
+        { label: "Keep unlocked", cls: "ghost" },
+      ]);
+    } else if (qs.run && qs.bike) {
+      toast("Already earned — intervals are unlocked");
+    } else {
+      openModal("Unlock intervals now?", "This skips the 3-consistent-weeks gate that protects the rebuild. New planned weeks get one quality run and one quality ride — this week updates if you remix it.", [
+        { label: "Unlock now", fn: () => { persist(() => { st.qualityOverride = true; }); toast("Intervals unlocked"); } },
+        { label: "Keep the gate", cls: "ghost" },
+      ]);
+    }
+  });
   $("#st-lay").addEventListener("click", openLayoutEditor);
   $("#st-export").addEventListener("click", exportJSON);
   $("#st-import").addEventListener("click", () => $("#st-file-json").click());
@@ -1023,6 +1219,41 @@ function openCustomZones() {
     closeOverlay();
     persist(() => { doc.settings.customZones = zones; doc.settings.zoneMethod = "custom"; });
     toast("Custom zones active");
+  });
+}
+
+/* "6:30" → 390 sec/km, within sane bounds. */
+function parsePace(str) {
+  const m = String(str).trim().match(/^(\d{1,2})[:.](\d{2})$/);
+  if (!m) return null;
+  const sec = +m[1] * 60 + +m[2];
+  return sec >= 180 && sec <= 600 ? sec : null;
+}
+
+function openPaceSheet() {
+  const st = doc.settings;
+  const cur = st.easyPace;
+  const sheet = openSheet(`
+    <div class="sh-title">Easy pace</div>
+    <div class="sh-sub">Your Z2 range, like 6:30 — used for run pace hints until the app has learned from 3 easy runs with HR + distance, then the learned pace takes over.</div>
+    <div class="frow"><span class="l">From</span><input type="text" inputmode="numeric" id="ep-lo" placeholder="6:30" value="${cur ? E.fmtPace(cur.lo) : ""}"><span class="suffix">/km</span></div>
+    <div class="frow"><span class="l">To</span><input type="text" inputmode="numeric" id="ep-hi" placeholder="7:00" value="${cur ? E.fmtPace(cur.hi) : ""}"><span class="suffix">/km</span></div>
+    <button class="btn" id="ep-save">Save</button>
+    ${cur ? `<button class="btn ghost" id="ep-clear">Back to automatic</button>` : ""}
+  `);
+  sheet.querySelector("#ep-save").addEventListener("click", () => {
+    let lo = parsePace(sheet.querySelector("#ep-lo").value);
+    let hi = parsePace(sheet.querySelector("#ep-hi").value);
+    if (lo == null || hi == null) { toast("Use min:sec, e.g. 6:30 (3:00–10:00)"); return; }
+    if (lo > hi) [lo, hi] = [hi, lo];
+    closeOverlay();
+    persist(() => { st.easyPace = { lo, hi }; });
+    toast("Easy pace set ✓");
+  });
+  sheet.querySelector("#ep-clear")?.addEventListener("click", () => {
+    closeOverlay();
+    persist(() => { st.easyPace = null; });
+    toast("Back to automatic");
   });
 }
 

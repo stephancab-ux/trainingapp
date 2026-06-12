@@ -122,13 +122,18 @@ test("re-lock after 2 consecutive bad weeks", () => {
   assert.equal(q.bike, false);
 });
 
-test("quality templates progress Q1 → Q2 after 4 quality sessions", () => {
-  const mk = n => Array.from({ length: n }, () => ({
-    sessions: [{ sport: "run", kind: "quality" }],
+test("quality slot rotates intervals → tempo → hills; intervals still progress Q1 → Q2", () => {
+  const mk = (n, sport) => Array.from({ length: n }, () => ({
+    sessions: [{ sport, kind: "quality" }],
   }));
-  assert.equal(E.qualityTemplateFor(mk(3), "run"), "runQ1");
-  assert.equal(E.qualityTemplateFor(mk(4), "run"), "runQ2");
+  assert.equal(E.qualityTemplateFor([], "run"), "runQ1");
+  assert.equal(E.qualityTemplateFor(mk(1, "run"), "run"), "runTempo");
+  assert.equal(E.qualityTemplateFor(mk(2, "run"), "run"), "runHills");
+  assert.equal(E.qualityTemplateFor(mk(3, "run"), "run"), "runQ1");  // back to intervals, < 4 done
+  assert.equal(E.qualityTemplateFor(mk(6, "run"), "run"), "runQ2");  // interval slot upgraded
   assert.equal(E.qualityTemplateFor([], "bike"), "bikeQ1");
+  assert.equal(E.qualityTemplateFor(mk(1, "bike"), "bike"), "bikeClimb");
+  assert.equal(E.qualityTemplateFor(mk(4, "bike"), "bike"), "bikeQ2");
 });
 
 test("unlocked quality lands on Wednesday run / Thursday ride", () => {
@@ -254,6 +259,40 @@ test("3+ easy runs teach a learned estimate at the Z2 midpoint, ±15 s", () => {
   // perfect line: pace = 810 − 3·HR → 453 at 119 bpm
   assert.deepEqual([hint.lo, hint.hi], [438, 468]);
   assert.equal(E.fmtPace(453), "7:33");
+});
+
+test("manual easy pace replaces the cold start until the model learns", () => {
+  const bounds = E.zoneBounds(SETTINGS);
+  const manual = { lo: 390, hi: 420 }; // 6:30–7:00
+  const h0 = E.paceHint([], bounds, 2, manual);
+  assert.deepEqual([h0.lo, h0.hi, !!h0.manual, h0.learned], [390, 420, true, false]);
+  const logs = [
+    { date: "2026-06-16", sport: "run", min: 30, km: 4.0, avgHR: 120 },
+    { date: "2026-06-18", sport: "run", min: 28, km: 4.0, avgHR: 130 },
+    { date: "2026-06-20", sport: "run", min: 29, km: 4.0, avgHR: 125 },
+  ];
+  const h = E.paceHint(logs, bounds, 2, manual);
+  assert.equal(h.learned, true); // 3 qualifying runs → learned beats the setting
+  const h4 = E.paceHint([], bounds, 4, manual);
+  assert.deepEqual([h4.lo, h4.hi], [325, 355]); // other zones ignore it
+});
+
+test("projectWeeks previews 3 weeks at the default rate, deload included", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const w2 = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-06-22", weekNum: 2 });
+  const w3 = E.planNextWeek({ prevLoadWeek: w2, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-06-29", weekNum: 3 });
+  const proj = E.projectWeeks({ weeks: [w1, w2, w3], settings: SETTINGS });
+  assert.deepEqual(proj.map(p => p.weekNum), [4, 5, 6]);
+  assert.equal(proj[0].isDeload, true);
+  assert.equal(proj[0].startDate, "2026-07-06");
+  assert.ok(Math.abs(proj[1].total - total(w3) * 1.07) <= 10); // week 5 grows from week 3, not the deload
+  assert.ok(proj[2].total > proj[1].total);
+  assert.equal(proj[1].hasQuality, false);
+  const projQ = E.projectWeeks({ weeks: [w1, w2, w3], settings: SETTINGS, quality: { run: true, bike: false } });
+  assert.equal(projQ[1].hasQuality, true);
+  // a faster default rate produces a bigger week 5
+  const proj10 = E.projectWeeks({ weeks: [w1, w2, w3], settings: { ...SETTINGS, growthRate: 0.10 } });
+  assert.ok(proj10[1].total > proj[1].total);
 });
 
 test("short, hard, or HR-less runs never qualify; non-Z2 zones use cold-start", () => {

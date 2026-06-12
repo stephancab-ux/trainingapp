@@ -4,6 +4,8 @@
 
 It plans a weekly run + bike program from heart-rate zones (3 runs · 3 rides · Sunday rest by default), proposes next week's volume every Sunday (+7 % default, slider override, automatic deload every 4th week), keeps interval sessions locked until consistency is proven, tracks weight against a target, and learns your easy-running pace over time.
 
+Once intervals unlock (or you flip the override in Settings → Plan), the weekly hard session rotates through a workout menu — speed repeats, tempo and hill repeats on the run side, sweet spot and climbing on the bike — and any planned quality session can be swapped from the Week tab. Logs carry a workout type, the Week tab projects the coming 3 weeks at your default growth rate, and the easy-pace hint can be set manually until the app has learned from your runs.
+
 The full behavior spec is in [`TRAINING_APP_SPEC.md`](TRAINING_APP_SPEC.md); the original design board is in [`mockup/`](mockup/).
 
 ---
