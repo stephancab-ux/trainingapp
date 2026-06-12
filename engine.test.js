@@ -1,0 +1,361 @@
+/* Unit tests for the training engine — run with `node --test`.
+   Numbered tests map to TRAINING_APP_SPEC.md §12 acceptance items. */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as E from "./engine.js";
+
+const LAYOUT = { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" };
+const SETTINGS = {
+  maxHR: 183, restingHR: null, zoneMethod: "pctmax", lthr: null, customZones: null,
+  targetWeightKg: 80, growthRate: 0.07, deloadEvery: 4, hrvBaselineLow: 42, layout: LAYOUT,
+};
+const total = w => w.targetMin.run + w.targetMin.bike;
+
+/* ---------- dates ---------- */
+
+test("date helpers: snapToMonday, isoWeekId, addDays", () => {
+  assert.equal(E.snapToMonday("2026-06-12"), "2026-06-15"); // Fri -> next Mon
+  assert.equal(E.snapToMonday("2026-06-15"), "2026-06-15"); // Mon -> itself
+  assert.equal(E.isoWeekId("2026-06-15"), "2026-W25");
+  assert.equal(E.isoWeekId("2026-01-01"), "2026-W01");
+  assert.equal(E.isoWeekId("2025-12-29"), "2026-W01"); // ISO year rollover
+  assert.equal(E.addDays("2026-06-28", 3), "2026-07-01");
+  assert.equal(E.nextStartDate({ startDate: "2026-06-15" }, "2026-06-21"), "2026-06-22");
+  assert.equal(E.nextStartDate({ startDate: "2026-06-15" }, "2026-07-15"), "2026-07-13"); // came back late
+});
+
+/* ---------- 1. week 1 matches §7.1 exactly ---------- */
+
+test("acceptance 1: week 1 plan matches the spec table", () => {
+  const w = E.generateWeek1("2026-06-15");
+  assert.equal(w.id, "2026-W25");
+  assert.equal(w.isDeload, false);
+  const expect = [
+    ["mon", "run", "easy", 35, 2], ["tue", "bike", "easy", 60, 2],
+    ["wed", "run", "easy", 35, 2], ["thu", "bike", "easy", 75, 2],
+    ["fri", "run", "easy", 35, 2], ["sat", "bike", "long", 120, 2],
+    ["sun", "rest", "rest", 0, 0],
+  ];
+  w.sessions.forEach((s, i) => {
+    const [day, sport, kind, min, zone] = expect[i];
+    assert.deepEqual([s.day, s.sport, s.kind, s.targetMin, s.zone], [day, sport, kind, min, zone]);
+  });
+  assert.deepEqual(w.targetMin, { run: 105, bike: 255 });
+});
+
+/* ---------- 2. +7 % recommendation, +10 % override, run cap ---------- */
+
+test("acceptance 2: full week + feel 4 recommends +7 %; +10 % override caps run growth", () => {
+  const rec = E.recommendRate({ completion: 1.0, feel: 4, hrv7d: null, settings: SETTINGS });
+  assert.equal(rec.rate, 0.07);
+  assert.equal(rec.noQuality, false);
+
+  const w1 = E.generateWeek1("2026-06-15");
+  const w2 = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0.10, settings: SETTINGS,
+                              startDate: "2026-06-22", weekNum: 2 });
+  assert.ok(w2.targetMin.run <= 105 * 1.10 + 2.5, `run ${w2.targetMin.run} over +10 % cap`);
+  assert.ok(Math.abs(total(w2) - 360 * 1.10) <= 7.5, `total ${total(w2)} not ~396`);
+  for (const s of w2.sessions) assert.equal(s.targetMin % 5, 0, "sessions round to 5");
+});
+
+/* ---------- 3. deload week 4, resume week 5 ---------- */
+
+test("acceptance 3: week 4 deloads at 60 % (long ride ≤ 90); week 5 = week 3 × (1+rate)", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const w2 = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-06-22", weekNum: 2 });
+  const w3 = E.planNextWeek({ prevLoadWeek: w2, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-06-29", weekNum: 3 });
+
+  assert.equal(E.isDeloadWeek(4, SETTINGS.deloadEvery), true);
+  const w4 = E.deloadWeek({ prevLoadWeek: w3, startDate: "2026-07-06", weekNum: 4 });
+  assert.equal(w4.isDeload, true);
+  w4.sessions.forEach((s, i) => {
+    if (s.sport === "rest") return;
+    assert.ok(s.zone <= 2, "deload is all Z2 or below");
+    assert.notEqual(s.kind, "quality");
+    const sixty = E.round5(w3.sessions[i].targetMin * 0.6);
+    const expected = s.kind === "long" ? Math.min(sixty, 90) : sixty;
+    assert.equal(s.targetMin, expected);
+  });
+  const long = w4.sessions.find(s => s.kind === "long");
+  assert.ok(long.targetMin <= 90, "deload long ride capped at 90");
+
+  const w5 = E.planNextWeek({ prevLoadWeek: w3, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-07-13", weekNum: 5 });
+  assert.ok(Math.abs(total(w5) - total(w3) * 1.07) <= 10, "week 5 resumes from week 3");
+  assert.ok(total(w5) > total(w4), "week 5 above deload");
+});
+
+test("long ride hard cap at 210 redistributes to other rides", () => {
+  const s = E.buildSessions(0, 500, LAYOUT);
+  const long = s.find(x => x.kind === "long");
+  assert.equal(long.targetMin, 210);
+  assert.equal(E.sumSessions(s, "bike"), 500);
+});
+
+/* ---------- 4. quality unlock sequence ---------- */
+
+test("acceptance 4: 3 of last 4 weeks ≥ 80 % unlocks run quality; 2 more unlock bike", () => {
+  const wk = (completion, feel, isDeload = false) => ({ completion, feel, isDeload });
+  let q = E.qualityState([wk(0.85, 3), wk(0.9, 4)]);
+  assert.equal(q.run, false);
+  assert.equal(q.progress.done, 2); // honest "2 done" copy
+
+  q = E.qualityState([wk(0.85, 3), wk(0.9, 4), wk(0.82, 3)]);
+  assert.equal(q.run, true);
+  assert.equal(q.bike, false);
+
+  q = E.qualityState([wk(0.85, 3), wk(0.9, 4), wk(0.82, 3), wk(0.9, 3), wk(0.88, 4)]);
+  assert.equal(q.bike, true);
+
+  // deload weeks don't count toward (or against) the window
+  q = E.qualityState([wk(0.85, 3), wk(0.9, 4), wk(1.0, 3, true), wk(0.82, 3)]);
+  assert.equal(q.run, true);
+
+  // a feel=1 inside the window blocks the unlock
+  q = E.qualityState([wk(0.85, 3), wk(0.9, 1), wk(0.82, 3), wk(0.95, 4)]);
+  assert.equal(q.run, false);
+});
+
+test("re-lock after 2 consecutive bad weeks", () => {
+  const wk = (completion, feel) => ({ completion, feel, isDeload: false });
+  const q = E.qualityState([wk(0.85, 3), wk(0.9, 4), wk(0.82, 3), wk(0.5, 2), wk(0.55, 3)]);
+  assert.equal(q.run, false);
+  assert.equal(q.bike, false);
+});
+
+test("quality templates progress Q1 → Q2 after 4 quality sessions", () => {
+  const mk = n => Array.from({ length: n }, () => ({
+    sessions: [{ sport: "run", kind: "quality" }],
+  }));
+  assert.equal(E.qualityTemplateFor(mk(3), "run"), "runQ1");
+  assert.equal(E.qualityTemplateFor(mk(4), "run"), "runQ2");
+  assert.equal(E.qualityTemplateFor([], "bike"), "bikeQ1");
+});
+
+test("unlocked quality lands on Wednesday run / Thursday ride", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const w = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0.07, settings: SETTINGS,
+                             startDate: "2026-06-22", weekNum: 2,
+                             quality: { run: true, bike: true } });
+  const wed = w.sessions.find(s => s.day === "wed");
+  const thu = w.sessions.find(s => s.day === "thu");
+  assert.equal(wed.kind, "quality");
+  assert.equal(wed.qualityTemplate, "runQ1");
+  assert.equal(thu.kind, "quality");
+  assert.equal(thu.qualityTemplate, "bikeQ1");
+});
+
+/* ---------- 5. bad week: −10 % and quality suppressed ---------- */
+
+test("acceptance 5: completion 0.5 + feel 1 → −10 % and no quality next week", () => {
+  const rec = E.recommendRate({ completion: 0.5, feel: 1, hrv7d: null, settings: SETTINGS });
+  assert.equal(rec.rate, -0.10);
+  assert.equal(rec.noQuality, true);
+
+  const w1 = E.generateWeek1("2026-06-15");
+  const w = E.planNextWeek({ prevLoadWeek: w1, chosenRate: rec.rate, settings: SETTINGS,
+                             startDate: "2026-06-22", weekNum: 2,
+                             quality: { run: true, bike: true }, noQuality: true });
+  assert.ok(w.sessions.every(s => s.kind !== "quality"), "quality suppressed");
+  assert.ok(total(w) < 360, "volume reduced");
+});
+
+test("HRV below baseline caps the recommendation at 0", () => {
+  const rec = E.recommendRate({ completion: 1.0, feel: 5, hrv7d: 39, settings: SETTINGS });
+  assert.equal(rec.rate, 0);
+});
+
+test("middling week repeats: completion 0.75 → 0 %", () => {
+  assert.equal(E.recommendRate({ completion: 0.75, feel: 4, hrv7d: null, settings: SETTINGS }).rate, 0);
+  assert.equal(E.recommendRate({ completion: 0.95, feel: 2, hrv7d: null, settings: SETTINGS }).rate, 0);
+});
+
+/* ---------- 6. zones ---------- */
+
+test("acceptance 6: pctmax matches spec exactly; Karvonen switch changes bounds", () => {
+  const pm = E.zoneBounds(SETTINGS);
+  assert.deepEqual(pm.map(z => [z.lo, z.hi]),
+    [[92, 110], [110, 128], [128, 146], [146, 165], [165, 183]]);
+
+  const kv = E.zoneBounds({ ...SETTINGS, restingHR: 50, zoneMethod: "karvonen" });
+  assert.deepEqual(kv[1], { z: 2, lo: 130, hi: 143 }); // 50 + .6/.7 × 133
+  assert.notDeepEqual(kv, pm);
+
+  // graceful fallback when method's inputs are missing
+  assert.deepEqual(E.zoneBounds({ ...SETTINGS, zoneMethod: "karvonen" }), pm);
+});
+
+test("LTHR and custom zone methods (user-editable zones)", () => {
+  const lt = E.zoneBounds({ ...SETTINGS, zoneMethod: "lthr", lthr: 160 });
+  assert.deepEqual(lt[1], { z: 2, lo: 136, hi: 144 });
+  assert.ok(lt[4].hi <= 183, "Z5 capped at maxHR");
+
+  const custom = [{ lo: 90, hi: 112 }, { lo: 112, hi: 130 }, { lo: 130, hi: 148 }, { lo: 148, hi: 166 }, { lo: 166, hi: 183 }];
+  const cz = E.zoneBounds({ ...SETTINGS, zoneMethod: "custom", customZones: custom });
+  assert.deepEqual(cz.map(z => [z.lo, z.hi]), custom.map(z => [z.lo, z.hi]));
+});
+
+/* ---------- 7. mix change ---------- */
+
+test("acceptance 7: 2 runs / 4 rides relayouts with no consecutive runs and scaled minutes", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week, warnings } = E.relayoutWeek({ week: w1, runCount: 2, bikeCount: 4, prevRunMin: 105 });
+  assert.deepEqual(warnings, []);
+  const runDays = week.sessions.filter(s => s.sport === "run").map(s => s.day);
+  const bikeDays = week.sessions.filter(s => s.sport === "bike");
+  assert.equal(runDays.length, 2);
+  assert.equal(bikeDays.length, 4);
+  assert.equal(week.sessions.find(s => s.day === "sun").sport, "rest");
+  assert.equal(week.sessions.find(s => s.day === "sat").kind, "long", "long ride stays on Saturday");
+  for (let i = 0; i < E.DAYS.length - 1; i++) {
+    const a = week.sessions[i], b = week.sessions[i + 1];
+    assert.ok(!(a.sport === "run" && b.sport === "run"), "no consecutive runs");
+  }
+  assert.ok(Math.abs(week.targetMin.run - 105 * 2 / 3) <= 5, "run minutes scale by 2/3");
+  assert.ok(Math.abs(week.targetMin.bike - 255 * 4 / 3) <= 5, "bike minutes scale by 4/3");
+});
+
+test("4 runs cannot avoid consecutive days → warn, then allow", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week, warnings } = E.relayoutWeek({ week: w1, runCount: 4, bikeCount: 2, prevRunMin: 200 });
+  assert.equal(week.sessions.filter(s => s.sport === "run").length, 4);
+  assert.ok(warnings.includes("consecutive-runs"));
+});
+
+test("layout editor guard finds consecutive run days", () => {
+  assert.deepEqual(E.consecutiveRunDays(LAYOUT), []);
+  const bad = { ...LAYOUT, sat: "run" };
+  assert.deepEqual(E.consecutiveRunDays(bad), [["fri", "sat"]]);
+});
+
+/* ---------- 8. pace model ---------- */
+
+test("acceptance 8: seed runs are all too hard to teach the model → cold start", () => {
+  const seedish = [
+    { date: "2026-06-02", sport: "run", min: 30, km: 5.47, avgHR: 170, source: "seed" },
+    { date: "2026-06-05", sport: "run", min: 41, km: 7.04, avgHR: 166, source: "seed" },
+    { date: "2026-06-12", sport: "run", min: 42, km: 7.01, avgHR: 167, source: "seed" },
+  ];
+  const bounds = E.zoneBounds(SETTINGS);
+  const hint = E.paceHint(seedish, bounds, 2);
+  assert.equal(hint.learned, false);
+  assert.deepEqual([hint.lo, hint.hi], [420, 465]); // 7:00–7:45
+});
+
+test("3+ easy runs teach a learned estimate at the Z2 midpoint, ±15 s", () => {
+  const logs = [
+    { date: "2026-06-16", sport: "run", min: 30, km: 4.0, avgHR: 120 }, // 7:30
+    { date: "2026-06-18", sport: "run", min: 28, km: 4.0, avgHR: 130 }, // 7:00
+    { date: "2026-06-20", sport: "run", min: 29, km: 4.0, avgHR: 125 }, // 7:15
+    { date: "2026-06-22", sport: "run", min: 27, km: 4.0, avgHR: 135 }, // 6:45
+  ];
+  const bounds = E.zoneBounds(SETTINGS); // Z2 mid = 119
+  const hint = E.paceHint(logs, bounds, 2);
+  assert.equal(hint.learned, true);
+  // perfect line: pace = 810 − 3·HR → 453 at 119 bpm
+  assert.deepEqual([hint.lo, hint.hi], [438, 468]);
+  assert.equal(E.fmtPace(453), "7:33");
+});
+
+test("short, hard, or HR-less runs never qualify; non-Z2 zones use cold-start", () => {
+  const logs = [
+    { date: "2026-06-16", sport: "run", min: 15, km: 2, avgHR: 120 },   // too short
+    { date: "2026-06-17", sport: "run", min: 40, km: 6, avgHR: 165 },   // too hard
+    { date: "2026-06-18", sport: "run", min: 40, km: 6 },               // no HR
+    { date: "2026-06-19", sport: "bike", min: 60, km: 25, avgHR: 120 }, // not a run
+  ];
+  assert.equal(E.qualifyingRuns(logs).length, 0);
+  const hint = E.paceHint(logs, E.zoneBounds(SETTINGS), 4);
+  assert.deepEqual([hint.lo, hint.hi, hint.learned], [325, 355, false]);
+});
+
+/* ---------- 9. Garmin CSV ---------- */
+
+const CSV_HEADER = "Activity Type,Date,Favorite,Title,Distance,Calories,Time,Avg HR,Max HR,Aerobic TE,Avg Run Cadence,Max Run Cadence,Avg Pace,Best Pace,Total Ascent,Total Descent,Avg Stride Length,Training Stress Score®,Steps,Min Temp,Decompression,Best Lap Time,Number of Laps,Max Temp,Moving Time,Elapsed Time,Min Elevation,Max Elevation";
+const row = (type, date, title, dist, time, hr) =>
+  `${type},${date},false,"${title}","${dist}","450",${time},${hr},176,3.1,160,172,6:01,5:25,"120","118",1.05,"0","6,800",22.0,No,00:05:30,7,28.0,00:40:00,00:43:00,490,560`;
+
+test("acceptance 9: CSV parses, maps sports, strips quoted thousands, dedupes vs seed", () => {
+  const csv = [
+    CSV_HEADER,
+    row("Running", "2026-06-12 08:01:10", "Sierre Running", "7.01", "00:42:10", "167"),
+    row("Treadmill Running", "2026-06-13 07:30:00", "Hotel treadmill", "5.00", "00:31:00", "150"),
+    row("Cycling", "2026-06-14 09:00:00", "Val d'Anniviers", "1,034.56", "01:30:30", "138"),
+    row("Walking", "2026-06-14 18:00:00", "Evening walk", "3.20", "00:45:00", "95"),
+  ].join("\n");
+
+  const parsed = E.parseGarminCSV(csv);
+  assert.equal(parsed.error, undefined);
+  assert.deepEqual(parsed.counts, { run: 2, bike: 1, other: 1, bad: 0 });
+  const ride = parsed.rows.find(r => r.sport === "bike");
+  assert.equal(ride.km, 1034.56, "thousands separator stripped");
+  assert.equal(ride.min, 91, "HH:MM:SS → minutes");
+  assert.equal(parsed.rows[0].date, "2026-06-12");
+  assert.equal(parsed.rows[0].time, "08:01");
+
+  const seedLogs = [{ date: "2026-06-12", sport: "run", min: 42, source: "seed" }];
+  const { fresh, dupes } = E.dedupeImports(parsed.rows, seedLogs);
+  assert.equal(dupes.length, 1, "same-day same-sport seed run is a duplicate");
+  assert.equal(fresh.length, 3);
+
+  // csv-vs-csv: ±10 min window
+  const existing = [{ date: "2026-06-14", time: "09:05", sport: "bike", min: 90, source: "csv" }];
+  const again = E.dedupeImports(parsed.rows, existing);
+  assert.equal(again.dupes.length, 1);
+});
+
+test("CSV with wrong shape is rejected gracefully", () => {
+  assert.ok(E.parseGarminCSV("foo,bar\n1,2").error);
+});
+
+/* ---------- completion & misc ---------- */
+
+test("completion: seed and 'other' excluded, cap at 1.2", () => {
+  const w = E.generateWeek1("2026-06-15"); // 360 planned
+  const logs = [
+    { date: "2026-06-15", sport: "run", min: 35, source: "manual" },
+    { date: "2026-06-16", sport: "bike", min: 60, source: "csv" },
+    { date: "2026-06-17", sport: "run", min: 35, source: "seed" },   // excluded
+    { date: "2026-06-18", sport: "other", min: 120, source: "manual" }, // excluded
+    { date: "2026-06-22", sport: "run", min: 35, source: "manual" }, // next week
+  ];
+  assert.ok(Math.abs(E.weekCompletion(w, logs) - 95 / 360) < 1e-9);
+  const big = [{ date: "2026-06-15", sport: "bike", min: 9999, source: "manual" }];
+  assert.equal(E.weekCompletion(w, big), 1.2);
+});
+
+test("splitMinutes preserves totals in 5-min units", () => {
+  assert.deepEqual(E.splitMinutes(105, [1, 1, 1]), [35, 35, 35]);
+  assert.deepEqual(E.splitMinutes(255, [1, 1, 2]), [65, 65, 125]);
+  assert.equal(E.splitMinutes(112.35, [1, 1, 1]).reduce((a, b) => a + b, 0), 110);
+});
+
+test("VO₂ at target weight: 42.8 @ 87.4 kg → 46.8 @ 80 kg", () => {
+  assert.equal(E.vo2AtTargetWeight(42.8, 87.4, 80), 46.8);
+});
+
+test("weeklyVolume buckets logs into Monday weeks with plan targets", () => {
+  const weeks = [E.generateWeek1("2026-06-15")];
+  const logs = [
+    { date: "2026-06-16", sport: "bike", min: 60, source: "manual" },
+    { date: "2026-06-10", sport: "run", min: 42, source: "seed" }, // pre-plan week, still charted
+  ];
+  const vol = E.weeklyVolume({ logs, weeks, todayISO: "2026-06-19", n: 3 });
+  assert.equal(vol.length, 3);
+  assert.equal(vol[2].bike, 60);
+  assert.equal(vol[2].target, 360);
+  assert.equal(vol[1].run, 42);
+  assert.equal(vol[1].target, null);
+});
+
+test("consistency streak counts completed weeks ≥ 80 %", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const w2 = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0, settings: SETTINGS, startDate: "2026-06-22", weekNum: 2 });
+  const logs = [
+    { date: "2026-06-15", sport: "run", min: 300, source: "manual" },
+    { date: "2026-06-16", sport: "bike", min: 200, source: "manual" },
+  ]; // week 1 fully logged, week 2 empty
+  const c = E.consistency({ weeks: [w1, w2], logs, todayISO: "2026-07-01" });
+  assert.equal(c.cells.length, 2);
+  assert.ok(c.cells[0].pct >= 0.8);
+  assert.equal(c.streak, 0); // week 2 broke it
+});
