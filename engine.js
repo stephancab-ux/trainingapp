@@ -4,10 +4,13 @@
 export const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 export const QUALITY_TEMPLATES = {
-  runQ1:  { label: "8 × 1 min @ Z4 · 2 min Z1 jog between", zone: 4 },
-  runQ2:  { label: "3 × 6 min @ low Z4 · 3 min easy between", zone: 4 },
-  bikeQ1: { label: "3 × 8 min @ Z3–Z4 sweet spot · 5 min easy between", zone: 3 },
-  bikeQ2: { label: "2 × 12 min @ Z3–Z4 sweet spot · 5 min easy between", zone: 3 },
+  runQ1:     { sport: "run",  family: "intervals", name: "Speed repeats",   zone: 4, label: "8 × 1 min @ Z4 · 2 min Z1 jog between" },
+  runQ2:     { sport: "run",  family: "intervals", name: "Speed repeats",   zone: 4, label: "3 × 6 min @ low Z4 · 3 min easy between" },
+  runTempo:  { sport: "run",  family: "tempo",     name: "Tempo run",       zone: 3, label: "20 min steady @ Z3 — comfortably hard, even pace" },
+  runHills:  { sport: "run",  family: "hills",     name: "Hill repeats",    zone: 4, label: "8 × 45 s uphill strong · walk/jog down between" },
+  bikeQ1:    { sport: "bike", family: "intervals", name: "Sweet spot",      zone: 3, label: "3 × 8 min @ Z3–Z4 sweet spot · 5 min easy between" },
+  bikeQ2:    { sport: "bike", family: "intervals", name: "Sweet spot",      zone: 3, label: "2 × 12 min @ Z3–Z4 sweet spot · 5 min easy between" },
+  bikeClimb: { sport: "bike", family: "climb",     name: "Climbing ride",   zone: 3, label: "Long climb @ Z3 — seated, steady; repeat to fill the session" },
 };
 export const QUALITY_WARMUP = "15 min warm-up / 10 min cool-down inside the planned time";
 
@@ -113,12 +116,18 @@ export function qualifyingRuns(logs) {
 }
 
 /* Pace range in sec/km for a planned zone. Learned regression predicts at the
-   Z2 midpoint only; other zones always use the cold-start table. */
-export function paceHint(logs, bounds, zone = 2) {
+   Z2 midpoint only; other zones always use the cold-start table. A manual
+   easyPace {lo,hi} replaces the Z2 cold start until the model has 3 runs. */
+export function paceHint(logs, bounds, zone = 2, easyPace = null) {
   const cold = COLD_START_PACE[zone] || COLD_START_PACE[2];
   if (zone !== 2) return { lo: cold[0], hi: cold[1], learned: false, n: 0 };
   const runs = qualifyingRuns(logs);
-  if (runs.length < 3) return { lo: cold[0], hi: cold[1], learned: false, n: runs.length };
+  if (runs.length < 3) {
+    if (easyPace && easyPace.lo && easyPace.hi) {
+      return { lo: easyPace.lo, hi: easyPace.hi, learned: false, manual: true, n: runs.length };
+    }
+    return { lo: cold[0], hi: cold[1], learned: false, n: runs.length };
+  }
   const xs = runs.map(r => r.avgHR);
   const ys = runs.map(r => (r.min * 60) / r.km);
   const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -356,12 +365,54 @@ export function qualityState(history) {
   return { run, bike, progress: { done, needed: run ? 2 : 3, sinceRun: Math.min(2, sinceRun) } };
 }
 
-/* Q1 → Q2 after 4 planned quality sessions of that sport (§7.5 templates). */
+/* The weekly quality slot rotates through the workout menu (v1.1):
+   run intervals → tempo → hills, bike intervals → climb. The interval slot
+   itself still progresses Q1 → Q2 after 4 planned quality sessions (§7.5). */
+const QUALITY_ROTATION = {
+  run:  ["intervals", "tempo", "hills"],
+  bike: ["intervals", "climb"],
+};
+
 export function qualityTemplateFor(weeks, sport) {
   const count = weeks.reduce((a, w) =>
     a + w.sessions.filter(s => s.sport === sport && s.kind === "quality").length, 0);
+  const cycle = QUALITY_ROTATION[sport];
+  const family = cycle[count % cycle.length];
+  if (family === "tempo") return "runTempo";
+  if (family === "hills") return "runHills";
+  if (family === "climb") return "bikeClimb";
   return sport === "run" ? (count >= 4 ? "runQ2" : "runQ1")
                          : (count >= 4 ? "bikeQ2" : "bikeQ1");
+}
+
+/* v1.1 — read-only look-ahead for the "Coming weeks" card: simulate the next
+   n weeks at the default growth rate. The Sunday check-in stays the real
+   control; this only shows where the dial is pointing. */
+export function projectWeeks({ weeks, settings, quality = { run: false, bike: false }, n = 3 }) {
+  if (!weeks.length) return [];
+  const sim = [...weeks];
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const last = sim[sim.length - 1];
+    const startDate = addDays(last.startDate, 7);
+    const weekNum = last.weekNum + 1;
+    const w = isDeloadWeek(weekNum, settings.deloadEvery)
+      ? deloadWeek({ prevLoadWeek: lastLoadWeek(sim), startDate, weekNum })
+      : planNextWeek({
+          prevLoadWeek: lastLoadWeek(sim), chosenRate: settings.growthRate, settings,
+          startDate, weekNum, quality,
+          runQTemplate: qualityTemplateFor(sim, "run"),
+          bikeQTemplate: qualityTemplateFor(sim, "bike"),
+        });
+    sim.push(w);
+    out.push({
+      weekNum, startDate, isDeload: w.isDeload,
+      run: w.targetMin.run, bike: w.targetMin.bike,
+      total: w.targetMin.run + w.targetMin.bike,
+      hasQuality: w.sessions.some(s => s.kind === "quality"),
+    });
+  }
+  return out;
 }
 
 /* ---------------- weekly mix change (§7.6) ---------------- */

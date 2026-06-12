@@ -3,7 +3,7 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function uid() {
   return (crypto.randomUUID && crypto.randomUUID()) ||
@@ -23,6 +23,8 @@ export function defaultSettings() {
     hrvBaselineLow: 42,
     layout: { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" },
     qualityUnlocked: false,
+    qualityOverride: false,
+    easyPace: null,
     lastExportAt: null,
   };
 }
@@ -100,7 +102,11 @@ export function wipe() {
 
 /* ---- migrations: add a step per schema bump; each takes vN → vN+1 ---- */
 
-const MIGRATIONS = {};
+const MIGRATIONS = {
+  // v2: settings gain easyPace + qualityOverride (values land via the defaults
+  // merge below); logs may carry an optional `type` tag.
+  1: d => ({ ...d, schemaVersion: 2 }),
+};
 
 export function migrate(doc) {
   let d = doc;

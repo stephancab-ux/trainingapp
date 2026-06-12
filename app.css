@@ -119,15 +119,24 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .unlock .pips i.f{background:var(--cy)}
 .unlock p{font-size:13.5px;color:var(--sub)}
 .unlock p b{color:var(--ink)}
+.cw{display:flex;align-items:center;gap:10px;min-height:46px;border-bottom:1px solid var(--line)}
+.cw:last-of-type{border-bottom:none}
+.cw .d{width:62px;flex:none;display:flex;flex-direction:column}
+.cw .d b{font-size:14px}
+.cw .d span{font-size:11px;color:var(--mut)}
+.cw .t{flex:1;display:flex;flex-direction:column}
+.cw .t b{font-size:15px;font-variant-numeric:tabular-nums}
+.cw .t span{font-size:12px;color:var(--mut)}
 .fab{position:fixed;right:calc(50% - 240px + 18px);bottom:calc(var(--tabbar-h) + 18px);width:56px;height:56px;border-radius:18px;background:var(--card2);border:1px solid var(--line);color:var(--cy);font-size:30px;font-weight:600;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 26px rgba(0,0,0,.5);z-index:25}
 @media (max-width:512px){.fab{right:18px}}
 
 /* ---------- sheets & modals ---------- */
 .scrim{position:fixed;inset:0;background:rgba(3,6,9,.62);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);z-index:40;opacity:0;transition:opacity .2s}
 .scrim.show{opacity:1}
-.sheet{position:fixed;left:50%;transform:translateX(-50%) translateY(102%);bottom:0;width:100%;max-width:480px;background:var(--card2);border-radius:30px 30px 0 0;padding:10px 20px calc(18px + env(safe-area-inset-bottom));z-index:45;box-shadow:0 -24px 60px rgba(0,0,0,.6);transition:transform .26s cubic-bezier(.32,.72,.33,1);max-height:88vh;overflow-y:auto}
+.sheet{position:fixed;left:50%;transform:translateX(-50%) translateY(102%);bottom:0;width:100%;max-width:480px;background:var(--card2);border-radius:30px 30px 0 0;padding:10px 20px calc(18px + env(safe-area-inset-bottom));z-index:45;box-shadow:0 -24px 60px rgba(0,0,0,.6);transition:transform .26s cubic-bezier(.32,.72,.33,1);max-height:88vh;overflow-y:auto;overscroll-behavior:contain}
 .sheet.show{transform:translateX(-50%) translateY(0)}
-.grab{width:42px;height:5px;border-radius:3px;background:#334252;margin:4px auto 14px}
+.grab{width:42px;height:5px;border-radius:3px;background:#334252;margin:4px auto 14px;position:relative;touch-action:none}
+.grab::before{content:"";position:absolute;left:-80px;right:-80px;top:-12px;bottom:-18px}
 .sh-title{font-size:20px;font-weight:750}
 .sh-sub{color:var(--sub);font-size:13.5px;margin-top:1px;margin-bottom:4px}
 .frow{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:52px;border-bottom:1px solid var(--line)}
@@ -147,6 +156,11 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .rpe-row .l{color:var(--sub);font-size:15px;font-weight:600;margin-right:6px}
 .rpe-row button{flex:1;height:34px;border-radius:8px;background:#1b2734;color:var(--sub);font-size:12.5px;font-weight:700}
 .rpe-row button.on{background:var(--cy);color:var(--cy-ink)}
+.type-row{display:flex;gap:8px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
+.type-row .l{color:var(--sub);font-size:15px;font-weight:600;flex:none}
+.type-row .opts{display:flex;gap:5px;flex:1;flex-wrap:wrap;justify-content:flex-end}
+.type-row .opts button{height:34px;padding:0 11px;border-radius:9px;background:#1b2734;color:var(--sub);font-size:12.5px;font-weight:700}
+.type-row .opts button.on{background:var(--cy);color:var(--cy-ink)}
 .sheet .btn{margin-top:12px}
 .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 48px);max-width:380px;background:var(--card2);border:1px solid var(--line);border-radius:22px;padding:20px;z-index:50;box-shadow:0 30px 80px rgba(0,0,0,.6)}
 .modal h2{font-size:18px;font-weight:750;margin-bottom:6px}

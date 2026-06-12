@@ -279,3 +279,16 @@ Subject grounding: climbing back to fitness, in the Valais Alps. The design shou
 ## 13. Out of scope (v2 ideas, do not build now)
 
 French localization · Garmin FIT-file parsing · automatic HRV-based daily adjustments · long-run progression block (revisit ~week 8) · shareable weekly summary card · multi-device sync.
+
+---
+
+## 14. v1.1 changes (2026-06-12, user-requested after first use)
+
+1. **Workout menu + rotation.** `QUALITY_TEMPLATES` grows to: run — speed repeats (Q1/Q2), tempo run, hill repeats; bike — sweet spot (Q1/Q2), climbing ride. The weekly quality slot auto-rotates (run: intervals → tempo → hills; bike: intervals → climb); the interval slot still upgrades Q1 → Q2 after 4 planned quality sessions. Tapping a planned quality session on the Week tab opens a chooser to swap the workout type.
+2. **Manual unlock override.** Settings → Plan → Intervals can force the quality gate open (`settings.qualityOverride`). The 3-consistent-weeks rule (§7.5) remains the default; the override is explicit, warned, and reversible.
+3. **Typed logs.** Logs carry an optional `type` (`easy | tempo | intervals | hills | long | climb`), pre-filled from the planned session, editable in the log sheet, shown in week rows and history. No effect on completion math.
+4. **Coming-weeks projection.** The Week tab shows a read-only projection of the next 3 weeks (volume split, deload, quality) computed by `engine.projectWeeks` at `settings.growthRate` — which is the existing editable "Weekly growth" setting. Real weeks are still created only at the Sunday check-in.
+5. **Manual easy pace.** `settings.easyPace {lo,hi}` (sec/km) replaces the Z2 cold-start range (§5) until 3 qualifying runs exist; then the learned model takes over. Editable under Settings → Plan → Easy pace.
+6. **Sheet drag-to-dismiss.** Bottom sheets close by swiping down (pointer-event drag, 8 px engage threshold, 100 px / fast-flick dismiss); the grab bar gets an enlarged `touch-action:none` hit area.
+7. **Ridge chart inspection.** Tapping a column on the weekly-volume ridge highlights it and shows that week's dates, run/ride minutes, % of target and deload state. Tap again to clear.
+8. **Storage.** `schemaVersion` 2 (migration adds the two new settings keys). Service worker `v1.1.0`.
