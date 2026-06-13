@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as E from "./engine.js";
+import * as F from "./fit.js";
 
 const LAYOUT = { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" };
 const SETTINGS = {
@@ -324,7 +325,7 @@ test("acceptance 9: CSV parses, maps sports, strips quoted thousands, dedupes vs
 
   const parsed = E.parseGarminCSV(csv);
   assert.equal(parsed.error, undefined);
-  assert.deepEqual(parsed.counts, { run: 2, bike: 1, other: 1, bad: 0 });
+  assert.deepEqual(parsed.counts, { run: 2, bike: 1, trail: 0, hike: 0, other: 1, bad: 0 });
   const ride = parsed.rows.find(r => r.sport === "bike");
   assert.equal(ride.km, 1034.56, "thousands separator stripped");
   assert.equal(ride.min, 91, "HH:MM:SS → minutes");
@@ -444,12 +445,25 @@ test("rotation respects allowed families; null when none allowed", () => {
 });
 
 test("placeLayout honours a non-Sunday rest day with no back-to-back runs", () => {
-  const lay = E.placeLayout(3, 3, "wed"); // Wednesday off
-  assert.equal(lay.wed, "rest");
-  assert.equal(Object.values(lay).filter(v => v === "run").length, 3);
-  assert.equal(Object.values(lay).filter(v => v === "bike" || v === "bike-long").length, 3);
-  assert.equal(E.consecutiveRunDays(lay).length, 0, "no two runs on consecutive days");
-  assert.ok(Object.values(lay).includes("bike-long"));
+  const lay = E.placeLayout(3, 3, "wed"); // Wednesday off; returns day→[sports]
+  assert.deepEqual(lay.wed, ["rest"]);
+  const flat = Object.values(lay).flat();
+  assert.equal(flat.filter(v => v === "run").length, 3);
+  assert.equal(flat.filter(v => v === "bike" || v === "bike-long").length, 3);
+  const oneADay = {}; E.DAYS.forEach(d => { oneADay[d] = lay[d][0]; }); // 6 sessions = one/day
+  assert.equal(E.consecutiveRunDays(oneADay).length, 0, "no two runs on consecutive days");
+  assert.ok(flat.includes("bike-long"));
+});
+
+test("placeLayout puts a 7th/8th session as a two-a-day on a fresh day, not by the long ride", () => {
+  const lay = E.placeLayout(4, 4, "sun"); // 8 sessions over 6 active days → 2 doubles
+  const trainingSlots = Object.values(lay).flat().filter(v => v !== "rest").length;
+  assert.equal(trainingSlots, 8, "4 runs + 4 rides placed");
+  const doubleDays = E.DAYS.filter(d => lay[d].length === 2 && !lay[d].includes("rest"));
+  assert.ok(doubleDays.length >= 1, "at least one two-a-day");
+  const longDay = E.DAYS.find(d => lay[d].includes("bike-long"));
+  // the extra session should not pile onto the long-ride day
+  assert.ok(!doubleDays.includes(longDay), "extra not stacked on the long-ride day");
 });
 
 test("relayoutWeek reflows around a moved rest day", () => {
@@ -574,4 +588,99 @@ test("coachInsights fires categories with a why, stays quiet on no data, and car
   const hot = E.coachInsights({ doc: { ...doc, logs }, todayISO: "2026-06-28" });
   const rec = hot.find(i => i.action && i.action.kind === "insertRecoveryDay");
   assert.ok(rec && rec.category === "recovery", "load spike → recovery action");
+});
+
+/* ---------- v1.3: trail/hike, calories, range, adherence, FIT ---------- */
+
+test("trail counts as run for plan volume; hike does not", () => {
+  const w = E.generateWeek1("2026-06-15"); // Monday plans a 35-min run
+  assert.ok(E.loggedMinutes(w, [{ date: "2026-06-15", sport: "trail", min: 35, source: "manual" }]) >= 35);
+  assert.equal(E.loggedMinutes(w, [{ date: "2026-06-15", sport: "hike", min: 120, source: "manual" }]), 0);
+  assert.equal(E.isRunType("trail"), true);
+  assert.equal(E.isRunType({ sport: "hike" }), false);
+});
+
+test("CSV captures calories + descent and maps trail/hike", () => {
+  // the standard row() helper sets Calories=450, Total Ascent=120, Total Descent=118
+  const csv = [CSV_HEADER,
+    row("Trail Running", "2026-06-12 08:00:00", "Trail", "12.0", "01:30:00", "150"),
+    row("Hiking", "2026-06-10 08:00:00", "Hike", "9.0", "02:00:00", "120"),
+  ].join("\n");
+  const p = E.parseGarminCSV(csv);
+  const trail = p.rows.find(r => r.sport === "trail");
+  assert.equal(trail.descent, 118);
+  assert.equal(trail.calories, 450);
+  assert.equal(p.rows.find(r => r.sport === "hike").sport, "hike");
+});
+
+test("classifyImport auto-skips already-imported csv rows, reviews manual matches", () => {
+  const rows = [
+    { date: "2026-07-01", sport: "bike", min: 60, km: 22, time: "08:00" }, // matches a csv log → autoSkip
+    { date: "2026-07-02", sport: "run", min: 35, km: 5, time: "09:00" },   // matches a manual log → review
+    { date: "2026-07-03", sport: "bike", min: 90, km: 40, time: "10:00" }, // new → fresh
+  ];
+  const logs = [
+    { id: "c1", date: "2026-07-01", sport: "bike", min: 60, km: 22, source: "csv" },
+    { id: "m1", date: "2026-07-02", sport: "run", min: 35, km: 5, source: "manual" },
+  ];
+  const c = E.classifyImport(rows, logs);
+  assert.equal(c.fresh.length, 1);
+  assert.equal(c.autoSkip.length, 1);
+  assert.equal(c.review.length, 1);
+});
+
+test("calorie aggregations: weekly total and dominant sport", () => {
+  const logs = [
+    { date: "2026-06-15", sport: "run", min: 40, calories: 500, source: "manual" },
+    { date: "2026-06-16", sport: "bike", min: 60, calories: 800, source: "manual" },
+  ];
+  assert.equal(E.weeklyCalories({ logs, todayISO: "2026-06-21", n: 1 })[0].total, 1300);
+  const bt = E.caloriesByType({ logs, todayISO: "2026-06-21", n: 1 });
+  assert.equal(bt.total, 1300);
+  assert.equal(bt.top.sport, "bike");
+});
+
+test("rangeWindow: 4-week window, Monday-aligned, with previous period + offset", () => {
+  const r = E.rangeWindow({ preset: "4w", offset: 0 }, "2026-06-17");
+  assert.equal(E.dayIndex(r.from), 0); // Monday
+  assert.equal(Math.round((E.parseISO(r.to) - E.parseISO(r.from)) / 864e5) + 1, 28);
+  assert.equal(r.prevTo, E.addDays(r.from, -1));
+  const r2 = E.rangeWindow({ preset: "4w", offset: 1 }, "2026-06-17");
+  assert.equal(r2.to, E.addDays(r.to, -28));
+});
+
+test("programAdherence: kept days streak; a missed session breaks it", () => {
+  const w = E.generateWeek1("2026-06-15");
+  const logs = [];
+  for (const s of w.sessions) if (s.sport !== "rest")
+    logs.push({ date: E.dateOfDay(w, s.day), sport: s.sport, min: s.targetMin, source: "manual" });
+  const a = E.programAdherence({ weeks: [w], logs, todayISO: "2026-06-22" });
+  assert.ok(a.current >= 7, `streak ${a.current}`); // 6 sessions + the respected rest
+  assert.equal(a.missed, 0);
+  const a2 = E.programAdherence({ weeks: [w], logs: logs.filter(l => l.date !== "2026-06-17"), todayISO: "2026-06-22" });
+  assert.ok(a2.missed >= 1);
+});
+
+test("workoutSteps expand intervals; easy is one block; FIT encodes a valid file", () => {
+  const iv = E.workoutSteps({ sport: "run", kind: "quality", qualityTemplate: "runQ1", targetMin: 35, zone: 4 }, BOUNDS);
+  assert.equal(iv.length, 5);
+  assert.equal(iv[0].intensity, "warmup");
+  assert.equal(iv[3].type, "repeat");
+  assert.equal(iv[3].count, 8);
+  assert.ok(iv[1].hrLo > 100);
+  const easy = E.workoutSteps({ sport: "run", kind: "easy", targetMin: 40, zone: 2 }, BOUNDS);
+  assert.equal(easy.length, 1);
+  assert.equal(easy[0].seconds, 2400);
+
+  const bytes = F.encodeWorkout({ name: "Speed repeats", sport: "run", steps: iv });
+  assert.ok(bytes.length > 60);
+  assert.equal(String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]), ".FIT");
+  assert.equal((bytes[12] | (bytes[13] << 8)), F.fitCRC(bytes, 0, 12), "header CRC");
+  assert.equal((bytes[bytes.length - 2] | (bytes[bytes.length - 1] << 8)), F.fitCRC(bytes, 0, bytes.length - 2), "file CRC");
+});
+
+test("fmtBestValue formats time / distance / metres", () => {
+  assert.equal(E.fmtBestValue({ unit: "time", value: 1350 }), "22:30");
+  assert.equal(E.fmtBestValue({ unit: "km", value: 70.71 }), "70.7 km");
+  assert.equal(E.fmtBestValue({ unit: "m", value: 1240 }), "1240 m");
 });
