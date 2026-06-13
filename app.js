@@ -39,6 +39,8 @@ const fmtShort = iso => fmtDate(iso,
     : { day: "numeric", month: "short", year: "numeric" });
 /* very compact d/m label for dense daily bar axes */
 const shortDay = iso => { const d = E.parseISO(iso); return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
+/* always includes the year — for chart read-outs that can span multiple years */
+const fmtFull = iso => fmtDate(iso, { day: "numeric", month: "short", year: "numeric" });
 
 const ICONS = {
   run: `<svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg>`,
@@ -1617,7 +1619,7 @@ function ridgeDetail(vol) {
   if (p.target) parts.push(`${Math.round(((p.run + p.bike) / p.target) * 100)} % of the ${fmtDur(p.target)} plan`);
   if (p.isDeload) parts.push(`<span style="color:var(--sand)">deload</span>`);
   const end = p.end || E.addDays(p.start, 6);
-  return `<div class="callout">${fmtShort(p.start)} – ${fmtShort(end)} · ${parts.join(" · ")}</div>`;
+  return `<div class="callout">${fmtFull(p.start)} – ${fmtFull(end)} · ${parts.join(" · ")}</div>`;
 }
 
 let lineSel = {}; // cardId -> {si,pi} | null
@@ -1649,7 +1651,7 @@ function lineDetail(id, series, fmtVal) {
   const p = sel && series[sel.si] && series[sel.si].points[sel.pi];
   if (!p) return "";
   const link = p.id ? ` <button class="lk seeact" data-openlog="${p.id}">see this activity →</button>` : "";
-  return `<div class="callout">${fmtShort(p.date)} · ${fmtVal(p, sel.si)}${link}</div>`;
+  return `<div class="callout">${fmtFull(p.date)} · ${fmtVal(p, sel.si)}${link}</div>`;
 }
 
 function renderProgress() {
