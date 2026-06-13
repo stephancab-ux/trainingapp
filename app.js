@@ -2250,10 +2250,12 @@ function renderProgress() {
       const nonzero = series.filter(p => p.y > 0);
       const splitTot = calSplit.planned + calSplit.unplanned;
       const avgC = seriesAvg(series);
+      const curFrom = unit === "month" ? t.slice(0, 7) + "-01" : E.addDays(t, -E.dayIndex(t));
+      const curCal = E.caloriesInRange(doc.logs, curFrom, t);
       return `
       <div class="hd"><span class="eyebrow">Calories burned</span><span class="eyebrow tapx">per ${unit}</span></div>
       <div class="stat"><span class="midnum">${total.toLocaleString()}</span><span class="unit">kcal · ${win.label.toLowerCase()}</span></div>
-      ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${unit}`]) : ""}
+      ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${unit}`, `this ${unit} ${Math.round(curCal).toLocaleString()} kcal`]) : ""}
       ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
       ${lineDetail("calories", [{ points: series }], p => `${Math.round(p.y).toLocaleString()} kcal`)}
       ${splitTot > 0 ? `<div class="callout">Planned <b>${calSplit.planned.toLocaleString()}</b> · unplanned <b>${calSplit.unplanned.toLocaleString()}</b> kcal in this range.</div>` : ""}`;
