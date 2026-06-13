@@ -58,7 +58,7 @@ export function lineChart(points, opts = {}) {
   const { width = 352, height = 140, target = null, targetLabel = "",
           emaAlpha = null, xLabels = null, lastLabel = null, invert = false,
           color = CY, padTop = 12, padBottom = 20, axis = false, fmtY = null,
-          selected = null, taps = false } = opts;
+          selected = null, taps = false, avg = false } = opts;
   const series = opts.series || (points && points.length ? [{ points, color, emaAlpha }] : []);
   const all = series.flatMap(se => se.points);
   if (all.length < 2) return "";
@@ -83,6 +83,17 @@ export function lineChart(points, opts = {}) {
   if (target != null) {
     s += `<line x1="${L}" y1="${Y(target)}" x2="${W - 14}" y2="${Y(target)}" stroke="${SAND}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
     s += `<text x="${W}" y="${Y(target) + 3.5}" fill="${SAND}" font-size="10" text-anchor="end" font-weight="700">${targetLabel}</text>`;
+  }
+  // faint dashed mean line per series (range average), drawn under the points
+  if (avg) {
+    const yf = fmtY || (v => Math.round(v));
+    series.forEach(se => {
+      if (!se.points.length) return;
+      const m = se.points.reduce((a, p) => a + p.y, 0) / se.points.length;
+      const col = se.color || color;
+      s += `<line x1="${L}" y1="${Y(m)}" x2="${W - 4}" y2="${Y(m)}" stroke="${col}" stroke-width="1.2" stroke-dasharray="3 4" opacity="0.45"/>`;
+      s += `<text x="${W - 2}" y="${Y(m) - 3}" fill="${col}" font-size="9" text-anchor="end" opacity="0.85">${yf(m)}</text>`;
+    });
   }
   series.forEach((se, si) => {
     const pts = se.points, col = se.color || color;

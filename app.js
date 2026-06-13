@@ -1331,6 +1331,13 @@ const CARD_LABEL = {
   consistency: "Consistency",
 };
 
+const seriesAvg = pts => pts.length ? pts.reduce((a, p) => a + p.y, 0) / pts.length : null;
+/* A small "average over the range" read-out under a chart's header. */
+function avgLine(parts) {
+  const txt = parts.filter(Boolean).join(" · ");
+  return txt ? `<div class="avgline">avg · ${txt}</div>` : "";
+}
+
 function lineDetail(id, series, fmtVal) {
   const sel = lineSel[id];
   const p = sel && series[sel.si] && series[sel.si].points[sel.pi];
@@ -1426,8 +1433,9 @@ function renderProgress() {
       ${hint.learned
         ? `<div class="stat"><span class="midnum">${E.fmtPace((hint.lo + hint.hi) / 2)}</span><span class="unit">/km · learned from ${hint.n} easy runs</span></div>`
         : `<div class="stat"><span class="midnum" style="color:var(--sub)">${E.fmtPace(hint.lo)}–${E.fmtPace(hint.hi)}</span><span class="unit">/km · ${hint.manual ? "your pace setting" : "starting estimate"}</span></div>`}
+      ${pPts.length ? avgLine([`${E.fmtPace(seriesAvg(pPts))} /km over ${win.label.toLowerCase()}`]) : ""}
       ${pPts.length >= 2
-        ? wrap("pace", C.lineChart(pPts, { height: 116, axis: true, taps: true, invert: true, fmtY: v => E.fmtPace(v), selected: lineSel.pace, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)] }))
+        ? wrap("pace", C.lineChart(pPts, { height: 116, axis: true, taps: true, avg: true, invert: true, fmtY: v => E.fmtPace(v), selected: lineSel.pace, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)] }))
         : `<p class="row-sub">Run easy (Z2, ≤ ${B[1].hi} bpm for 20+ min) and this chart wakes up.</p>`}
       ${lineDetail("pace", [{ points: pPts }], p => `${E.fmtPace(p.y)} /km`)}`,
 
@@ -1454,9 +1462,11 @@ function renderProgress() {
       const ser = [];
       if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
       if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
+      const ae = seriesAvg(easy), ah = seriesAvg(hard);
       return `
       <div class="hd"><span class="eyebrow">Running speed by type</span><span class="eyebrow tapx">km/h</span></div>
-      ${ser.some(s => s.points.length >= 2) ? wrap("runSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.runSpeed })) : `<p class="row-sub">Log runs with distance to compare your easy and hard-day speeds over time.</p>`}
+      ${avgLine([ae != null ? `easy ${ae.toFixed(1)}` : "", ah != null ? `hard ${ah.toFixed(1)}` : "", "km/h"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("runSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.runSpeed })) : `<p class="row-sub">Log runs with distance to compare your easy and hard-day speeds over time.</p>`}
       <div class="legend2"><span><i style="background:var(--cy)"></i>easy</span><span><i style="background:var(--sand)"></i>tempo/hard</span></div>
       ${lineDetail("runSpeed", ser, (p) => `${p.y.toFixed(1)} km/h`)}`;
     },
@@ -1467,17 +1477,23 @@ function renderProgress() {
       const ser = [];
       if (flat.length) ser.push({ points: flat, color: "#8e9df8" });
       if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
+      const af = seriesAvg(flat), ac = seriesAvg(climb);
       return `
       <div class="hd"><span class="eyebrow">Ride speed by type</span><span class="eyebrow tapx">km/h</span></div>
-      ${ser.some(s => s.points.length >= 2) ? wrap("rideSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.rideSpeed })) : `<p class="row-sub">Log rides with distance — flat and climbing speeds are tracked separately.</p>`}
+      ${avgLine([af != null ? `flat ${af.toFixed(1)}` : "", ac != null ? `climb ${ac.toFixed(1)}` : "", "km/h"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("rideSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rideSpeed })) : `<p class="row-sub">Log rides with distance — flat and climbing speeds are tracked separately.</p>`}
       <div class="legend2"><span><i style="background:#8e9df8"></i>flat</span><span><i style="background:var(--sand)"></i>climb</span></div>
       ${lineDetail("rideSpeed", ser, p => `${p.y.toFixed(1)} km/h`)}`;
     },
 
-    ascent: () => `
+    ascent: () => {
+      const am = seriesAvg(ascentPts);
+      return `
       <div class="hd"><span class="eyebrow">Climbing</span><span class="eyebrow tapx">m ascent · climbs only</span></div>
-      ${ascentPts.length >= 2 ? wrap("ascent", C.lineChart(ascentPts, { axis: true, taps: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.ascent, xLabels: [fmtShort(ascentPts[0].date), fmtShort(ascentPts[ascentPts.length - 1].date)] })) : `<p class="row-sub">Climbing rides, trail runs and hikes (with ascent logged) appear here — your climbing capacity over time.</p>`}
-      ${lineDetail("ascent", [{ points: ascentPts }], p => `${Math.round(p.y)} m climbed`)}`,
+      ${am != null ? avgLine([`${Math.round(am).toLocaleString()} m per outing`, `${ascentPts.length} climb${ascentPts.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
+      ${ascentPts.length >= 2 ? wrap("ascent", C.lineChart(ascentPts, { axis: true, taps: true, avg: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.ascent, xLabels: [fmtShort(ascentPts[0].date), fmtShort(ascentPts[ascentPts.length - 1].date)] })) : `<p class="row-sub">Climbing rides, trail runs and hikes (with ascent logged) appear here — your climbing capacity over time.</p>`}
+      ${lineDetail("ascent", [{ points: ascentPts }], p => `${Math.round(p.y)} m climbed`)}`;
+    },
 
     paceVsRpe: () => {
       const sp = doc.logs.filter(l => E.isRunType(l) && l.km > 0 && l.min > 0 && l.rpe && inRange(l.date)).sort(byDate);
@@ -1498,7 +1514,8 @@ function renderProgress() {
       if (e7.length) ser.push({ points: e7, color: "var(--cy)" });
       return `
       <div class="hd"><span class="eyebrow">Running efficiency</span><span class="eyebrow tapx">speed ÷ RPE</span></div>
-      ${e7.length >= 2 ? wrap("efficiency", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(1), selected: lineSel.efficiency })) : `<p class="row-sub">Log runs with distance and RPE — a rising line means more speed for the same effort.</p>`}
+      ${e7.length ? avgLine([`${seriesAvg(e7).toFixed(2)} over ${win.label.toLowerCase()}`]) : ""}
+      ${e7.length >= 2 ? wrap("efficiency", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(1), selected: lineSel.efficiency })) : `<p class="row-sub">Log runs with distance and RPE — a rising line means more speed for the same effort.</p>`}
       <div class="legend2"><span><i style="background:var(--cy)"></i>7-day</span><span><i style="background:#8e9df8"></i>28-day</span></div>
       ${lineDetail("efficiency", ser, p => p.y.toFixed(2))}`;
     },
@@ -1519,13 +1536,15 @@ function renderProgress() {
     rpeByType: () => {
       const colors = { easy: "var(--cy)", long: "#7fd6c0", tempo: "var(--sand)", intervals: "#e89b5a", hills: "#e86b6b", climb: "#8e9df8" };
       const ser = [];
+      const avgParts = [];
       for (const ty of ["easy", "long", "tempo", "intervals", "hills", "climb"]) {
         const pts = rpeList.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty }));
-        if (pts.length) ser.push({ points: pts, color: colors[ty] });
+        if (pts.length) { ser.push({ points: pts, color: colors[ty] }); avgParts.push(`${ty} ${seriesAvg(pts).toFixed(1)}`); }
       }
       return `
       <div class="hd"><span class="eyebrow">RPE by type</span><span class="eyebrow tapx">1–10</span></div>
-      ${ser.some(s => s.points.length >= 2) ? wrap("rpeByType", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.rpeByType })) : `<p class="row-sub">Tag your logs with a type and RPE to see each kind's effort trend on its own.</p>`}
+      ${avgParts.length ? avgLine(avgParts) : ""}
+      ${ser.some(s => s.points.length >= 2) ? wrap("rpeByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rpeByType })) : `<p class="row-sub">Tag your logs with a type and RPE to see each kind's effort trend on its own.</p>`}
       ${lineDetail("rpeByType", ser, p => `${p.ty} · RPE ${p.y}`)}`;
     },
 
@@ -1546,10 +1565,12 @@ function renderProgress() {
       const total = series.reduce((a, p) => a + p.y, 0);
       const nonzero = series.filter(p => p.y > 0);
       const splitTot = calSplit.planned + calSplit.unplanned;
+      const avgC = seriesAvg(series);
       return `
       <div class="hd"><span class="eyebrow">Calories burned</span><span class="eyebrow tapx">${showWeekly ? "per week" : "per day"}</span></div>
       <div class="stat"><span class="midnum">${total.toLocaleString()}</span><span class="unit">kcal · ${win.label.toLowerCase()}</span></div>
-      ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [fmtShort(series[0].date), fmtShort(series[series.length - 1].date)] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
+      ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${showWeekly ? "week" : "day"}`]) : ""}
+      ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [fmtShort(series[0].date), fmtShort(series[series.length - 1].date)] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
       ${lineDetail("calories", [{ points: series }], p => `${Math.round(p.y).toLocaleString()} kcal`)}
       ${splitTot > 0 ? `<div class="callout">Planned <b>${calSplit.planned.toLocaleString()}</b> · unplanned <b>${calSplit.unplanned.toLocaleString()}</b> kcal in this range.</div>` : ""}`;
     },
