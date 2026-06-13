@@ -420,6 +420,8 @@ svg text{font-family:inherit}
 .dsum-ct{flex:none;font-size:13px;font-weight:700;color:var(--cy);font-variant-numeric:tabular-nums}
 .dsum-v{flex:1;text-align:right;font-size:11.5px;color:var(--sub);font-weight:600}
 .hlist{padding:2px 14px;max-height:none}
+.diary-filter{display:flex;gap:8px;margin:0 0 6px}
+.diary-filter .rangesel{flex:1}
 
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{animation:none!important;transition:none!important}

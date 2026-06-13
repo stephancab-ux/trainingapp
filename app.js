@@ -406,6 +406,21 @@ function hasFreshCoach() {
 
 /* ---------------- COACH ---------------- */
 
+/* Program-adherence streak — a banner at the top of the Coach tab. */
+function streakBlock() {
+  const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: todayISO() });
+  return `<div class="card">
+    <div class="hd"><span class="eyebrow">Program streak</span><span class="eyebrow tapx">${adh.adherence != null ? `${Math.round(adh.adherence * 100)}% adherence` : "following the plan"}</span></div>
+    <div class="stat"><span class="midnum">${adh.current}</span><span class="unit">day streak · best ${adh.longest}</span></div>
+    <div class="streakgrid">
+      <div><b>${adh.sessionsRow}</b><span>sessions in a row</span></div>
+      <div><b>${adh.weeksRow}</b><span>full weeks</span></div>
+      <div><b>${adh.restRespected}</b><span>rests kept</span></div>
+      <div><b>${adh.missed}</b><span>missed</span></div>
+    </div>
+    <p class="row-sub" style="margin-top:8px">Counts following your plan — completed sessions, respected rest days — not just any activity.</p></div>`;
+}
+
 function renderCoach() {
   const page = $('[data-page="coach"]');
   const ins = E.coachInsights({ doc, todayISO: todayISO() });
@@ -415,7 +430,7 @@ function renderCoach() {
 
   const week = currentWeek() || lastWeek();
   const due = checkinDue();
-  let body = (week ? programSection(week, due) : `<h1 class="page">Coach</h1>`) +
+  let body = streakBlock() + (week ? programSection(week, due) : `<h1 class="page">Coach</h1>`) +
     `<div class="eyebrow" style="margin:14px 2px 2px">Your coach</div>
      <p class="row-sub" style="margin:2px 2px 6px">Reviewed offline from your own data after every workout and week.</p>`;
   if (!ins.length) {
@@ -892,7 +907,7 @@ function wireProgram(page, week, due) {
 /* The Diary (was the Week tab): a day-by-day calendar of what you actually did
    each week (same layout as the Coach program), steppable with ◀ ▶, then the
    full activity history below, paginated. */
-let diaryWeekOffset = 0, diaryScroll = 0, diaryPage = 0;
+let diaryWeekOffset = 0, diaryScroll = 0, diaryPage = 0, diaryFilterSport = "all", diaryFilterMonth = "all";
 function logExtra(l) {
   return [l.km ? `${l.km} km` : "",
     l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "",
@@ -937,12 +952,20 @@ function renderDiary() {
     ? `${sum.total.count} session${sum.total.count === 1 ? "" : "s"} · ${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.load ? ` · load ${Math.round(sum.total.load)}` : ""}`
     : "Nothing logged — tap ＋ to add an activity";
 
-  // full activity history, newest first, paginated
+  // full activity history with type + month filters, newest first, paginated
   const all = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1));
-  const PER = 50, pages = Math.max(1, Math.ceil(all.length / PER));
+  const months = [...new Set(all.map(l => l.date.slice(0, 7)))].sort().reverse();
+  if (diaryFilterMonth !== "all" && !months.includes(diaryFilterMonth)) diaryFilterMonth = "all";
+  let filtered = all;
+  if (diaryFilterSport !== "all") filtered = filtered.filter(l => (l.sport || "other") === diaryFilterSport);
+  if (diaryFilterMonth !== "all") filtered = filtered.filter(l => l.date.slice(0, 7) === diaryFilterMonth);
+  const filtering = diaryFilterSport !== "all" || diaryFilterMonth !== "all";
+  const PER = 50, pages = Math.max(1, Math.ceil(filtered.length / PER));
   diaryPage = Math.max(0, Math.min(diaryPage, pages - 1));
-  const slice = all.slice(diaryPage * PER, diaryPage * PER + PER);
+  const slice = filtered.slice(diaryPage * PER, diaryPage * PER + PER);
   const label = diaryWeekOffset === 0 ? "This week" : diaryWeekOffset === 1 ? "Last week" : `${diaryWeekOffset} weeks ago`;
+  const SPORTS = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+  const monthLabel = m => fmtDate(m + "-01", { month: "short", year: "numeric" });
 
   page.innerHTML = `
     <div class="phead"><h1 class="page">Diary</h1></div>
@@ -953,8 +976,12 @@ function renderDiary() {
     </div>
     <div class="card days">${dayCal}</div>
     <p class="row-sub" style="text-align:center;margin:-2px 0 4px">${totLine}</p>
-    <div class="eyebrow" style="margin:8px 2px 2px">All activity · ${all.length}</div>
-    <div class="card hlist">${slice.map(hrow).join("") || `<p class="row-sub" style="padding:10px 0">Nothing yet — your logged activities show here.</p>`}</div>
+    <div class="eyebrow" style="margin:8px 2px 2px">All activity · ${filtered.length}${filtering ? ` of ${all.length}` : ""}</div>
+    <div class="diary-filter">
+      <select id="df-sport" class="rangesel"><option value="all">All types</option>${SPORTS.map(([v, l]) => `<option value="${v}" ${diaryFilterSport === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <select id="df-month" class="rangesel"><option value="all">All months</option>${months.map(m => `<option value="${m}" ${diaryFilterMonth === m ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</select>
+    </div>
+    <div class="card hlist">${slice.map(hrow).join("") || `<p class="row-sub" style="padding:10px 0">${filtering ? "No activities match this filter." : "Nothing yet — your logged activities show here."}</p>`}</div>
     ${pages > 1 ? `<div class="diary-nav">
       <button class="iconbtn sm" id="hp-prev" ${diaryPage <= 0 ? "disabled" : ""} aria-label="previous page">‹</button>
       <span class="dy-label">Page ${diaryPage + 1} of ${pages}</span>
@@ -963,6 +990,8 @@ function renderDiary() {
     <div style="height:76px"></div>`;
   $("#dy-prev").addEventListener("click", () => { diaryWeekOffset++; renderDiary(); });
   $("#dy-next").addEventListener("click", () => { if (diaryWeekOffset > 0) { diaryWeekOffset--; renderDiary(); } });
+  $("#df-sport").addEventListener("change", e => { diaryFilterSport = e.target.value; diaryPage = 0; renderDiary(); });
+  $("#df-month").addEventListener("change", e => { diaryFilterMonth = e.target.value; diaryPage = 0; renderDiary(); });
   $("#hp-prev")?.addEventListener("click", () => { if (diaryPage > 0) { diaryPage--; renderDiary(); } });
   $("#hp-next")?.addEventListener("click", () => { if (diaryPage < pages - 1) { diaryPage++; renderDiary(); } });
   const openLog = id => { diaryScroll = window.scrollY; const log = doc.logs.find(l => l.id === id); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) }); };
@@ -1842,7 +1871,7 @@ function xTicksFor(pts) {
 }
 
 const CARD_LABEL = {
-  volume: "Training volume", load: "Load", trainingLoad: "Training load", streak: "Program streak",
+  volume: "Training volume", load: "Load", trainingLoad: "Training load",
   calories: "Calories burned", caloriesByType: "Calories by activity", weight: "Weight",
   pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
   vo2: "VO₂ max", balance: "Aerobic / anaerobic", speedByType: "Speed by type",
@@ -1926,7 +1955,6 @@ function renderProgress() {
   const lf = E.loadFocus(doc.logs, B, win.from, win.to);
   const exLoad = E.dailyLoad(doc.logs, B, win.from, win.to);
   const cons = E.consistency({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
-  const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
   const bests = E.personalBests({ logs: doc.logs, manualBests: doc.manualBests });
   const calTypes = E.caloriesByType({ logs: doc.logs, todayISO: win.to, n: nW });
   const calSplit = E.plannedVsUnplannedCalories({ weeks: doc.weeks, logs: doc.logs, from: win.from, to: win.to });
@@ -2224,17 +2252,6 @@ function renderProgress() {
       }).join("")}</div>
         ${calTypes.top ? (() => { const tn = calTypeCounts[calTypes.top.sport] || 0; return `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}${tn ? `, averaging <b>${Math.round(calTypes.top.cal / tn).toLocaleString()}</b> kcal across ${tn} session${tn === 1 ? "" : "s"}` : ""}.</div>`; })() : ""}`
         : `<p class="row-sub">Once activities carry calories, this breaks them down by sport.</p>`}`,
-
-    streak: () => `
-      <div class="hd"><span class="eyebrow">Program streak</span><span class="eyebrow tapx">${adh.adherence != null ? `${Math.round(adh.adherence * 100)}% adherence` : "following the plan"}</span></div>
-      <div class="stat"><span class="midnum">${adh.current}</span><span class="unit">day streak · best ${adh.longest}</span></div>
-      <div class="streakgrid">
-        <div><b>${adh.sessionsRow}</b><span>sessions in a row</span></div>
-        <div><b>${adh.weeksRow}</b><span>full weeks</span></div>
-        <div><b>${adh.restRespected}</b><span>rests kept</span></div>
-        <div><b>${adh.missed}</b><span>missed</span></div>
-      </div>
-      <p class="row-sub" style="margin-top:8px">Counts following your plan — completed sessions, respected rest days — not just any activity.</p>`,
 
     coach: () => {
       const ins = E.coachInsights({ doc, todayISO: t }).slice(0, 2);
