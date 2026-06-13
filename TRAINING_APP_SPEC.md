@@ -310,3 +310,20 @@ Single release on top of v1.1.
 9. **Storage.** schemaVersion 3 (restDay, climbBaseAscent, allowedFamilies, progressCards, manualBests, coachDismissed); service worker `v1.2.0`.
 
 Pending: the supplied "Stephan Endurance" logo as the app icon/splash — needs the raw image file committed to `icons/`.
+
+---
+
+## 16. v1.3 changes (2026-06-13)
+
+1. **Garmin import** verified against the real export (ISO dates). Now captures **Calories** + **Total Descent**, maps `Trail Running→trail` and `Hiking→hike`. Weekly full-history re-imports **auto-skip** already-imported activities; only matches against a *manual* log prompt merge/skip/keep-both.
+2. **Calories** — optional `log.calories`; Progress cards for daily/weekly burn, by-activity-type, planned-vs-unplanned; Coach week-over-week + dominant-sport insights.
+3. **Progress history navigation** — a global range selector (This week · 4 · 8 · 12 weeks · 3 months · YTD) with ◀▶ stepping and a "vs prev" toggle, persisted in `settings.progressRange`; every activity chart honours the window (weight/VO₂ keep full history).
+4. **Two-a-days** — up to 8 sessions/week; a 7th/8th lands as a second session on the freshest day (`placeLayout` returns day→[sports]).
+5. **Trail running + hiking** are their own sports (ascent + descent). Trail counts toward a planned run; hiking is tracked (calories, climbing) but not in the plan.
+6. **Descent** logged + imported; the climbing chart is restricted to climbing activities; ride speed is split flat vs climb.
+7. **Every workout type is toggleable** (`settings.allowedTypes`) with a last-base guard.
+8. **Program-adherence streak** (`programAdherence`) — current/longest streak, sessions/weeks in a row, rests respected, missed, adherence %; Coach insights.
+9. **Weekly layout** gains apply-to-current-week (future days only) + auto-schedule.
+10. **Personal bests** show values everywhere (incl. the Coach, click-through to the activity); trail/hike/descent records added.
+11. **Per-session editor** — tap any planned session to change duration, zone, type, climb target, note; log it; or **send it to a Garmin watch as a .FIT** structured workout (+ "export the whole week" as a .zip). New `fit.js` (FIT encoder) and `zip.js`.
+12. Storage schemaVersion 4 (allowedFamilies→allowedTypes, progressRange); merge unions manualBests/coachDismissed; SW `v1.3.0`. Activity icons now render in the All-activity sheet.

@@ -9,12 +9,15 @@ export const SCHEMA_VERSION = 3;
 export const PROGRESS_CARDS = [
   { id: "volume",      on: true },
   { id: "trainingLoad", on: true },
+  { id: "streak",      on: true },
+  { id: "calories",    on: true },
   { id: "weight",      on: true },
   { id: "pace",        on: true },
   { id: "coach",       on: true },
   { id: "bests",       on: true },
   { id: "vo2",         on: false },
   { id: "balance",     on: false },
+  { id: "caloriesByType", on: false },
   { id: "runSpeed",    on: false },
   { id: "rideSpeed",   on: false },
   { id: "ascent",      on: false },
@@ -50,7 +53,11 @@ export function defaultSettings() {
     qualityOverride: false,
     easyPace: null,
     climbBaseAscent: 500,
-    allowedFamilies: { runIntervals: true, runTempo: true, runHills: true, bikeIntervals: true, bikeClimb: true },
+    allowedTypes: {
+      easyRun: true, runTempo: true, runIntervals: true, runHills: true, longRun: true, trailRun: true,
+      easyRide: true, bikeIntervals: true, bikeClimb: true, longRide: true,
+    },
+    progressRange: { preset: "12w", offset: 0, compare: false },
     progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     lastExportAt: null,
   };
@@ -151,6 +158,19 @@ const MIGRATIONS = {
   // v3: settings gain restDay, climbBaseAscent, allowedFamilies, progressCards
   // (via the defaults merge); doc gains manualBests + coachDismissed.
   2: d => ({ ...d, schemaVersion: 3 }),
+  // v4: allowedFamilies → allowedTypes (the family keys carry over, the easy/
+  // long/trail keys default on); progressRange added via the defaults merge.
+  3: d => {
+    const fam = d.settings?.allowedFamilies || {};
+    const allowedTypes = {
+      easyRun: true, runTempo: fam.runTempo !== false, runIntervals: fam.runIntervals !== false,
+      runHills: fam.runHills !== false, longRun: true, trailRun: true,
+      easyRide: true, bikeIntervals: fam.bikeIntervals !== false, bikeClimb: fam.bikeClimb !== false, longRide: true,
+    };
+    const settings = { ...d.settings, allowedTypes };
+    delete settings.allowedFamilies;
+    return { ...d, settings, schemaVersion: 4 };
+  },
 };
 
 export function migrate(doc) {
@@ -162,6 +182,7 @@ export function migrate(doc) {
   }
   // settings keys added after first release get safe defaults
   d.settings = { ...defaultSettings(), ...d.settings };
+  d.settings.allowedTypes = { ...defaultSettings().allowedTypes, ...(d.settings.allowedTypes || {}) };
   d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
   d.manualBests ||= [];
@@ -208,6 +229,16 @@ export function mergeDocs(current, incoming) {
 
   const ciIds = new Set(out.checkins.map(c => c.weekId));
   for (const c of incoming.checkins || []) if (!ciIds.has(c.weekId)) out.checkins.push(c);
+
+  // personal-best manual entries: keep the better value per key
+  out.manualBests ||= [];
+  const lowerBetter = new Set(["run5k", "run10k", "runHalf", "runFull", "bike40k"]);
+  for (const m of incoming.manualBests || []) {
+    const cur = out.manualBests.find(x => x.key === m.key);
+    if (!cur) out.manualBests.push({ ...m });
+    else if (lowerBetter.has(m.key) ? m.value < cur.value : m.value > cur.value) Object.assign(cur, m);
+  }
+  out.coachDismissed = { ...(incoming.coachDismissed || {}), ...(out.coachDismissed || {}) };
   return out;
 }
 

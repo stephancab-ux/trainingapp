@@ -94,8 +94,9 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .day .dt{width:34px;text-align:center;flex:none}
 .day .dt b{display:block;font-size:15px;font-weight:750}
 .day .dt span{font-size:10px;color:var(--mut);font-weight:700;letter-spacing:.08em}
-.day .ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
-.day .ic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
+.ic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hikec{color:#7fd6c0;background:rgba(127,214,192,.14)}
 .day .tx{flex:1;min-width:0}
 .day .tx b{display:block;font-size:15px;font-weight:700}
 .day .tx span{display:block;font-size:12.5px;color:var(--mut);font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -312,6 +313,22 @@ svg text{font-family:inherit}
 .cc-body{margin-top:7px;font-size:14px;color:var(--sub);line-height:1.45}
 .cc-why{margin-top:6px;font-size:12px;color:var(--mut);line-height:1.4}
 .coachcard .btn.mini{margin-top:11px}
+
+/* v1.3 */
+.rangebar{display:flex;align-items:center;gap:8px;margin:2px 0 4px}
+.iconbtn.sm{width:34px;height:34px;font-size:20px;line-height:1}
+.rangesel{background:#121b24;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:7px 9px;font-size:13px;font-weight:600;color-scheme:dark}
+.rglabel{font-size:11.5px;color:var(--mut);font-weight:600}
+.streakgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.streakgrid div{background:#121b24;border:1px solid var(--line);border-radius:11px;padding:9px 6px;text-align:center}
+.streakgrid b{display:block;font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
+.streakgrid span{font-size:10px;color:var(--mut);line-height:1.2;display:block;margin-top:2px}
+.catbars{display:flex;flex-direction:column;gap:7px;margin-top:4px}
+.catbar{display:flex;align-items:center;gap:9px}
+.catbar .cl{flex:0 0 84px;font-size:12.5px;color:var(--sub);font-weight:600;text-transform:capitalize}
+.catbar .bar{flex:1;height:9px;background:#16202b;border-radius:5px;overflow:hidden}
+.catbar .bar i{display:block;height:100%;border-radius:5px}
+.catbar .cv{flex:none;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
 
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{animation:none!important;transition:none!important}
