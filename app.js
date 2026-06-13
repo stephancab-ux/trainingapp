@@ -948,9 +948,17 @@ function renderDiary() {
         <span class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></span></button>`;
     }).join("");
   }).join("");
-  const totLine = sum.total.count
-    ? `${sum.total.count} session${sum.total.count === 1 ? "" : "s"} · ${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.load ? ` · load ${Math.round(sum.total.load)}` : ""}`
-    : "Nothing logged — tap ＋ to add an activity";
+  // per-sport summary for the selected week — only sports actually performed
+  const DSPORTS = [["run", "Run", "var(--cy)"], ["trail", "Trail", "#56dbe8"], ["bike", "Ride", "#8e9df8"], ["hike", "Hike", "#7fd6c0"], ["gym", "Gym", "#c98bdb"], ["other", "Other", "var(--mut)"]];
+  const sumRows = DSPORTS.map(([sp, lab, col]) => {
+    const s = sum.bySport[sp]; if (!s || !s.count) return "";
+    const bits = [fmtDur(s.min), s.km ? `${s.km.toFixed(1)} km` : "", s.ascent ? `${Math.round(s.ascent)} m↑` : "", s.cal ? `${Math.round(s.cal)} kcal` : "", s.load ? `load ${Math.round(s.load)}` : ""].filter(Boolean).join(" · ");
+    return `<div class="dsum-row"><span class="dsum-nm"><i style="background:${col}"></i>${lab}</span><span class="dsum-ct">${s.count}×</span><span class="dsum-v">${bits}</span></div>`;
+  }).join("");
+  const summaryCard = sum.total.count
+    ? `<div class="card"><div class="dsum">${sumRows}
+        <div class="dsum-row dsum-total"><span class="dsum-nm">Total</span><span class="dsum-ct">${sum.total.count}×</span><span class="dsum-v">${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.cal ? ` · ${Math.round(sum.total.cal)} kcal` : ""}${sum.total.load ? ` · load ${Math.round(sum.total.load)}` : ""}</span></div></div></div>`
+    : `<div class="card"><p class="row-sub">Nothing logged ${diaryWeekOffset === 0 ? "this week yet" : "that week"} — tap ＋ to add an activity.</p></div>`;
 
   // full activity history with type + month filters, newest first, paginated
   const all = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1));
@@ -974,8 +982,8 @@ function renderDiary() {
       <span class="dy-label">${label}<small>${fmtShort(from)} – ${fmtShort(to)}</small></span>
       <button class="iconbtn sm" id="dy-next" aria-label="later" ${diaryWeekOffset <= 0 ? "disabled" : ""}>›</button>
     </div>
+    ${summaryCard}
     <div class="card days">${dayCal}</div>
-    <p class="row-sub" style="text-align:center;margin:-2px 0 4px">${totLine}</p>
     <div class="eyebrow" style="margin:8px 2px 2px">All activity · ${filtered.length}${filtering ? ` of ${all.length}` : ""}</div>
     <div class="diary-filter">
       <select id="df-sport" class="rangesel"><option value="all">All types</option>${SPORTS.map(([v, l]) => `<option value="${v}" ${diaryFilterSport === v ? "selected" : ""}>${l}</option>`).join("")}</select>
