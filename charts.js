@@ -117,12 +117,17 @@ export function lineChart(points, opts = {}) {
       s += `<polyline points="${raw}" fill="none" stroke="rgba(143,161,179,.35)" stroke-width="1.2"/>`;
       const sm = ema(pts.map(p => p.y), se.emaAlpha);
       s += `<polyline points="${pts.map((p, i) => `${X(p.x)},${Y(sm[i])}`).join(" ")}" fill="none" stroke="${col}" stroke-width="2.2"/>`;
+    } else if (se.segColors) {
+      // each segment coloured by its right endpoint's status (Load · Trend)
+      for (let i = 1; i < pts.length; i++)
+        s += `<line x1="${X(pts[i - 1].x)}" y1="${Y(pts[i - 1].y)}" x2="${X(pts[i].x)}" y2="${Y(pts[i].y)}" stroke="${se.segColors[i] || col}" stroke-width="2.4"/>`;
     } else {
       s += `<polyline points="${raw}" fill="none" stroke="${col}" stroke-width="2.2"/>`;
     }
     pts.forEach((p, i) => {
       const sel = selected && selected.si === si && selected.pi === i;
-      s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${sel ? 4.5 : 2.5}" fill="${sel ? "#fff" : (i === pts.length - 1 ? col : "#365562")}" ${sel ? `stroke="${col}" stroke-width="2"` : ""}/>`;
+      const dotCol = se.segColors ? (se.segColors[i] || col) : (i === pts.length - 1 ? col : "#365562");
+      s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${sel ? 4.5 : 2.5}" fill="${sel ? "#fff" : dotCol}" ${sel ? `stroke="${col}" stroke-width="2"` : ""}/>`;
     });
   });
   if (xLabels) {

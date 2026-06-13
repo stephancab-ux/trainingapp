@@ -3,7 +3,7 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /* The Progress cards in their default order; `on` = shown out of the box.
    v1.6 merged pairs behind a toggle: load (focus/daily), speedByType (run/ride),
@@ -11,7 +11,6 @@ export const SCHEMA_VERSION = 6;
 export const PROGRESS_CARDS = [
   { id: "volume",      on: true },
   { id: "load",        on: true },
-  { id: "trainingLoad", on: true },
   { id: "calories",    on: true },
   { id: "weight",      on: true },
   { id: "vo2",         on: true },
@@ -19,14 +18,10 @@ export const PROGRESS_CARDS = [
   { id: "coach",       on: true },
   { id: "bests",       on: true },
   { id: "balance",     on: false },
-  { id: "caloriesByType", on: false },
   { id: "speedByType", on: false },
   { id: "distance",    on: false },
   { id: "ascent",      on: false },
   { id: "paceVsRpe",   on: false },
-  { id: "efficiency",  on: false },
-  { id: "rpeHeatmap",  on: false },
-  { id: "rpeByType",   on: false },
   { id: "consistency", on: false },
 ];
 const CARD_IDS = PROGRESS_CARDS.map(c => c.id);
@@ -121,6 +116,7 @@ export function initDoc(startDate, todayISO) {
     vo2History: SEED_VO2.map(v => ({ ...v })),
     manualBests: [],
     coachDismissed: {},
+    coachSeen: {},
   };
 }
 
@@ -210,6 +206,20 @@ const MIGRATIONS = {
     }
     return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 6 };
   },
+  // v7: training-load folded into the Load card; calories & RPE cards merged.
+  // Alias the absorbed ids to their host (host switches on if any half was on).
+  6: d => {
+    const alias = { trainingLoad: "load", caloriesByType: "calories",
+                    efficiency: "paceVsRpe", rpeHeatmap: "paceVsRpe", rpeByType: "paceVsRpe" };
+    const cards = Array.isArray(d.settings?.progressCards) ? d.settings.progressCards : [];
+    const seen = new Map(), merged = [];
+    for (const c of cards) {
+      const id = alias[c.id] || c.id;
+      if (seen.has(id)) { if (c.on) seen.get(id).on = true; continue; }
+      const entry = { id, on: !!c.on }; seen.set(id, entry); merged.push(entry);
+    }
+    return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 7 };
+  },
 };
 
 /* Count run / bike / gym sessions in a day→sport layout map (handles arrays
@@ -248,6 +258,7 @@ export function migrate(doc) {
   for (const w of d.weeks) if (w.targetMin && w.targetMin.gym == null) w.targetMin.gym = 0;
   d.manualBests ||= [];
   d.coachDismissed ||= {};
+  d.coachSeen ||= {};
   return d;
 }
 
@@ -300,6 +311,7 @@ export function mergeDocs(current, incoming) {
     else if (lowerBetter.has(m.key) ? m.value < cur.value : m.value > cur.value) Object.assign(cur, m);
   }
   out.coachDismissed = { ...(incoming.coachDismissed || {}), ...(out.coachDismissed || {}) };
+  out.coachSeen = { ...(incoming.coachSeen || {}), ...(out.coachSeen || {}) };
   return out;
 }
 

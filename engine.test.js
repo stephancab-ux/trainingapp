@@ -331,6 +331,7 @@ test("acceptance 9: CSV parses, maps sports, strips quoted thousands, dedupes vs
   assert.equal(ride.min, 91, "HH:MM:SS → minutes");
   assert.equal(parsed.rows[0].date, "2026-06-12");
   assert.equal(parsed.rows[0].time, "08:01");
+  assert.equal(parsed.rows[0].aerobicTE, 3.1, "Aerobic TE column parsed");
 
   const seedLogs = [{ date: "2026-06-12", sport: "run", min: 42, source: "seed" }];
   const { fresh, dupes } = E.dedupeImports(parsed.rows, seedLogs);
@@ -345,6 +346,14 @@ test("acceptance 9: CSV parses, maps sports, strips quoted thousands, dedupes vs
 
 test("CSV with wrong shape is rejected gracefully", () => {
   assert.ok(E.parseGarminCSV("foo,bar\n1,2").error);
+});
+
+test("import backfills Aerobic TE onto a log that lacks it, never overwriting a manual one", () => {
+  const have = { date: "2026-06-12", sport: "run", min: 42, aerobicTE: 2.0 };
+  const miss = { date: "2026-06-12", sport: "run", min: 42 };
+  const row = { km: 7, aerobicTE: 3.1 };
+  assert.equal(E.fillableFields(have, row).aerobicTE, undefined, "manual TE preserved");
+  assert.equal(E.fillableFields(miss, row).aerobicTE, 3.1, "missing TE filled");
 });
 
 /* ---------- completion & misc ---------- */
@@ -840,11 +849,40 @@ test("plannedMinutes & loggedMinutes count gym; a no-HR gym still counts as volu
   assert.ok(E.loggedMinutes(wg, logs) >= 45, "no-HR gym counts as logged time");
 });
 
-test("sessionLoad: gym contributes 0 without HR/RPE, nonzero with either", () => {
+test("sessionLoad (TRIMP): gym needs heart rate; RPE no longer counts toward load", () => {
   assert.equal(E.sessionLoad({ sport: "gym", min: 45 }, BOUNDS), 0);
+  assert.equal(E.sessionLoad({ sport: "gym", min: 45, rpe: 7 }, BOUNDS), 0, "RPE alone no longer makes gym load");
   assert.ok(E.sessionLoad({ sport: "gym", min: 45, avgHR: 150 }, BOUNDS) > 0);
-  assert.ok(E.sessionLoad({ sport: "gym", min: 45, rpe: 7 }, BOUNDS) > 0);
-  assert.equal(E.sessionLoad({ sport: "gym", min: 30, rpe: 6 }, BOUNDS), 180);
+  // a run without HR still earns a type-based estimate (RPE ignored)
+  assert.ok(E.sessionLoad({ sport: "run", type: "easy", min: 40 }, BOUNDS) > 0);
+});
+
+test("TRIMP weights intensity non-linearly: hard-short beats easy-long", () => {
+  const easyLong = E.sessionLoad({ sport: "run", min: 60, avgHR: 120 }, BOUNDS);
+  const hardShort = E.sessionLoad({ sport: "run", min: 45, avgHR: 175 }, BOUNDS);
+  assert.ok(hardShort > easyLong, `hard 45min (${hardShort}) should beat easy 60min (${easyLong})`);
+});
+
+test("loadCurve's last point matches the trainingLoad chip", () => {
+  const logs = [];
+  for (let k = 0; k < 30; k++) logs.push({ id: "l" + k, date: E.addDays("2026-06-28", -k), sport: "run", type: "easy", min: 50, avgHR: 140 });
+  const today = "2026-06-28";
+  const tl = E.trainingLoad({ logs, bounds: BOUNDS, todayISO: today });
+  const curve = E.loadCurve(logs, BOUNDS, E.addDays(today, -20), today, today);
+  const last = curve[curve.length - 1];
+  assert.equal(last.date, today);
+  assert.equal(last.acute, tl.acute, "curve acute == chip acute");
+  assert.equal(last.current, true);
+});
+
+test("effectiveAerobicTE prefers the real value, else a labeled estimate", () => {
+  assert.deepEqual(E.effectiveAerobicTE({ sport: "run", min: 60, avgHR: 150, aerobicTE: 3.4 }, BOUNDS),
+    { te: 3.4, estimated: false });
+  const est = E.effectiveAerobicTE({ sport: "run", type: "intervals", min: 45, avgHR: 165 }, BOUNDS);
+  assert.equal(est.estimated, true);
+  assert.ok(est.te > 0 && est.te <= 5);
+  assert.equal(E.teBand(3.4).label, "Impacting");
+  assert.equal(E.teBand(5).label, "Overreaching");
 });
 
 test("training load / intensity exclude a no-HR gym but include an HR gym", () => {

@@ -73,29 +73,36 @@ export function zoneBounds(settings) {
   if (method === "lthr" && lthr == null) method = "pctmax";
   if (method === "custom" && !Array.isArray(customZones)) method = "pctmax";
 
+  let zb;
   if (method === "custom") {
-    return customZones.map((z, i) => ({ z: i + 1, lo: Math.round(z.lo), hi: Math.round(z.hi) }));
-  }
-  if (method === "lthr") {
-    return LTHR_BANDS.map(([a, b], i) => ({
+    zb = customZones.map((z, i) => ({ z: i + 1, lo: Math.round(z.lo), hi: Math.round(z.hi) }));
+  } else if (method === "lthr") {
+    zb = LTHR_BANDS.map(([a, b], i) => ({
       z: i + 1,
       lo: Math.round(a * lthr),
       hi: Math.min(Math.round(b * lthr), maxHR),
     }));
-  }
-  if (method === "karvonen") {
+  } else if (method === "karvonen") {
     const r = maxHR - restingHR;
-    return PCT_BANDS.map(([a, b], i) => ({
+    zb = PCT_BANDS.map(([a, b], i) => ({
       z: i + 1,
       lo: Math.round(restingHR + a * r),
       hi: Math.round(restingHR + b * r),
     }));
+  } else {
+    zb = PCT_BANDS.map(([a, b], i) => ({
+      z: i + 1,
+      lo: Math.round(a * maxHR),
+      hi: Math.round(b * maxHR),
+    }));
   }
-  return PCT_BANDS.map(([a, b], i) => ({
-    z: i + 1,
-    lo: Math.round(a * maxHR),
-    hi: Math.round(b * maxHR),
-  }));
+  // Load context for HR-based training load (TRIMP). These extra props ride on
+  // the bounds array (iterated only by index elsewhere) so sessionLoad can read
+  // maxHR / resting HR / sex without threading settings through every caller.
+  zb.maxHR = maxHR;
+  zb.restHR = restingHR;
+  zb.sex = settings.sex;
+  return zb;
 }
 
 export function zoneMid(bounds, z) {
@@ -644,11 +651,13 @@ export function parseGarminCSV(text) {
   const iType = col("Activity Type"), iDate = col("Date"), iTime = col("Time"),
         iDist = col("Distance"), iHR = col("Avg HR"), iTitle = col("Title"),
         iAsc = col("Total Ascent"), iMaxHR = col("Max HR"),
-        iDesc = col("Total Descent"), iCal = col("Calories");
+        iDesc = col("Total Descent"), iCal = col("Calories"),
+        iTE = col("Aerobic TE") >= 0 ? col("Aerobic TE") : col("Aerobic Training Effect");
   if (iType < 0 || iDate < 0 || iTime < 0) {
     return { error: "Doesn't look like a Garmin activities CSV (missing Activity Type / Date / Time columns)" };
   }
   const pint = (i, r) => i >= 0 ? (parseInt((r[i] ?? "").replace(/[^\d]/g, ""), 10) || null) : null;
+  const pfloat = (i, r) => { if (i < 0) return null; const v = parseFloat((r[i] ?? "").replace(/[^\d.]/g, "")); return Number.isFinite(v) ? v : null; };
   const out = [], counts = { run: 0, bike: 0, trail: 0, hike: 0, other: 0, bad: 0 };
   for (const r of rows.slice(1)) {
     const type = (r[iType] || "").trim();
@@ -662,6 +671,7 @@ export function parseGarminCSV(text) {
       km, avgHR: pint(iHR, r) ?? undefined, maxHR: pint(iMaxHR, r) ?? undefined,
       ascent: pint(iAsc, r) ?? undefined, descent: pint(iDesc, r) ?? undefined,
       calories: pint(iCal, r) ?? undefined,
+      aerobicTE: pfloat(iTE, r) ?? undefined,
       note: (iTitle >= 0 && r[iTitle]) ? r[iTitle].trim() : undefined,
       activityType: type,
     });
@@ -704,7 +714,7 @@ export function dedupeImports(rows, logs) {
 
 /* Fields a Garmin row can fill in on an existing log — only where the log is
    missing them (never overwrites your own data, e.g. notes/RPE/type). */
-const IMPORT_FILL_FIELDS = ["km", "avgHR", "maxHR", "ascent", "descent", "calories", "time"];
+const IMPORT_FILL_FIELDS = ["km", "avgHR", "maxHR", "ascent", "descent", "calories", "time", "aerobicTE"];
 export function fillableFields(log, row) {
   const out = {};
   for (const f of IMPORT_FILL_FIELDS) if (log[f] == null && row[f] != null) out[f] = row[f];
@@ -837,11 +847,35 @@ export function sessionEffort(log, bounds) {
   if (z != null) return ZONE_EFFORT[z];
   return TYPE_EFFORT[log.type] || 5;
 }
-export function sessionLoad(log, bounds) {
+// Estimated fractional HR-reserve by session type — used when a log has no avgHR.
+const TYPE_HRR = { recovery: 0.55, easy: 0.62, long: 0.65, tempo: 0.78, climb: 0.80, hills: 0.85, intervals: 0.88 };
+
+/* Banister TRIMP — heart-rate-driven training load, intensity weighted
+   exponentially (a hard session outscores a longer easy one). Uses avgHR vs
+   resting/max from `bounds` when present, else an estimate from the session
+   type. RPE is intentionally NOT used. Returns the raw (unrounded) impulse. */
+export function sessionTrimp(log, bounds) {
   if (!log.min) return 0;
-  // a gym session with no effort signal contributes time/volume only, not load
-  if (log.sport === "gym" && log.avgHR == null && log.rpe == null) return 0;
-  return Math.round(log.min * sessionEffort(log, bounds));
+  // gym contributes load only when it carries a heart-rate signal
+  if (log.sport === "gym" && log.avgHR == null) return 0;
+  const maxHR = (bounds && bounds.maxHR) || 190;
+  const restHR = bounds && bounds.restHR != null ? bounds.restHR : 50;
+  let hrr = log.avgHR != null && maxHR > restHR
+    ? (log.avgHR - restHR) / (maxHR - restHR)
+    : (TYPE_HRR[log.type] ?? 0.60);
+  hrr = Math.max(0, Math.min(1, hrr));
+  const female = bounds && bounds.sex === "female";
+  const k1 = female ? 0.86 : 0.64, k2 = female ? 1.67 : 1.92;
+  return log.min * hrr * k1 * Math.exp(k2 * hrr);
+}
+export function sessionLoad(log, bounds) {
+  return Math.round(sessionTrimp(log, bounds));
+}
+// Acute:chronic workload ratio → status band (shared by the chip and the curve).
+export function loadStatus(acwr) {
+  if (acwr == null) return "building";
+  return acwr < 0.8 ? "undertraining" : acwr <= 1.3 ? "optimal"
+    : acwr <= 1.5 ? "overreaching" : "high-risk";
 }
 export function trainingLoad({ logs, bounds, todayISO, n = 12 }) {
   const train = logs.filter(LOADBEARING);
@@ -850,9 +884,7 @@ export function trainingLoad({ logs, bounds, todayISO, n = 12 }) {
   const acute = loadOn(addDays(todayISO, -6), todayISO);
   const chronic = loadOn(addDays(todayISO, -27), todayISO) / 4;
   const acwr = chronic > 0 ? acute / chronic : null;
-  const status = acwr == null ? "building"
-    : acwr < 0.8 ? "undertraining" : acwr <= 1.3 ? "optimal"
-    : acwr <= 1.5 ? "overreaching" : "high-risk";
+  const status = loadStatus(acwr);
   const thisMonday = addDays(todayISO, -dayIndex(todayISO));
   const weeks = [];
   for (let k = n - 1; k >= 0; k--) {
@@ -860,6 +892,52 @@ export function trainingLoad({ logs, bounds, todayISO, n = 12 }) {
     weeks.push({ start, load: loadOn(start, addDays(start, 6)), current: start === thisMonday });
   }
   return { weeks, acute: Math.round(acute), chronic: Math.round(chronic), acwr, status };
+}
+
+/* Rolling 7-day load over a date window — the line + optimal band shown on the
+   Load·Trend card. Each day: acute = trailing-7-day TRIMP, chronic =
+   trailing-28-day/4, band = chronic×[0.8,1.3], plus its ACWR status (for the
+   status-coloured line). The last point (when `to` is today) equals the chip. */
+export function loadCurve(logs, bounds, from, to, todayISO) {
+  const byDay = {};
+  for (const l of logs) if (LOADBEARING(l)) byDay[l.date] = (byDay[l.date] || 0) + sessionLoad(l, bounds);
+  const sumRange = (a, b) => { let s = 0; for (let d = a; d <= b; d = addDays(d, 1)) s += byDay[d] || 0; return s; };
+  const out = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const acute = sumRange(addDays(d, -6), d);
+    const chronic = sumRange(addDays(d, -27), d) / 4;
+    const acwr = chronic > 0 ? acute / chronic : null;
+    out.push({ date: d, acute: Math.round(acute), lo: Math.round(chronic * 0.8),
+               hi: Math.round(chronic * 1.3), status: loadStatus(acwr), current: d === todayISO });
+  }
+  return out;
+}
+
+/* ---- aerobic Training Effect (Garmin's 0–5 bands) ---- */
+export const TE_BANDS = [
+  { min: 0,   label: "No Benefit",       color: "#6f7a86" },
+  { min: 1.0, label: "Some Benefit",     color: "#7cae72" },
+  { min: 2.0, label: "Maintaining",      color: "#5fbf6a" },
+  { min: 3.0, label: "Impacting",        color: "#e6a13c" },
+  { min: 4.0, label: "Highly Impacting", color: "#e8743c" },
+  { min: 5.0, label: "Overreaching",     color: "#e8554e" },
+];
+export function teBand(te) {
+  if (te == null) return null;
+  let band = TE_BANDS[0];
+  for (const b of TE_BANDS) if (te >= b.min) band = b;
+  return band;
+}
+const TE_REF = 110; // calibrates the TRIMP→TE saturation curve
+export function estimateAerobicTE(log, bounds) {
+  const tr = sessionTrimp(log, bounds);
+  if (tr <= 0) return 0;
+  return Math.max(0, Math.min(5, 5 * (1 - Math.exp(-tr / TE_REF))));
+}
+/* Real value when present (Garmin import / manual entry), else a labeled estimate. */
+export function effectiveAerobicTE(log, bounds) {
+  if (log.aerobicTE != null) return { te: log.aerobicTE, estimated: false };
+  return { te: estimateAerobicTE(log, bounds), estimated: true };
 }
 
 /* ---- performance & efficiency (no power → speed / climb-rate) ---- */
@@ -1045,16 +1123,19 @@ export function plannedVsUnplannedCalories({ weeks = [], logs = [], from, to }) 
 
 /* ---- Progress time-range window (range + step + compare) ---- */
 const RANGE_WK = { thisWeek: 1, "4w": 4, "8w": 8, "12w": 12, "3m": 13, "6m": 26 };
-const RANGE_LBL = { thisWeek: "This week", "4w": "4 weeks", "8w": "8 weeks", "12w": "12 weeks", "3m": "3 months", "6m": "6 months" };
+const RANGE_LBL = { thisWeek: "Last 7 days", "4w": "4 weeks", "8w": "8 weeks", "12w": "12 weeks", "3m": "3 months", "6m": "6 months" };
 export function rangeWindow(range = {}, todayISO) {
   const preset = range.preset || "12w";
   const off = range.offset || 0;
   const mon = addDays(todayISO, -dayIndex(todayISO));
   let from, to, label;
-  if (RANGE_WK[preset]) {
+  if (preset === "thisWeek") { // rolling 7 days ending today (no future days)
+    to = addDays(todayISO, -7 * off);
+    from = addDays(to, -6);
+    label = off === 0 ? "Last 7 days" : `7 days to ${to}`;
+  } else if (RANGE_WK[preset]) {
     const wk = RANGE_WK[preset];
     to = addDays(mon, 6 - 7 * wk * off);
-    if (off === 0 && preset === "thisWeek") to = todayISO < to ? to : to; // keep Sunday end
     from = addDays(to, -(7 * wk - 1));
     label = RANGE_LBL[preset];
   } else if (preset === "ytd") {
