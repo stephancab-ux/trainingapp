@@ -292,3 +292,21 @@ French localization · Garmin FIT-file parsing · automatic HRV-based daily adju
 6. **Sheet drag-to-dismiss.** Bottom sheets close by swiping down (pointer-event drag, 8 px engage threshold, 100 px / fast-flick dismiss); the grab bar gets an enlarged `touch-action:none` hit area.
 7. **Ridge chart inspection.** Tapping a column on the weekly-volume ridge highlights it and shows that week's dates, run/ride minutes, % of target and deload state. Tap again to clear.
 8. **Storage.** `schemaVersion` 2 (migration adds the two new settings keys). Service worker `v1.1.0`.
+
+---
+
+## 15. v1.2 changes (2026-06-13, user-requested)
+
+Single release on top of v1.1.
+
+1. **Decimal/comma fix + free-minute durations.** All numeric inputs are `type="text" inputmode="decimal/numeric"` so iOS keeps the "," (parsed by `num()`); logged duration is a free integer-minute field (plan targets still round to 5).
+2. **Ride elevation.** Logs carry an optional `ascent` (m, rides only); `parseGarminCSV` reads "Total Ascent". Climbing rides show a target ascent (`climbTargetAscent`, base `settings.climbBaseAscent`, ramps with load). Progress has a climbing/ascent trend.
+3. **Garmin import duplicate review.** `importMatches` pairs a CSV row to existing logs by sport + date + duration (±10 min) + distance (±0.5 km) — never clock time (manual logs have none). The import sheet lets you Merge / Skip / Keep-both per match.
+4. **Movable rest day + smart scheduling.** `settings.restDay` picker; `placeLayout`/`relayoutWeek` are rest-day-agnostic and fatigue-aware (long ride before the rest day, quality spaced, no back-to-back runs). Adding a session is extra volume placed on the freshest day.
+5. **Allowed-workout toggles.** `settings.allowedFamilies` gates the rotation; toggling one off also rewrites the current week.
+6. **Per-session evaluation.** `evaluateSession` tags each logged session (intensity + verdict) using HR zones, expected-RPE (preset refined by your history) and the pace trend.
+7. **Analytics + graphs.** `intensityOfLog`/`weeklyIntensity` (80/20), `sessionLoad`/`trainingLoad` (acute/chronic ACWR), `sessionPerformance`/`sessionEfficiency` (speed; VAM for climbs), `personalBests` (auto + manual). Progress is a customizable, reorderable card registry; line charts gain axis labels and tap-to-read points. New cards: training load, aerobic/anaerobic, running speed by type, ride speed, climbing/ascent, pace-vs-RPE, efficiency trend, RPE calendar, RPE-by-type, personal bests.
+8. **AI Coach (5th tab).** `coachInsights` — offline, deterministic, ranked by impact×confidence, every insight carries a plain-language "why". Categories: strengths, improvements, recommendations, recovery alerts, performance trends. Actionable insights apply with one tap (add interval/tempo, add easy volume, ease the hardest day). Dismissals persist in `doc.coachDismissed`.
+9. **Storage.** schemaVersion 3 (restDay, climbBaseAscent, allowedFamilies, progressCards, manualBests, coachDismissed); service worker `v1.2.0`.
+
+Pending: the supplied "Stephan Endurance" logo as the app icon/splash — needs the raw image file committed to `icons/`.

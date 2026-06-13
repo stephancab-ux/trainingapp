@@ -6,6 +6,8 @@ It plans a weekly run + bike program from heart-rate zones (3 runs · 3 rides ·
 
 Once intervals unlock (or you flip the override in Settings → Plan), the weekly hard session rotates through a workout menu — speed repeats, tempo and hill repeats on the run side, sweet spot and climbing on the bike — and any planned quality session can be swapped from the Week tab. Logs carry a workout type, the Week tab projects the coming 3 weeks at your default growth rate, and the easy-pace hint can be set manually until the app has learned from your runs.
 
+It also tracks ride **elevation** and climbing capacity, lets you move your **rest day** and choose which **workout types** are allowed, evaluates each session (good / too hot / improving), and the **Progress** tab is a customizable, reorderable stack of charts — weekly volume, training load (acute:chronic, over/under-training), weight, pace, aerobic/anaerobic balance, running/ride speed, climbing, pace-vs-RPE, an efficiency trend, an RPE calendar and **personal bests**. The **Coach** tab reads all of it offline and writes plain-language strengths, recommendations and recovery alerts, some applied with one tap. Garmin CSV imports are reviewed per activity (merge / skip / keep-both) so you never get duplicates.
+
 The full behavior spec is in [`TRAINING_APP_SPEC.md`](TRAINING_APP_SPEC.md); the original design board is in [`mockup/`](mockup/).
 
 ---
