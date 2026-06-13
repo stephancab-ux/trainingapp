@@ -322,6 +322,9 @@ svg text{font-family:inherit}
 .rangesel{background:#121b24;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:7px 9px;font-size:13px;font-weight:600;color-scheme:dark}
 .rglabel{font-size:11.5px;color:var(--mut);font-weight:600;flex-basis:100%}
 .avgline{font-size:12px;color:var(--sub);font-weight:600;margin:4px 0 2px}
+.ctabs{display:inline-flex;background:#121b24;border:1px solid var(--line);border-radius:9px;padding:2px}
+.ctab{min-height:26px;padding:0 10px;border-radius:7px;background:transparent;color:var(--mut);font-size:11px;font-weight:700}
+.ctab.on{background:var(--cy);color:var(--cy-ink)}
 
 /* v1.4 — week/month toggle, segmented picker, load focus, VO₂ gauge */
 .unitseg{display:inline-flex;background:#121b24;border:1px solid var(--line);border-radius:10px;padding:2px}
@@ -398,6 +401,25 @@ svg text{font-family:inherit}
 .wt-ctrls .btn{flex:1}
 .wt-prog{width:100%;max-width:320px;height:5px;border-radius:3px;background:#1a242f;overflow:hidden}
 .wt-prog i{display:block;height:100%;background:var(--cy);transition:width .3s linear}
+.wpg-chips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{min-height:32px;padding:0 11px;border-radius:9px;background:#1b2734;color:var(--sub);font-size:12px;font-weight:700}
+.fchip.on{background:var(--cy);color:var(--cy-ink)}
+.wtimer.reps{background:radial-gradient(120% 80% at 50% 0%,rgba(230,161,60,.14),transparent)}
+.wt-reps{font-size:74px;font-weight:800;line-height:1;color:var(--sand)}
+.wt-reps small{display:block;font-size:14px;color:var(--sub);font-weight:600;margin-top:4px}
+.wt-done{min-width:210px}
+.adhoc-acts{display:flex;gap:8px;margin-top:4px}
+.adhoc-act{flex:1}
+.diary-nav{display:flex;align-items:center;gap:10px;margin:2px 0 6px}
+.dy-label{flex:1;text-align:center;font-size:15px;font-weight:700}
+.dy-label small{display:block;font-size:11.5px;color:var(--mut);font-weight:600}
+.dsum{display:flex;flex-direction:column;gap:9px}
+.dsum-row{display:flex;align-items:center;gap:10px}
+.dsum-nm{flex:0 0 70px;display:flex;align-items:center;gap:7px;font-size:13.5px;font-weight:700}
+.dsum-nm i{width:9px;height:9px;border-radius:3px;flex:none}
+.dsum-ct{flex:none;font-size:13px;font-weight:700;color:var(--cy);font-variant-numeric:tabular-nums}
+.dsum-v{flex:1;text-align:right;font-size:11.5px;color:var(--sub);font-weight:600}
+.hlist{padding:2px 14px;max-height:none}
 
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{animation:none!important;transition:none!important}

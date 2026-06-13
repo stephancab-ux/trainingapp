@@ -3,13 +3,14 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
-/* The Progress cards in their default order; `on` = shown out of the box. */
+/* The Progress cards in their default order; `on` = shown out of the box.
+   v1.6 merged pairs behind a toggle: load (focus/daily), speedByType (run/ride),
+   distance (run/ride). */
 export const PROGRESS_CARDS = [
   { id: "volume",      on: true },
-  { id: "loadFocus",   on: true },
-  { id: "exerciseLoad", on: false },
+  { id: "load",        on: true },
   { id: "trainingLoad", on: true },
   { id: "streak",      on: true },
   { id: "calories",    on: true },
@@ -20,10 +21,8 @@ export const PROGRESS_CARDS = [
   { id: "bests",       on: true },
   { id: "balance",     on: false },
   { id: "caloriesByType", on: false },
-  { id: "runSpeed",    on: false },
-  { id: "rideSpeed",   on: false },
-  { id: "runDistance", on: false },
-  { id: "rideDistance", on: false },
+  { id: "speedByType", on: false },
+  { id: "distance",    on: false },
   { id: "ascent",      on: false },
   { id: "paceVsRpe",   on: false },
   { id: "efficiency",  on: false },
@@ -197,6 +196,20 @@ const MIGRATIONS = {
       allowedTypes: { ...s.allowedTypes, gymStrength: true, gymCardio: true, gymMobility: true },
     };
     return { ...d, settings, schemaVersion: 5 };
+  },
+  // v6: Progress cards merged behind toggles — alias the old ids to the merged
+  // card (on if either half was on), preserving order.
+  5: d => {
+    const alias = { loadFocus: "load", exerciseLoad: "load", runSpeed: "speedByType",
+                    rideSpeed: "speedByType", runDistance: "distance", rideDistance: "distance" };
+    const cards = Array.isArray(d.settings?.progressCards) ? d.settings.progressCards : [];
+    const seen = new Map(), merged = [];
+    for (const c of cards) {
+      const id = alias[c.id] || c.id;
+      if (seen.has(id)) { if (c.on) seen.get(id).on = true; continue; }
+      const entry = { id, on: !!c.on }; seen.set(id, entry); merged.push(entry);
+    }
+    return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 6 };
   },
 };
 

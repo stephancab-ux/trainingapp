@@ -877,3 +877,54 @@ test("programAdherence matches a planned gym to a logged gym", () => {
 test("observedMaxHR rises from a gym log", () => {
   assert.equal(E.observedMaxHR([{ sport: "run", maxHR: 175 }, { sport: "gym", maxHR: 181 }]), 181);
 });
+
+/* ================= v1.6 ad-hoc + Diary + load band ================= */
+
+test("weekSummary aggregates per sport incl. unplanned", () => {
+  const logs = [
+    { date: "2026-06-15", sport: "run", min: 40, km: 8, avgHR: 150 },
+    { date: "2026-06-16", sport: "run", min: 30, km: 5, avgHR: 140 },
+    { date: "2026-06-17", sport: "bike", min: 90, km: 40, ascent: 600, avgHR: 130 },
+    { date: "2026-06-18", sport: "hike", min: 180, ascent: 900, calories: 1200 },
+    { date: "2026-06-19", sport: "gym", min: 45 }, // no HR → 0 load
+  ];
+  const s = E.weekSummary(logs, BOUNDS, "2026-06-15", "2026-06-21");
+  assert.equal(s.bySport.run.count, 2);
+  assert.equal(s.bySport.run.min, 70);
+  assert.equal(s.bySport.run.km, 13);
+  assert.equal(s.bySport.hike.ascent, 900);
+  assert.equal(s.bySport.gym.load, 0, "no-HR gym contributes 0 load");
+  assert.equal(s.total.count, 5);
+  assert.equal(s.total.min, 385);
+});
+
+test("trainingLoadBand returns an optimal range per bucket", () => {
+  const logs = [];
+  for (let w = 0; w < 4; w++) for (let d = 0; d < 3; d++)
+    logs.push({ date: E.addDays("2026-05-04", w * 7 + d), sport: "run", min: 40, avgHR: 150 });
+  const buckets = E.bucketize("2026-05-04", "2026-05-31", "week");
+  const band = E.trainingLoadBand(logs, BOUNDS, buckets);
+  assert.equal(band.length, buckets.length);
+  for (const b of band) { assert.ok(b.hi > b.lo, "hi above lo"); assert.ok(b.lo >= 0); }
+});
+
+test("suggestSession adapts to recent history with sane fallbacks", () => {
+  // long run sized from recent long runs
+  const logs = [
+    { date: "2026-06-01", sport: "run", type: "long", min: 80, km: 16 },
+    { date: "2026-06-08", sport: "run", type: "long", min: 90, km: 18 },
+  ];
+  const long = E.suggestSession(logs, "run", "long", {});
+  assert.ok(long.targetMin >= 80 && long.targetMin <= 90, `long ~85 (got ${long.targetMin})`);
+  assert.equal(long.zone, 2);
+  // quality carries the template + zone
+  const q = E.suggestSession(logs, "run", "runQ1", {});
+  assert.equal(q.qualityTemplate, "runQ1");
+  assert.equal(q.zone, E.QUALITY_TEMPLATES.runQ1.zone);
+  // climb carries an ascent target
+  const climb = E.suggestSession([], "bike", "bikeClimb", { settings: { climbBaseAscent: 500 }, weekNum: 1 });
+  assert.ok(climb.targetAscent > 0);
+  // empty history → defaults
+  assert.equal(E.suggestSession([], "run", "easy", {}).targetMin, 35);
+  assert.equal(E.suggestSession([], "bike", "long", {}).targetMin, 120);
+});

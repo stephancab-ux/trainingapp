@@ -62,14 +62,15 @@ export function lineChart(points, opts = {}) {
   const { width = 352, height = 140, target = null, targetLabel = "",
           emaAlpha = null, xLabels = null, lastLabel = null, invert = false,
           color = CY, padTop = 12, padBottom = 20, axis = false, fmtY = null,
-          selected = null, taps = false, avg = false } = opts;
+          selected = null, taps = false, avg = false, band = null, xTicks = null } = opts;
   const series = opts.series || (points && points.length ? [{ points, color, emaAlpha }] : []);
   const all = series.flatMap(se => se.points);
   if (all.length < 2) return "";
   const W = width, H = height, L = axis ? 30 : 8, R = target != null ? 46 : 12;
   const xs = all.map(p => p.x), ys = all.map(p => p.y);
-  let lo = Math.min(...ys, ...(target != null ? [target] : []));
-  let hi = Math.max(...ys, ...(target != null ? [target] : []));
+  const bandVals = band ? band.flatMap(b => [b.lo, b.hi]) : [];
+  let lo = Math.min(...ys, ...(target != null ? [target] : []), ...bandVals);
+  let hi = Math.max(...ys, ...(target != null ? [target] : []), ...bandVals);
   const pad = Math.max((hi - lo) * 0.12, 0.5);
   lo -= pad; hi += pad;
   const xmin = Math.min(...xs), xmax = Math.max(...xs) || 1;
@@ -78,6 +79,12 @@ export function lineChart(points, opts = {}) {
     ? padTop + ((v - lo) / (hi - lo)) * (H - padTop - padBottom)
     : padTop + ((hi - v) / (hi - lo)) * (H - padTop - padBottom);
   let s = "";
+  // Garmin-style optimal-range band, drawn behind everything
+  if (band && band.length >= 2) {
+    const top = band.map(b => `${X(b.x).toFixed(1)},${Y(b.hi).toFixed(1)}`).join(" ");
+    const bot = band.slice().reverse().map(b => `${X(b.x).toFixed(1)},${Y(b.lo).toFixed(1)}`).join(" ");
+    s += `<polygon points="${top} ${bot}" fill="rgba(122,196,90,.22)"/>`;
+  }
   if (axis) {
     const yf = fmtY || (v => Math.round(v));
     s += `<line x1="${L}" y1="${Y(hi)}" x2="${L}" y2="${Y(lo)}" stroke="${LINE}"/>`;
@@ -122,6 +129,10 @@ export function lineChart(points, opts = {}) {
     s += `<text x="${L}" y="${H - 4}" fill="${MUT}" font-size="9.5" font-weight="650">${xLabels[0]}</text>`;
     s += `<text x="${W - 4}" y="${H - 4}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${xLabels[1]}</text>`;
   }
+  // intermediate axis date ticks across the range
+  if (xTicks) xTicks.forEach(t => {
+    s += `<text x="${X(t.x).toFixed(1)}" y="${H - 4}" fill="${MUT}" font-size="9" text-anchor="middle" font-weight="600">${t.label}</text>`;
+  });
   if (lastLabel) {
     const lastSe = series[series.length - 1].points;
     const last = lastSe[lastSe.length - 1];

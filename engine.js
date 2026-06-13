@@ -1295,6 +1295,67 @@ export function distanceSplit(logs, sport, from, to) {
   return { long: pick(isLong), regular: pick(l => !isLong(l)), threshold, median };
 }
 
+/* Per-sport summary of what was actually done in [from,to] — counts every
+   logged activity incl. unplanned. Powers the Diary week summary. */
+export function weekSummary(logs, bounds, from, to) {
+  const by = {};
+  const total = { count: 0, min: 0, km: 0, ascent: 0, cal: 0, load: 0 };
+  for (const l of logs) {
+    if (l.date < from || l.date > to) continue;
+    const sp = l.sport || "other";
+    const s = (by[sp] = by[sp] || { count: 0, min: 0, km: 0, ascent: 0, cal: 0, load: 0 });
+    const ld = sessionLoad(l, bounds);
+    s.count++; s.min += l.min || 0; s.km += l.km || 0; s.ascent += l.ascent || 0; s.cal += l.calories || 0; s.load += ld;
+    total.count++; total.min += l.min || 0; total.km += l.km || 0; total.ascent += l.ascent || 0; total.cal += l.calories || 0; total.load += ld;
+  }
+  return { bySport: by, total };
+}
+
+/* A Garmin-style "optimal range" per bucket: a trailing ~4-bucket chronic
+   baseline × [0.8, 1.3]. The actual bucket load rides above/below this band. */
+export function trainingLoadBand(logs, bounds, buckets) {
+  const loads = buckets.map(bk =>
+    logs.filter(l => LOADBEARING(l) && l.date >= bk.start && l.date <= bk.end)
+        .reduce((s, l) => s + sessionLoad(l, bounds), 0));
+  return buckets.map((bk, i) => {
+    const win = loads.slice(Math.max(0, i - 3), i + 1);
+    const chronic = win.reduce((a, b) => a + b, 0) / win.length;
+    return { start: bk.start, lo: Math.round(chronic * 0.8), hi: Math.round(chronic * 1.3) };
+  });
+}
+
+/* Adaptive prescription for an ad-hoc session (not in the plan): size from
+   recent history, fall back to sane defaults. typeId = a sessionTypeOptions id. */
+export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1 } = {}) {
+  const med = arr => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const lastN = (pred, n) => logs.filter(pred).slice(-n).map(l => l.min);
+
+  if (QUALITY_TEMPLATES[typeId]) {
+    const t = QUALITY_TEMPLATES[typeId];
+    const base = sport === "run"
+      ? (med(lastN(l => l.sport === "run" && (l.min || 0) >= 20, 8)) || 35)
+      : (med(lastN(l => l.sport === "bike" && (l.min || 0) >= 30, 8)) || 60);
+    const r = { targetMin: round5(Math.max(sport === "run" ? 35 : 45, base + 10)), zone: t.zone, qualityTemplate: typeId, note: t.label };
+    if (typeId === "bikeClimb") r.targetAscent = climbTargetAscent({ logs, weekNum, settings });
+    return r;
+  }
+  if (typeId === "long") {
+    if (sport === "run") {
+      const longs = logs.filter(l => l.sport === "run" && (l.type === "long" || (l.km || 0) > 12)).slice(-4).map(l => l.min);
+      return { targetMin: round5(avg(longs) || 75), zone: 2, note: "Steady and unhurried — your week's aerobic anchor." };
+    }
+    const longs = logs.filter(l => l.sport === "bike" && (l.type === "long" || (l.km || 0) > 40)).slice(-4).map(l => l.min);
+    return { targetMin: round5(avg(longs) || 120), zone: 2, note: "Long steady ride — build endurance." };
+  }
+  if (sport === "run") {
+    const easy = lastN(l => l.sport === "run" && (!l.type || l.type === "easy") && (l.min || 0) >= 20, 8);
+    return { targetMin: round5(med(easy) || 35), zone: 2, note: "Conversational pace — keep it easy." };
+  }
+  const easyB = lastN(l => l.sport === "bike" && (!l.type || l.type === "easy") && (l.min || 0) >= 30, 8);
+  return { targetMin: round5(med(easyB) || 60), zone: 2, note: "Easy aerobic spin." };
+}
+
 /* ---- the offline AI coach: deterministic, ranked, explained ---- */
 export function coachInsights({ doc, todayISO }) {
   const out = [];
