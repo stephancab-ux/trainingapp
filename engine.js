@@ -1044,8 +1044,8 @@ export function plannedVsUnplannedCalories({ weeks = [], logs = [], from, to }) 
 }
 
 /* ---- Progress time-range window (range + step + compare) ---- */
-const RANGE_WK = { thisWeek: 1, "4w": 4, "8w": 8, "12w": 12, "3m": 13 };
-const RANGE_LBL = { thisWeek: "This week", "4w": "4 weeks", "8w": "8 weeks", "12w": "12 weeks", "3m": "3 months" };
+const RANGE_WK = { thisWeek: 1, "4w": 4, "8w": 8, "12w": 12, "3m": 13, "6m": 26 };
+const RANGE_LBL = { thisWeek: "This week", "4w": "4 weeks", "8w": "8 weeks", "12w": "12 weeks", "3m": "3 months", "6m": "6 months" };
 export function rangeWindow(range = {}, todayISO) {
   const preset = range.preset || "12w";
   const off = range.offset || 0;
@@ -1062,6 +1062,10 @@ export function rangeWindow(range = {}, todayISO) {
     from = `${year}-01-01`;
     to = off === 0 ? todayISO : `${year}-12-31`;
     label = off === 0 ? "Year to date" : String(year);
+  } else if (preset === "all") { // earliest data → today; caller supplies range.from
+    from = range.from || addDays(todayISO, -365);
+    to = todayISO;
+    label = "All time";
   } else { // custom
     from = range.from || addDays(todayISO, -83);
     to = range.to || todayISO;

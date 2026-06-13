@@ -179,7 +179,9 @@ function openSheet(html) {
 function wireSheetDrag(sheet, scrim) {
   let startY = 0, dy = 0, dragging = false, t0 = 0;
   sheet.addEventListener("pointerdown", e => {
-    if (e.target.closest("input, select, textarea")) return;
+    // ignore inputs and the reorder drag-handle, so dragging a card down
+    // reorders the list instead of swiping the sheet away
+    if (e.target.closest("input, select, textarea, [data-drag]")) return;
     if (sheet.scrollTop > 0) return;
     startY = e.clientY; dy = 0; dragging = false; t0 = performance.now();
     sheet.addEventListener("pointermove", onMove);
@@ -887,15 +889,18 @@ function wireProgram(page, week, due) {
   $("#wk-watch")?.addEventListener("click", () => exportWeekToWatch(week));
 }
 
-/* The Diary (was the Week tab): what you've actually done — a weekly summary
-   you can step through with ◀ ▶, then the full activity history. */
-let diaryWeekOffset = 0, diaryScroll = 0;
-const SPORT_DIARY = [["run", "Run", "var(--cy)"], ["trail", "Trail", "#56dbe8"], ["bike", "Ride", "#8e9df8"], ["hike", "Hike", "#7fd6c0"], ["gym", "Gym", "#c98bdb"], ["other", "Other", "var(--mut)"]];
-function hrow(l) {
-  const extra = [l.km ? `${l.km} km` : "",
+/* The Diary (was the Week tab): a day-by-day calendar of what you actually did
+   each week (same layout as the Coach program), steppable with ◀ ▶, then the
+   full activity history below, paginated. */
+let diaryWeekOffset = 0, diaryScroll = 0, diaryPage = 0;
+function logExtra(l) {
+  return [l.km ? `${l.km} km` : "",
     l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "",
     l.km && l.sport === "bike" ? (l.km / (l.min / 60)).toFixed(1) + " km/h" : "",
     l.ascent ? `${l.ascent} m ↑` : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ");
+}
+function hrow(l) {
+  const extra = logExtra(l);
   return `<button class="hrow" data-id="${l.id}">
     <span class="ic ${sportClass(l.sport)}" style="width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center">${ICONS[l.sport] || ICONS.other}</span>
     <span class="hd2"><b>${logTitle(l)} · ${l.min} min</b><span>${fmtShort(l.date)}${extra ? " · " + extra : ""}${l.note ? " · " + esc(l.note) : ""}</span></span>
@@ -907,13 +912,38 @@ function renderDiary() {
   const mon = E.addDays(t, -E.dayIndex(t));
   const from = E.addDays(mon, -7 * diaryWeekOffset), to = E.addDays(from, 6);
   const sum = E.weekSummary(doc.logs, bounds(), from, to);
-  const rows = SPORT_DIARY.map(([sp, lab, col]) => {
-    const s = sum.bySport[sp]; if (!s || !s.count) return "";
-    const bits = [fmtDur(s.min), s.km ? `${s.km.toFixed(1)} km` : "", s.ascent ? `${Math.round(s.ascent)} m↑` : "", s.cal ? `${Math.round(s.cal)} kcal` : "", s.load ? `load ${Math.round(s.load)}` : ""].filter(Boolean).join(" · ");
-    return `<div class="dsum-row"><span class="dsum-nm"><i style="background:${col}"></i>${lab}</span><span class="dsum-ct">${s.count}×</span><span class="dsum-v">${bits}</span></div>`;
+
+  // day-by-day calendar for the selected week — same layout as the Coach program
+  const dayCal = E.DAYS.map((dy, i) => {
+    const date = E.addDays(from, i);
+    const dd = E.parseISO(date).getUTCDate(), dn = dy.toUpperCase(), isToday = date === t;
+    const dayLogs = doc.logs.filter(l => l.date === date);
+    if (!dayLogs.length) {
+      const future = date > t;
+      return `<div class="day rest"><span class="dt"><b>${dd}</b><span>${dn}</span></span>
+        <span class="ic restc">${ICONS.rest}</span>
+        <span class="tx"><b style="color:var(--mut)">${future ? "—" : "Rest"}</b><span>${future ? "upcoming" : "nothing logged"}</span></span></div>`;
+    }
+    return dayLogs.map((l, j) => {
+      const extra = logExtra(l);
+      return `<button class="day ${isToday ? "today" : ""}" data-lid="${l.id}">
+        <span class="dt">${j === 0 ? `<b>${dd}</b><span>${dn}</span>` : ""}</span>
+        <span class="ic ${sportClass(l.sport)}">${ICONS[l.sport] || ICONS.other}</span>
+        <span class="tx"><b>${logTitle(l)} · ${l.min} min</b><span>${extra || "done"}</span></span>
+        <span class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></span></button>`;
+    }).join("");
   }).join("");
-  const logs = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1));
+  const totLine = sum.total.count
+    ? `${sum.total.count} session${sum.total.count === 1 ? "" : "s"} · ${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.load ? ` · load ${Math.round(sum.total.load)}` : ""}`
+    : "Nothing logged — tap ＋ to add an activity";
+
+  // full activity history, newest first, paginated
+  const all = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1));
+  const PER = 50, pages = Math.max(1, Math.ceil(all.length / PER));
+  diaryPage = Math.max(0, Math.min(diaryPage, pages - 1));
+  const slice = all.slice(diaryPage * PER, diaryPage * PER + PER);
   const label = diaryWeekOffset === 0 ? "This week" : diaryWeekOffset === 1 ? "Last week" : `${diaryWeekOffset} weeks ago`;
+
   page.innerHTML = `
     <div class="phead"><h1 class="page">Diary</h1></div>
     <div class="diary-nav">
@@ -921,18 +951,23 @@ function renderDiary() {
       <span class="dy-label">${label}<small>${fmtShort(from)} – ${fmtShort(to)}</small></span>
       <button class="iconbtn sm" id="dy-next" aria-label="later" ${diaryWeekOffset <= 0 ? "disabled" : ""}>›</button>
     </div>
-    ${sum.total.count
-      ? `<div class="card"><div class="dsum">${rows}</div></div>`
-      : `<div class="card"><p class="row-sub">Nothing logged ${diaryWeekOffset === 0 ? "this week yet" : "that week"} — tap ＋ to add an activity.</p></div>`}
-    <div class="eyebrow" style="margin:8px 2px 2px">All activity</div>
-    <div class="card hlist">${logs.map(hrow).join("") || `<p class="row-sub" style="padding:10px 0">Nothing yet — your logged activities show here.</p>`}</div>`;
+    <div class="card days">${dayCal}</div>
+    <p class="row-sub" style="text-align:center;margin:-2px 0 4px">${totLine}</p>
+    <div class="eyebrow" style="margin:8px 2px 2px">All activity · ${all.length}</div>
+    <div class="card hlist">${slice.map(hrow).join("") || `<p class="row-sub" style="padding:10px 0">Nothing yet — your logged activities show here.</p>`}</div>
+    ${pages > 1 ? `<div class="diary-nav">
+      <button class="iconbtn sm" id="hp-prev" ${diaryPage <= 0 ? "disabled" : ""} aria-label="previous page">‹</button>
+      <span class="dy-label">Page ${diaryPage + 1} of ${pages}</span>
+      <button class="iconbtn sm" id="hp-next" ${diaryPage >= pages - 1 ? "disabled" : ""} aria-label="next page">›</button>
+    </div>` : ""}
+    <div style="height:76px"></div>`;
   $("#dy-prev").addEventListener("click", () => { diaryWeekOffset++; renderDiary(); });
   $("#dy-next").addEventListener("click", () => { if (diaryWeekOffset > 0) { diaryWeekOffset--; renderDiary(); } });
-  page.querySelectorAll("[data-id]").forEach(b => b.addEventListener("click", () => {
-    diaryScroll = window.scrollY;
-    const log = doc.logs.find(l => l.id === b.dataset.id); if (!log) return;
-    openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
-  }));
+  $("#hp-prev")?.addEventListener("click", () => { if (diaryPage > 0) { diaryPage--; renderDiary(); } });
+  $("#hp-next")?.addEventListener("click", () => { if (diaryPage < pages - 1) { diaryPage++; renderDiary(); } });
+  const openLog = id => { diaryScroll = window.scrollY; const log = doc.logs.find(l => l.id === id); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) }); };
+  page.querySelectorAll("[data-lid]").forEach(b => b.addEventListener("click", () => openLog(b.dataset.lid)));
+  page.querySelectorAll("[data-id]").forEach(b => b.addEventListener("click", () => openLog(b.dataset.id)));
   requestAnimationFrame(() => window.scrollTo(0, diaryScroll));
 }
 
@@ -1847,15 +1882,18 @@ function renderProgress() {
   const vo2AtTarget = lastW && lastV ? E.vo2AtTargetWeight(lastV.value, lastW.kg, doc.settings.targetWeightKg) : null;
 
   // ----- time-range window -----
-  const win = E.rangeWindow(doc.settings.progressRange, t);
+  const pr0 = doc.settings.progressRange;
+  // "All time" needs the earliest dated point we have
+  const earliest = [...doc.logs.map(l => l.date), ...wi.map(w => w.date), ...vo2.map(v => v.date)].sort()[0];
+  const win = E.rangeWindow(pr0.preset === "all" ? { ...pr0, from: earliest || E.addDays(t, -83) } : pr0, t);
   const nW = Math.max(1, Math.ceil(win.days / 7));
   const inRange = d => d >= win.from && d <= win.to;
   const R = arr => arr.filter(p => inRange(p.date));
 
   // ----- data series (range-filtered) -----
-  // weight + VO₂ are long-term body metrics — always show their full history
-  const wPts = wi.map(w => ({ x: dnum(w.date), y: w.kg, date: w.date }));
-  const vPts = vo2.map(v => ({ x: dnum(v.date), y: v.value, date: v.date }));
+  // weight + VO₂ now honour the range selector like every other chart
+  const wPts = R(wi.map(w => ({ x: dnum(w.date), y: w.kg, date: w.date })));
+  const vPts = R(vo2.map(v => ({ x: dnum(v.date), y: v.value, date: v.date })));
   const easyRuns = doc.logs.filter(l => E.isRunType(l) && (l.min || 0) >= 20 && l.km > 0 &&
     l.avgHR != null && l.avgHR >= 105 && l.avgHR <= 155).sort(byDate);
   const pPts = R(easyRuns.map(l => ({ x: dnum(l.date), y: l.min * 60 / l.km, date: l.date, id: l.id })));
@@ -1976,7 +2014,7 @@ function renderProgress() {
     weight: () => `
       <div class="hd"><span class="eyebrow">Weight</span><button class="eyebrow tapx lk" id="pg-tw">target ${doc.settings.targetWeightKg.toFixed(1)} ✎</button></div>
       <div class="stat"><span class="midnum">${lastW ? lastW.kg.toFixed(1) : "—"}</span><span class="unit">kg · ${lastW ? fmtShort(lastW.date) : ""}</span></div>
-      ${wPts.length >= 2 ? wrap("weight", C.lineChart(wPts, { axis: true, taps: true, emaAlpha: 0.25, fmtY: v => v.toFixed(0), target: doc.settings.targetWeightKg, targetLabel: `${doc.settings.targetWeightKg.toFixed(0)} kg`, selected: lineSel.weight, xLabels: [fmtShort(wi[0].date), fmtShort(lastW.date)] })) : `<p class="row-sub">Two weigh-ins start the trend.</p>`}
+      ${wPts.length >= 2 ? wrap("weight", C.lineChart(wPts, { axis: true, taps: true, emaAlpha: 0.25, fmtY: v => v.toFixed(0), target: doc.settings.targetWeightKg, targetLabel: `${doc.settings.targetWeightKg.toFixed(0)} kg`, selected: lineSel.weight, xLabels: [fmtShort(wPts[0].date), fmtShort(wPts[wPts.length - 1].date)], xTicks: xTicksFor(wPts) })) : `<p class="row-sub">${wi.length >= 2 ? "No weigh-ins in this range — widen it or check All time." : "Two weigh-ins start the trend."}</p>`}
       ${lineDetail("weight", [{ points: wPts }], p => `${p.y.toFixed(1)} kg`)}
       ${vo2AtTarget ? `<div class="callout">Same fitness at ${doc.settings.targetWeightKg.toFixed(0)} kg → <b>VO₂ ≈ ${vo2AtTarget}</b>. Lighter chassis, same engine.</div>` : ""}
       <button class="btn ghost mini" id="pg-weigh">Add weigh-in</button>`,
@@ -2004,7 +2042,7 @@ function renderProgress() {
         <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
         ${cat}
       </div>
-      ${vPts.length >= 2 ? wrap("vo2", C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vo2[0].date), fmtShort(lastV.date)] })) : ""}
+      ${vPts.length >= 2 ? wrap("vo2", C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })) : (vo2.length >= 2 ? `<p class="row-sub">No readings in this range — widen it or check All time.</p>` : "")}
       ${lineDetail("vo2", [{ points: vPts }], p => `${p.y} ml/kg/min`)}
       <button class="btn ghost mini" id="pg-vo2">Add reading</button>`;
     },
@@ -2208,7 +2246,7 @@ function renderProgress() {
 
   const order = doc.settings.progressCards.filter(c => c.on && CARDS[c.id]);
   const pr = doc.settings.progressRange;
-  const RANGE_OPTS = [["thisWeek", "This week"], ["4w", "4 weeks"], ["8w", "8 weeks"], ["12w", "12 weeks"], ["3m", "3 months"], ["ytd", "Year to date"]];
+  const RANGE_OPTS = [["thisWeek", "This week"], ["4w", "4 weeks"], ["8w", "8 weeks"], ["12w", "12 weeks"], ["3m", "3 months"], ["6m", "6 months"], ["ytd", "Year to date"], ["all", "All time"]];
   const rangeBar = `<div class="rangebar">
     <button class="iconbtn sm" id="rg-prev" aria-label="earlier">‹</button>
     <select id="rg-preset" class="rangesel">${RANGE_OPTS.map(([v, l]) => `<option value="${v}" ${pr.preset === v ? "selected" : ""}>${l}</option>`).join("")}</select>
