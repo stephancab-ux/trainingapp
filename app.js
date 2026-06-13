@@ -53,7 +53,7 @@ const ICONS = {
 };
 const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : "restc";
 // canonical per-sport colour (categorical) — single source of truth for charts/legends
-const SPORT_COLOR = { run: "#56dbe8", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", other: "#8b97a4" };
+const SPORT_COLOR = { run: "#ff7a66", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", other: "#8b97a4" };
 const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", other: "Other" };
 
 const ICONS_UI = {
@@ -269,6 +269,16 @@ function toast(msg) {
   t.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+/* A toast with an Undo action (iOS-style), used for swipe-delete. */
+function toastUndo(msg, onUndo) {
+  const t = $("#toast");
+  t.innerHTML = `${esc(msg)} <button class="undo">Undo</button>`;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  const hide = () => t.classList.remove("show");
+  toastTimer = setTimeout(hide, 4500);
+  t.querySelector(".undo").addEventListener("click", () => { clearTimeout(toastTimer); hide(); onUndo(); }, { once: true });
 }
 
 function persist(mutate) {
@@ -987,7 +997,7 @@ function programSection(week, due) {
        <span style="flex:1;text-align:left"><b>Sunday check-in is open</b><br><span class="row-sub">2 minutes: weight, feel, next week's volume</span></span>
        <span class="chip runc">GO →</span></button>` : ""}
     <div class="card" style="padding:13px 16px"><div class="tot">
-      <div class="row"><span class="nm">Run</span><span class="bar"><i style="width:${pct(runDone, week.targetMin.run)}%;background:var(--cy)"></i></span><span class="qty">${sportLogged(week, "run")} / ${week.targetMin.run} min</span></div>
+      <div class="row"><span class="nm">Run</span><span class="bar"><i style="width:${pct(runDone, week.targetMin.run)}%;background:${SPORT_COLOR.run}"></i></span><span class="qty">${sportLogged(week, "run")} / ${week.targetMin.run} min</span></div>
       <div class="row"><span class="nm">Ride</span><span class="bar"><i style="width:${pct(bikeDone, week.targetMin.bike)}%;background:var(--bike)"></i></span><span class="qty">${sportLogged(week, "bike")} / ${week.targetMin.bike} min</span></div>
       ${week.targetMin.gym > 0 ? `<div class="row"><span class="nm">Gym</span><span class="bar"><i style="width:${pct(sportLogged(week, "gym"), week.targetMin.gym)}%;background:#c98bdb"></i></span><span class="qty">${sportLogged(week, "gym")} / ${week.targetMin.gym} min</span></div>` : ""}
     </div></div>
@@ -1010,7 +1020,8 @@ function wireProgram(page, week, due) {
 /* The Diary (was the Week tab): a day-by-day calendar of what you actually did
    each week (same layout as the Coach program), steppable with ◀ ▶, then the
    full activity history below, paginated. */
-let diaryWeekOffset = 0, diaryScroll = 0, diaryPage = 0, diaryFilterSport = "all", diaryFilterMonth = "all";
+let diaryScroll = 0, diaryPage = 0, diaryFilterSport = "all", diaryFilterMonth = "all";
+let diarySport = null, diaryWeekSel = null; // Strava-style summary: selected sport + week (null = latest)
 function logExtra(l) {
   return [l.km ? `${l.km} km` : "",
     l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "",
@@ -1019,51 +1030,109 @@ function logExtra(l) {
 }
 function hrow(l) {
   const extra = logExtra(l);
-  return `<button class="hrow" data-id="${l.id}">
+  return `<div class="swipe"><button class="swipe-del" data-del="${l.id}">Delete</button>
+    <button class="hrow swipe-content" data-id="${l.id}">
     <span class="ic ${sportClass(l.sport)}" style="width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center">${ICONS[l.sport] || ICONS.other}</span>
     <span class="hd2"><b>${logTitle(l)} · ${l.min} min</b><span>${fmtShort(l.date)}${extra ? " · " + extra : ""}${l.note ? " · " + esc(l.note) : ""}</span></span>
-    <span class="src">${(l.source || "manual").toUpperCase()}</span></button>`;
+    <span class="src">${(l.source || "manual").toUpperCase()}</span></button></div>`;
+}
+/* Swipe-left-to-delete on the activity list (iOS Mail style). A plain tap opens
+   the log; a horizontal swipe reveals the Delete button; delete shows an Undo. */
+function wireSwipeRows(page, openLog) {
+  let openRow = null;
+  const close = el => { if (el) { el.style.transform = ""; if (el === openRow) openRow = null; } };
+  page.querySelectorAll(".swipe-content").forEach(el => {
+    let sx = 0, sy = 0, dx = 0, swiping = false, decided = false;
+    const onMove = e => {
+      const mx = e.clientX - sx, my = e.clientY - sy;
+      if (!decided) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        decided = true; swiping = Math.abs(mx) > Math.abs(my);
+        if (swiping) el.setPointerCapture(e.pointerId);
+      }
+      if (!swiping) return;
+      const base = openRow === el ? -88 : 0;
+      dx = Math.max(-88, Math.min(0, base + mx));
+      el.style.transform = `translateX(${dx}px)`;
+    };
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      el.style.transition = "";
+      if (!swiping) return;
+      if (dx < -44) { if (openRow && openRow !== el) close(openRow); el.style.transform = "translateX(-88px)"; openRow = el; }
+      else close(el);
+      el.addEventListener("click", ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+    };
+    el.addEventListener("pointerdown", e => {
+      sx = e.clientX; sy = e.clientY; dx = 0; swiping = false; decided = false;
+      el.style.transition = "none";
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+      el.addEventListener("pointercancel", onUp);
+    });
+    el.addEventListener("click", () => {
+      if (openRow) { close(openRow); return; } // any tap while a row is open just closes it
+      openLog(el.dataset.id);
+    });
+  });
+  page.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => deleteLogUndo(b.dataset.del)));
+}
+function deleteLogUndo(id) {
+  const idx = doc.logs.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  const removed = doc.logs[idx];
+  doc.logs.splice(idx, 1);
+  S.save(doc);
+  renderDiary();
+  toastUndo("Activity deleted", () => {
+    doc.logs.push(removed);
+    doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
+    S.save(doc);
+    renderDiary();
+  });
 }
 function renderDiary() {
   const page = $('[data-page="week"]');
   const t = todayISO();
   const mon = E.addDays(t, -E.dayIndex(t));
-  const from = E.addDays(mon, -7 * diaryWeekOffset), to = E.addDays(from, 6);
-  const sum = E.weekSummary(doc.logs, bounds(), from, to);
-
-  // day-by-day calendar for the selected week — same layout as the Coach program
-  const dayCal = E.DAYS.map((dy, i) => {
-    const date = E.addDays(from, i);
-    const dd = E.parseISO(date).getUTCDate(), dn = dy.toUpperCase(), isToday = date === t;
-    const dayLogs = doc.logs.filter(l => l.date === date);
-    if (!dayLogs.length) {
-      const future = date > t;
-      return `<div class="day rest"><span class="dt"><b>${dd}</b><span>${dn}</span></span>
-        <span class="ic restc">${ICONS.rest}</span>
-        <span class="tx"><b style="color:var(--mut)">${future ? "—" : "Rest"}</b><span>${future ? "upcoming" : "nothing logged"}</span></span></div>`;
-    }
-    return dayLogs.map((l, j) => {
-      const extra = logExtra(l);
-      return `<button class="day ${isToday ? "today" : ""}" data-lid="${l.id}">
-        <span class="dt">${j === 0 ? `<b>${dd}</b><span>${dn}</span>` : ""}</span>
-        <span class="ic ${sportClass(l.sport)}">${ICONS[l.sport] || ICONS.other}</span>
-        <span class="tx"><b>${logTitle(l)} · ${l.min} min</b><span>${extra || "done"}</span></span>
-        <span class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></span></button>`;
-    }).join("");
-  }).join("");
-  // per-sport summary for the selected week — a bar per performed sport (length
-  // ∝ time), with the week's total time, distance and calories underneath
-  const DSPORTS = [["run", "Run", SPORT_COLOR.run], ["trail", "Trail", SPORT_COLOR.trail], ["bike", "Ride", SPORT_COLOR.bike], ["hike", "Hike", SPORT_COLOR.hike], ["gym", "Gym", SPORT_COLOR.gym], ["other", "Other", SPORT_COLOR.other]];
-  const perf = DSPORTS.filter(([sp]) => sum.bySport[sp] && sum.bySport[sp].count);
-  const maxMin = Math.max(1, ...perf.map(([sp]) => sum.bySport[sp].min));
-  const sumBars = perf.map(([sp, lab, col]) => {
-    const s = sum.bySport[sp];
-    return `<div class="row"><span class="nm">${lab}</span><span class="bar"><i style="width:${Math.max(4, Math.round(s.min / maxMin * 100))}%;background:${col}"></i></span><span class="qty">${s.count}× · ${fmtDur(s.min)}${s.km ? ` · ${s.km.toFixed(1)} km` : ""}</span></div>`;
-  }).join("");
-  const summaryCard = sum.total.count
-    ? `<div class="card" style="padding:13px 16px"><div class="tot">${sumBars}</div>
-        <div class="wktot">${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.cal ? ` · ${Math.round(sum.total.cal).toLocaleString()} kcal` : ""}</div></div>`
-    : `<div class="card"><p class="row-sub">Nothing logged ${diaryWeekOffset === 0 ? "this week yet" : "that week"} — tap ＋ to add an activity.</p></div>`;
+  // Strava-style weekly summary: per-sport tabs, a 4-stat block, and a tappable
+  // 12-week graph that scrubs which week the stats show.
+  const SP = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+  const totalMin = sp => doc.logs.reduce((a, l) => a + ((l.sport || "other") === sp ? (l.min || 0) : 0), 0);
+  const availSports = SP.filter(([sp]) => doc.logs.some(l => (l.sport || "other") === sp));
+  if (!availSports.some(([sp]) => sp === diarySport))
+    diarySport = availSports.length ? [...availSports].sort((a, b) => totalMin(b[0]) - totalMin(a[0]))[0][0] : "run";
+  const N = 12, weeks = [];
+  for (let k = N - 1; k >= 0; k--) {
+    const ws = E.addDays(mon, -7 * k);
+    const s = E.weekSummary(doc.logs, bounds(), ws, E.addDays(ws, 6)).bySport[diarySport] || { count: 0, min: 0, km: 0, ascent: 0, cal: 0 };
+    weeks.push({ start: ws, ...s });
+  }
+  const sel = diaryWeekSel == null ? N - 1 : Math.max(0, Math.min(N - 1, diaryWeekSel));
+  const sw = weeks[sel];
+  const hasDist = ["run", "trail", "bike", "hike"].includes(diarySport);
+  const gymish = diarySport === "gym" || diarySport === "other";
+  const stat = (v, lab) => `<div class="actcell"><b>${v}</b><span>${lab}</span></div>`;
+  const stats = [
+    hasDist ? stat(`${sw.km.toFixed(1)} km`, "Distance") : "",
+    stat(fmtDur(sw.min), "Time"),
+    hasDist ? stat(`${Math.round(sw.ascent).toLocaleString()} m`, "Elev gain") : "",
+    stat(`${Math.round(sw.cal).toLocaleString()}`, "Calories"),
+  ].filter(Boolean).join("");
+  const metricKey = gymish ? "min" : "km";
+  const gpts = weeks.map(w => ({ x: dnum(w.start), y: w[metricKey], date: w.start }));
+  const sportTabs = `<span class="ctabs">${availSports.map(([sp, lab]) => `<button class="ctab ${diarySport === sp ? "on" : ""}" data-dsp="${sp}">${lab}</button>`).join("")}</span>`;
+  const summaryCard = `
+    <div class="card" style="padding:16px">
+      <div class="hd"><span class="eyebrow">${sel === N - 1 ? "This week" : "Week of " + fmtShort(sw.start)}</span>${sportTabs}</div>
+      <div class="actgrid" style="margin-top:12px">${stats}</div>
+      <div class="eyebrow" style="margin:16px 2px 4px">Past 12 weeks</div>
+      ${gpts.some(p => p.y > 0)
+        ? `<div class="chartwrap" data-card="diary12">${C.lineChart(gpts, { axis: true, taps: true, color: SPORT_COLOR[diarySport] || SPORT_COLOR.other, selected: { si: 0, pi: sel }, fmtY: gymish ? (v => fmtDur(Math.round(v))) : (v => Math.round(v)), xTicks: xTicksFor(gpts) })}</div>`
+        : `<p class="row-sub">No ${(SPORT_NAME[diarySport] || diarySport).toLowerCase()} logged in the last 12 weeks.</p>`}
+    </div>`;
 
   // full activity history with type + month filters, newest first, paginated
   const all = [...doc.logs].sort((a, b) => (a.date > b.date ? -1 : 1));
@@ -1076,21 +1145,14 @@ function renderDiary() {
   const PER = 50, pages = Math.max(1, Math.ceil(filtered.length / PER));
   diaryPage = Math.max(0, Math.min(diaryPage, pages - 1));
   const slice = filtered.slice(diaryPage * PER, diaryPage * PER + PER);
-  const label = diaryWeekOffset === 0 ? "This week" : diaryWeekOffset === 1 ? "Last week" : `${diaryWeekOffset} weeks ago`;
   const SPORTS = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
   const monthLabel = m => fmtDate(m + "-01", { month: "short", year: "numeric" });
 
   page.innerHTML = `
     <div class="phead"><h1 class="page">Diary</h1></div>
-    <div class="diary-nav">
-      <button class="iconbtn sm" id="dy-prev" aria-label="earlier">‹</button>
-      <span class="dy-label">${label}<small>${fmtShort(from)} – ${fmtShort(to)}</small></span>
-      <button class="iconbtn sm" id="dy-next" aria-label="later" ${diaryWeekOffset <= 0 ? "disabled" : ""}>›</button>
-    </div>
     ${summaryCard}
-    <div class="card days">${dayCal}</div>
-    <div class="eyebrow" style="margin:8px 2px 2px">All activity · ${filtered.length}${filtering ? ` of ${all.length}` : ""}</div>
-    <div class="diary-filter">
+    <div class="eyebrow" style="margin:14px 2px 2px">All activity · ${filtered.length}${filtering ? ` of ${all.length}` : ""}</div>
+    <div class="diary-filter stickybar">
       <select id="df-sport" class="rangesel"><option value="all">All types</option>${SPORTS.map(([v, l]) => `<option value="${v}" ${diaryFilterSport === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select id="df-month" class="rangesel"><option value="all">All months</option>${months.map(m => `<option value="${m}" ${diaryFilterMonth === m ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</select>
     </div>
@@ -1101,15 +1163,14 @@ function renderDiary() {
       <button class="iconbtn sm" id="hp-next" ${diaryPage >= pages - 1 ? "disabled" : ""} aria-label="next page">›</button>
     </div>` : ""}
     <div style="height:76px"></div>`;
-  $("#dy-prev").addEventListener("click", () => { diaryWeekOffset++; renderDiary(); });
-  $("#dy-next").addEventListener("click", () => { if (diaryWeekOffset > 0) { diaryWeekOffset--; renderDiary(); } });
+  page.querySelectorAll("[data-dsp]").forEach(b => b.addEventListener("click", () => { diarySport = b.dataset.dsp; diaryWeekSel = null; renderDiary(); }));
+  page.querySelectorAll('.chartwrap[data-card="diary12"] [data-si]').forEach(r => r.addEventListener("click", () => { diaryWeekSel = +r.dataset.pi; renderDiary(); }));
   $("#df-sport").addEventListener("change", e => { diaryFilterSport = e.target.value; diaryPage = 0; renderDiary(); });
   $("#df-month").addEventListener("change", e => { diaryFilterMonth = e.target.value; diaryPage = 0; renderDiary(); });
   $("#hp-prev")?.addEventListener("click", () => { if (diaryPage > 0) { diaryPage--; renderDiary(); } });
   $("#hp-next")?.addEventListener("click", () => { if (diaryPage < pages - 1) { diaryPage++; renderDiary(); } });
   const openLog = id => { diaryScroll = window.scrollY; const log = doc.logs.find(l => l.id === id); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) }); };
-  page.querySelectorAll("[data-lid]").forEach(b => b.addEventListener("click", () => openLog(b.dataset.lid)));
-  page.querySelectorAll("[data-id]").forEach(b => b.addEventListener("click", () => openLog(b.dataset.id)));
+  wireSwipeRows(page, openLog);
   requestAnimationFrame(() => window.scrollTo(0, diaryScroll));
 }
 
@@ -2198,7 +2259,7 @@ function renderProgress() {
         : `<div class="stat"><span class="midnum" style="color:var(--sub)">${E.fmtPace(hint.lo)}–${E.fmtPace(hint.hi)}</span><span class="unit">/km · ${hint.manual ? "your pace setting" : "starting estimate"}</span></div>`}
       ${pPts.length ? avgLine([`${E.fmtPace(seriesAvg(pPts))} /km over ${win.label.toLowerCase()}`]) : ""}
       ${pPts.length >= 2
-        ? wrap("pace", C.lineChart(pPts, { height: 116, axis: true, taps: true, avg: true, invert: true, fmtY: v => E.fmtPace(v), selected: lineSel.pace, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)] }))
+        ? wrap("pace", C.lineChart(pPts, { height: 116, axis: true, taps: true, avg: true, invert: true, color: SPORT_COLOR.run, fmtY: v => E.fmtPace(v), selected: lineSel.pace, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)] }))
         : `<p class="row-sub">Run easy (Z2, ≤ ${B[1].hi} bpm for 20+ min) and this chart wakes up.</p>`}
       ${lineDetail("pace", [{ points: pPts }], p => `${E.fmtPace(p.y)} /km`)}`,
 
@@ -2244,12 +2305,12 @@ function renderProgress() {
           const long = mk(l => l.sport === "run" && longIds.has(l.id));
           const hard = mk(l => l.sport === "run" && !longIds.has(l.id) && hardT(l));
           const trail = mk(l => l.sport === "trail");
-          if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
+          if (easy.length) ser.push({ points: easy, color: SPORT_COLOR.run });
           if (long.length) ser.push({ points: long, color: "#a78bfa" });
           if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
           if (trail.length) ser.push({ points: trail, color: SPORT_COLOR.trail });
           avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", trail.length ? `trail ${avgVal(trail)}` : "", uLabel];
-          legend = `<span><i style="background:var(--cy)"></i>easy</span><span><i style="background:#a78bfa"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span><span><i style="background:${SPORT_COLOR.trail}"></i>trail</span>`;
+          legend = `<span><i style="background:${SPORT_COLOR.run}"></i>easy</span><span><i style="background:#a78bfa"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span><span><i style="background:${SPORT_COLOR.trail}"></i>trail</span>`;
           empty = "Log runs with distance to compare easy, long, hard and trail pace over time.";
         } else {
           const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
@@ -2287,7 +2348,7 @@ function renderProgress() {
 
       // distance
       const label = sport === "run" ? "run" : "ride";
-      const regCol = sport === "run" ? "var(--cy)" : "#8e9df8";
+      const regCol = sport === "run" ? SPORT_COLOR.run : "#8e9df8";
       const d = E.distanceSplit(doc.logs, sport === "run" ? "run" : "bike", win.from, win.to);
       const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
       const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
@@ -2454,7 +2515,7 @@ function renderProgress() {
   const order = doc.settings.progressCards.filter(c => c.on && CARDS[c.id]);
   const pr = doc.settings.progressRange;
   const RANGE_OPTS = [["thisWeek", "Last 7 days"], ["4w", "4 weeks"], ["8w", "8 weeks"], ["12w", "12 weeks"], ["3m", "3 months"], ["6m", "6 months"], ["ytd", "Year to date"], ["all", "All time"]];
-  const rangeBar = `<div class="rangebar">
+  const rangeBar = `<div class="rangebar stickybar">
     <button class="iconbtn sm" id="rg-prev" aria-label="earlier">‹</button>
     <select id="rg-preset" class="rangesel">${RANGE_OPTS.map(([v, l]) => `<option value="${v}" ${pr.preset === v ? "selected" : ""}>${l}</option>`).join("")}</select>
     <button class="iconbtn sm" id="rg-next" aria-label="later" ${pr.offset <= 0 ? "disabled" : ""}>›</button>

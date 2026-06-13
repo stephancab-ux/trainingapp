@@ -2,7 +2,7 @@
 :root{
   --bg:#070a0f; --panel:#0c1117; --card:#121a24; --card2:#16202c;
   --ink:#eaf1f7; --sub:#8fa1b3; --mut:#5b6e80; --line:rgba(148,178,204,.13);
-  --cy:#56dbe8; --cy-ink:#03262b; --bike:#8e9df8; --sand:#e6d3a3; --bad:#ef6a5e;
+  --cy:#56dbe8; --cy-ink:#03262b; --bike:#8e9df8; --sand:#e6d3a3; --bad:#ef6a5e; --run:#ff7a66;
   --z1:#5b8def; --z2:#41c98b; --z3:#e6c94d; --z4:#f08a3c; --z5:#ef5350;
   --tabbar-h:calc(64px + env(safe-area-inset-bottom));
 }
@@ -40,7 +40,7 @@ h1.page{font-size:24px;font-weight:780;letter-spacing:-.01em;margin-top:2px}
 .zc3{background:rgba(230,201,77,.14);color:#ecd97c}
 .zc4{background:rgba(240,138,60,.15);color:#f5ab6e}
 .zc5{background:rgba(239,83,80,.15);color:#f58783}
-.runc{background:rgba(86,219,232,.13);color:var(--cy)}
+.runc{background:rgba(255,122,102,.14);color:var(--run)}
 .bikec{background:rgba(142,157,248,.14);color:var(--bike)}
 .restc{background:rgba(143,161,179,.12);color:var(--sub)}
 .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:52px;border-radius:15px;background:var(--cy);color:var(--cy-ink);font-size:17px;font-weight:750;letter-spacing:.01em}
@@ -254,6 +254,12 @@ svg text{font-family:inherit}
 .hrow .hd2 b{display:block;font-size:14.5px;font-weight:700}
 .hrow .hd2 span{display:block;font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hrow .src{font-size:9.5px;letter-spacing:.08em;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:1px 5px;flex:none}
+/* v1.7.3 — swipe-to-delete rows + sticky headers */
+.swipe{position:relative;overflow:hidden}
+.swipe-del{position:absolute;top:0;right:0;height:100%;width:88px;border:none;background:var(--bad);color:#fff;font-weight:750;font-size:14px}
+.swipe-content{position:relative;z-index:1;background:var(--card);transition:transform .2s;touch-action:pan-y}
+.toast .undo{margin-left:12px;color:var(--cy);font-weight:800;background:none;border:none;font-size:14px}
+.stickybar{position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line)}
 
 [hidden]{display:none!important}
 
