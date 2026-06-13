@@ -97,7 +97,8 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .day .dt span{font-size:10px;color:var(--mut);font-weight:700;letter-spacing:.08em}
 .ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
 .ic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.hikec{color:#7fd6c0;background:rgba(127,214,192,.14)}
+.hikec{color:#e0a24a;background:rgba(224,162,74,.15)}
+.trailc{color:#8fe06a;background:rgba(143,224,106,.14)}
 .gymc{color:#c98bdb;background:rgba(201,139,219,.15)}
 .day .tx{flex:1;min-width:0}
 .day .tx b{display:block;font-size:15px;font-weight:700}
@@ -376,6 +377,20 @@ svg text{font-family:inherit}
 .streakgrid div{background:#121b24;border:1px solid var(--line);border-radius:11px;padding:9px 6px;text-align:center}
 .streakgrid b{display:block;font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
 .streakgrid span{font-size:10px;color:var(--mut);line-height:1.2;display:block;margin-top:2px}
+/* v1.7.1 — Today activity summary cards */
+.benefitc{background:rgba(143,161,179,.14);color:var(--sub)}
+.actcard{display:block;width:100%;text-align:left;padding:14px 16px;margin-top:10px}
+.act-top{display:flex;align-items:center;gap:10px}
+.act-top .ic{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none}
+.act-top .ic svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.act-title{display:flex;flex-direction:column;min-width:0}
+.act-title b{font-size:16px;font-weight:750}
+.act-title span{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act-chips{display:flex;gap:6px;flex-wrap:wrap;margin:11px 0 2px}
+.actgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.actcell{background:#121b24;border:1px solid var(--line);border-radius:11px;padding:9px 8px;text-align:center}
+.actcell b{display:block;font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+.actcell span{font-size:10px;color:var(--mut);display:block;margin-top:2px}
 .catbars{display:flex;flex-direction:column;gap:7px;margin-top:4px}
 .catbar{display:flex;align-items:center;gap:9px}
 .catbar .cl{flex:0 0 84px;font-size:12.5px;color:var(--sub);font-weight:600;text-transform:capitalize}

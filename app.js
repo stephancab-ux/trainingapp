@@ -51,7 +51,9 @@ const ICONS = {
   hike: `<svg viewBox="0 0 24 24"><path d="M4 22l5-9 3 3 3-7 5 13M11 7a2 2 0 1 0 0-.01"/></svg>`,
   gym: `<svg viewBox="0 0 24 24"><path d="M4 9v6M7 7v10M20 9v6M17 7v10M7 12h10"/></svg>`,
 };
-const sportClass = sp => sp === "run" || sp === "trail" ? "runc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : "restc";
+const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : "restc";
+// canonical per-sport colour (categorical) — single source of truth for charts/legends
+const SPORT_COLOR = { run: "#56dbe8", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", other: "#8b97a4" };
 const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", other: "Other" };
 
 const ICONS_UI = {
@@ -591,11 +593,52 @@ function renderBanner() {
 
 /* ---------------- TODAY ---------------- */
 
+/* A Strava-style summary card for one logged activity, shown on Today. */
+function todayActivityCard(l, planned) {
+  const run = l.sport === "run" || l.sport === "trail";
+  const cells = [["Time", fmtDur(l.min)]];
+  if (l.km) cells.push(["Distance", `${l.km} km`]);
+  if (l.km && run) cells.push(["Pace", `${E.fmtPace(l.min * 60 / l.km)} /km`]);
+  else if (l.km && l.sport === "bike") cells.push(["Speed", `${(l.km / (l.min / 60)).toFixed(1)} km/h`]);
+  if (l.ascent) cells.push(["Climb", `${l.ascent} m`]);
+  if (l.calories) cells.push(["Calories", `${l.calories.toLocaleString()} kcal`]);
+  if (l.avgHR) cells.push(["Avg HR", `${l.avgHR} bpm`]);
+  if (["run", "trail", "bike", "hike", "gym"].includes(l.sport)) {
+    const e = E.effectiveAerobicTE(l, bounds());
+    if (e.te > 0) cells.push(["Aerobic TE", `<span style="color:${E.teBand(e.te).color}">${e.te.toFixed(1)}${e.estimated ? " est" : ""}</span>`]);
+  }
+  const benefit = E.primaryBenefit(l, bounds());
+  const chips = [
+    planned ? `<span class="chip zc2">ON PLAN</span>` : "",
+    (l.source && l.source !== "manual") ? `<span class="chip restc">${esc(l.source.toUpperCase())}</span>` : "",
+    benefit ? `<span class="chip benefitc">${benefit} · est</span>` : "",
+    evalChip(l, planned),
+  ].filter(Boolean).join("");
+  return `<button class="card actcard" data-lid="${l.id}">
+    <div class="act-top"><span class="ic ${sportClass(l.sport)}">${ICONS[l.sport] || ICONS.other}</span>
+      <span class="act-title"><b>${esc(logTitle(l))}</b>${l.note ? `<span>${esc(l.note)}</span>` : ""}</span></div>
+    <div class="act-chips">${chips}</div>
+    <div class="actgrid">${cells.map(([lab, v]) => `<div class="actcell"><b>${v}</b><span>${lab}</span></div>`).join("")}</div>
+  </button>`;
+}
+
 function renderToday() {
   const page = $('[data-page="today"]');
   const t = todayISO();
   const week = currentWeek();
   const due = checkinDue();
+  const todayDay = E.DAYS[E.dayIndex(t)];
+  const todaysLogs = doc.logs.filter(l => l.date === t).sort((a, b) => ((a.time || "") < (b.time || "") ? -1 : 1));
+  const planByLog = {};
+  if (week) for (const x of week.sessions.filter(x => x.day === todayDay && x.sport !== "rest")) {
+    const xl = sessionStatus(week, x).log; if (xl) planByLog[xl.id] = x;
+  }
+  const activities = todaysLogs.length
+    ? `<div class="eyebrow" style="margin:16px 2px 6px">Logged today</div>` + todaysLogs.map(l => todayActivityCard(l, planByLog[l.id])).join("")
+    : "";
+  const wireActs = () => page.querySelectorAll(".actcard[data-lid]").forEach(b => b.addEventListener("click", () => {
+    const log = doc.logs.find(l => l.id === b.dataset.lid); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
+  }));
 
   let head = `<div class="phead"><div><div class="eyebrow">${fmtDate(t)}${week ? ` · <span class="cyt">Week ${week.weekNum}</span>` : ""}</div><h1 class="page">Today</h1></div><button class="iconbtn" id="td-plus" aria-label="Do a workout">＋</button></div>`;
 
@@ -603,20 +646,21 @@ function renderToday() {
     if (doc.weeks[0] && t < doc.weeks[0].startDate) {
       page.innerHTML = head + `<div class="card">
         <div class="t-chips"><span class="chip restc">BEFORE WEEK 1</span></div>
-        <p class="note-sub">Week 1 starts <b>${fmtDate(doc.weeks[0].startDate)}</b>. Until then anything counts — tap ＋ to do a workout, or log it from the Diary.</p></div>`;
+        <p class="note-sub">Week 1 starts <b>${fmtDate(doc.weeks[0].startDate)}</b>. Until then anything counts — tap ＋ to do a workout, or log it from the Diary.</p></div>` + activities;
       $("#td-plus")?.addEventListener("click", openAdhocWorkout);
+      wireActs();
       return;
     }
     page.innerHTML = head + `<div class="card">
       <div class="t-chips"><span class="chip runc">PICK UP</span></div>
       <p class="note-sub">Pick up where you left off — close out your last week and the next one appears, starting this Monday.</p>
-      <div class="t-actions"><button class="btn" id="td-checkin">Do the check-in</button></div></div>`;
+      <div class="t-actions"><button class="btn" id="td-checkin">Do the check-in</button></div></div>` + activities;
     $("#td-checkin")?.addEventListener("click", () => openCheckin(due || lastWeek()));
     $("#td-plus")?.addEventListener("click", openAdhocWorkout);
+    wireActs();
     return;
   }
 
-  const todayDay = E.DAYS[E.dayIndex(t)];
   const daySessions = week.sessions.filter(x => x.day === todayDay);
   const s = daySessions.find(x => x.sport !== "rest" && sessionStatus(week, x).kind !== "done") || daySessions[0];
   const st = sessionStatus(week, s);
@@ -631,14 +675,8 @@ function renderToday() {
       ${due ? `<div class="t-actions"><button class="btn" id="td-checkin">Sunday check-in</button></div>` : ""}
     </div>`;
   } else if (st.kind === "done") {
-    const l = st.log;
-    card = `<div class="card">
-      <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip zc2">DONE ✓</span></div>
-      <div class="bignum">${l.min}<small>min logged</small></div>
-      <p class="t-note">${[l.km ? `${l.km} km` : "", l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "", l.ascent ? `${l.ascent} m ↑` : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ") || "Nice. That's the whole job."}</p>
-      ${evalChip(l, s)}
-      <div class="t-actions"><button class="btn ghost" id="td-edit">Edit this log</button></div>
-    </div>`;
+    // the completed session now shows as its activity card below (tagged ON PLAN)
+    card = "";
   } else if (s.sport === "gym") {
     const venue = s.venue || "home";
     card = `<div class="card">
@@ -697,9 +735,10 @@ function renderToday() {
   const doneN = week.sessions.filter(x => sessionStatus(week, x).kind === "done").length;
   const totN = week.sessions.filter(x => x.sport !== "rest").length;
 
-  page.innerHTML = head + card + yLink +
+  page.innerHTML = head + card + activities + yLink +
     `<div class="weekmini">${dots}&nbsp; Week ${week.weekNum} · ${doneN} of ${totN} done</div>`;
 
+  wireActs();
   $("#td-log")?.addEventListener("click", () =>
     openLogSheet({ date: t, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }));
   $("#td-edit")?.addEventListener("click", () =>
@@ -1014,7 +1053,7 @@ function renderDiary() {
   }).join("");
   // per-sport summary for the selected week — a bar per performed sport (length
   // ∝ time), with the week's total time, distance and calories underneath
-  const DSPORTS = [["run", "Run", "var(--cy)"], ["trail", "Trail", "#56dbe8"], ["bike", "Ride", "#8e9df8"], ["hike", "Hike", "#7fd6c0"], ["gym", "Gym", "#c98bdb"], ["other", "Other", "var(--mut)"]];
+  const DSPORTS = [["run", "Run", SPORT_COLOR.run], ["trail", "Trail", SPORT_COLOR.trail], ["bike", "Ride", SPORT_COLOR.bike], ["hike", "Hike", SPORT_COLOR.hike], ["gym", "Gym", SPORT_COLOR.gym], ["other", "Other", SPORT_COLOR.other]];
   const perf = DSPORTS.filter(([sp]) => sum.bySport[sp] && sum.bySport[sp].count);
   const maxMin = Math.max(1, ...perf.map(([sp]) => sum.bySport[sp].min));
   const sumBars = perf.map(([sp, lab, col]) => {
@@ -2054,9 +2093,9 @@ function renderProgress() {
     volume: () => `
       <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span><span class="eyebrow tapx">${ridgeSel == null ? "TAP A BAR" : "TAP AGAIN TO CLEAR"}</span></div>
       ${unit === "month"
-        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym"], colors: ["#5d6ccc", "var(--cy)", "#7fd6c0", "#c98bdb"], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
-        : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel }))}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span>${anyHike ? `<span><i style="background:#7fd6c0"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:#c98bdb"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
+        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym"], colors: [SPORT_COLOR.bike, SPORT_COLOR.run, SPORT_COLOR.hike, SPORT_COLOR.gym], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
+        : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel, colors: { run: SPORT_COLOR.run, bike: SPORT_COLOR.bike, hike: SPORT_COLOR.hike, gym: SPORT_COLOR.gym } }))}
+      <div class="legend2"><span><i style="background:${SPORT_COLOR.run}"></i>run</span><span><i style="background:${SPORT_COLOR.bike}"></i>ride</span>${anyHike ? `<span><i style="background:${SPORT_COLOR.hike}"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:${SPORT_COLOR.gym}"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
       ${ridgeDetail(vol)}`,
 
     load: () => {
@@ -2365,7 +2404,7 @@ function renderProgress() {
         <div class="hd"><span class="eyebrow">Calories · by activity</span>${tabs}</div>
         ${calTypes.total > 0 ? `<div class="catbars">${calTypes.buckets.map(b => {
           const n = calTypeCounts[b.sport] || 0, avg = n ? Math.round(b.cal / n) : 0;
-          return `<div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:var(--cy)"></i></span><span class="cv">${b.cal.toLocaleString()}<small>${n ? ` · ${n}× · ${avg.toLocaleString()} avg` : ""}</small></span></div>`;
+          return `<div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:${SPORT_COLOR[b.sport] || SPORT_COLOR.other}"></i></span><span class="cv">${b.cal.toLocaleString()}<small>${n ? ` · ${n}× · ${avg.toLocaleString()} avg` : ""}</small></span></div>`;
         }).join("")}</div>
           ${calTypes.top ? (() => { const tn = calTypeCounts[calTypes.top.sport] || 0; return `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}${tn ? `, averaging <b>${Math.round(calTypes.top.cal / tn).toLocaleString()}</b> kcal across ${tn} session${tn === 1 ? "" : "s"}` : ""}.</div>`; })() : ""}`
           : `<p class="row-sub">Once activities carry calories, this breaks them down by sport.</p>`}`;
@@ -2377,11 +2416,21 @@ function renderProgress() {
       const avgC = seriesAvg(series);
       const curFrom = unit === "month" ? t.slice(0, 7) + "-01" : E.addDays(t, -E.dayIndex(t));
       const curCal = E.caloriesInRange(doc.logs, curFrom, t);
+      // optional weekly burn goal → colour each segment (green met / amber under) + a goal line
+      const tgt = doc.settings.weeklyCalorieTarget;
+      const tgtForUnit = tgt ? (unit === "month" ? Math.round(tgt * 4.345) : tgt) : null;
+      const segColors = tgtForUnit ? series.map(p => p.y >= tgtForUnit ? "#5fbf6a" : "#e6a13c") : null;
+      const calChart = nonzero.length < 2
+        ? `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`
+        : wrap("calories", tgtForUnit
+          ? C.lineChart(null, { series: [{ points: series, color: "#e6a45a", segColors }], target: tgtForUnit, targetLabel: "goal", axis: true, taps: true, avg: true, fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] })
+          : C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] }));
       return `
       <div class="hd"><span class="eyebrow">Calories · burned</span>${tabs}</div>
       <div class="stat"><span class="midnum">${total.toLocaleString()}</span><span class="unit">kcal · ${win.label.toLowerCase()}</span></div>
       ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${unit}`, `this ${unit} ${Math.round(curCal).toLocaleString()} kcal`]) : ""}
-      ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
+      ${calChart}
+      ${tgtForUnit ? `<div class="legend2"><span><i style="background:#5fbf6a"></i>met goal</span><span><i style="background:#e6a13c"></i>under</span></div>` : ""}
       ${lineDetail("calories", [{ points: series }], p => `${Math.round(p.y).toLocaleString()} kcal`)}
       ${splitTot > 0 ? `<div class="callout">Planned <b>${calSplit.planned.toLocaleString()}</b> · unplanned <b>${calSplit.unplanned.toLocaleString()}</b> kcal in this range.</div>` : ""}`;
     },
@@ -2649,6 +2698,7 @@ function renderSettings() {
     <div class="group ${sOpen("plan") ? "" : "collapsed"}">${ghBtn("plan", "Training plan", `${st.weeklyCounts.run}·${st.weeklyCounts.bike}·${st.weeklyCounts.gym}`)}<div class="scard">
       <button class="srow" id="st-mix"><span class="l">Weekly mix<span>runs · rides · gym per week</span></span><span class="v">${st.weeklyCounts.run} · ${st.weeklyCounts.bike} · ${st.weeklyCounts.gym}</span><span class="chev">›</span></button>
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
+      <button class="srow" id="st-cal"><span class="l">Weekly burn goal<span>colours the calories-burned line</span></span><span class="v ${st.weeklyCalorieTarget ? "" : "add"}">${st.weeklyCalorieTarget ? st.weeklyCalorieTarget.toLocaleString() + " kcal" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
       <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
       <button class="srow" id="st-rest"><span class="l">Rest day<span>the week reflows around your day off</span></span><span class="v">${DAY_LABEL[st.restDay] || "Sunday"}</span><span class="chev">›</span></button>
@@ -2709,6 +2759,11 @@ function renderSettings() {
   $("#st-tw").addEventListener("click", () => openValueSheet({
     title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: st.targetWeightKg, min: 40, max: 150,
     onSave: v => { st.targetWeightKg = v; },
+  }));
+  $("#st-cal").addEventListener("click", () => openValueSheet({
+    title: "Weekly burn goal", label: "Per week", suffix: "kcal", step: "50",
+    value: st.weeklyCalorieTarget ?? "", min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
+    onSave: v => { st.weeklyCalorieTarget = v ? Math.round(v) : null; },
   }));
   $("#st-gr").addEventListener("click", openGrowthSheet);
   $("#st-dl").addEventListener("click", () => openValueSheet({
