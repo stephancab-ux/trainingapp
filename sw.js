@@ -1,6 +1,6 @@
 /* Remonte service worker — cache-first app shell, versioned cache.
    Bump VERSION on every release; the app picks it up on the second reopen. */
-const VERSION = "v1.2.0";
+const VERSION = "v1.2.1";
 const CACHE = "remonte-" + VERSION;
 const ASSETS = [
   "./",
@@ -15,6 +15,7 @@ const ASSETS = [
   "./icons/icon-512.png",
   "./icons/icon-512-maskable.png",
   "./icons/apple-touch-icon.png",
+  "./icons/logo-full.png",
 ];
 
 self.addEventListener("install", e => {

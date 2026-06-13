@@ -1,6 +1,7 @@
-/* Generates the PWA icons (mountain-ridge mark) as PNGs via headless
-   chromium. Dev-only tool — the generated PNGs are committed, so this only
-   needs re-running when the mark changes:
+/* Generates the PWA icons from the supplied logo (icons/logo-source.png) via
+   headless chromium. The home-screen icon is the circular emblem (athletes +
+   mountains, no wordmark); the maskable adds a safe-zone inset. Dev-only —
+   the PNGs are committed, so re-run only when the logo changes:
      node tools/gen-icons.mjs
    Requires playwright + a chromium build (PLAYWRIGHT_BROWSERS_PATH). */
 import { chromium } from "playwright";
@@ -9,34 +10,33 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "icons");
-fs.mkdirSync(outDir, { recursive: true });
+const srcPng = fs.readFileSync(path.join(outDir, "logo-source.png")).toString("base64");
 
-/* pad: extra safe-zone for maskable icons (fraction of the canvas). */
-function svgMark(pad = 0) {
-  const s = 100 - pad * 200, o = pad * 100;
-  return `
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
-    <rect width="100" height="100" fill="#0b1320"/>
-    <g transform="translate(${o} ${o}) scale(${s / 100})">
-      <line x1="10" y1="24" x2="90" y2="24" stroke="#e6d3a3" stroke-width="3.5"
-            stroke-dasharray="7 6" stroke-linecap="round"/>
-      <path d="M0 80 L20 45 L38 62 L60 28 L80 55 L100 40 L100 88 L0 88 Z" fill="#4a5ab8"/>
-      <path d="M0 86 L16 64 L30 74 L48 50 L66 70 L84 58 L100 68 L100 100 L0 100 Z" fill="#56dbe8"/>
-    </g>
-  </svg>`;
-}
+/* Emblem crop from the 1254×1254 source — frames the runner + cyclist above
+   the wordmark. Adjust if the source logo changes. */
+const CROP = { sx: 300, sy: 86, side: 612 };
+const BG = "#070a0f";
 
 const browser = await chromium.launch();
 const targets = [
   { file: "icon-512.png", size: 512, pad: 0 },
   { file: "icon-192.png", size: 192, pad: 0 },
-  { file: "icon-512-maskable.png", size: 512, pad: 0.12 },
-  { file: "apple-touch-icon.png", size: 180, pad: 0 },
+  { file: "icon-512-maskable.png", size: 512, pad: 0.14 },
+  { file: "apple-touch-icon.png", size: 180, pad: 0.04 },
 ];
 for (const t of targets) {
   const page = await browser.newPage({ viewport: { width: t.size, height: t.size } });
-  await page.setContent(`<body style="margin:0">${svgMark(t.pad)}</body>`);
-  await page.screenshot({ path: path.join(outDir, t.file) });
+  await page.setContent(`<body style="margin:0"><canvas id="c" width="${t.size}" height="${t.size}"></canvas>
+    <img id="i" src="data:image/png;base64,${srcPng}"></body>`);
+  await page.waitForFunction(() => { const i = document.getElementById("i"); return i && i.complete && i.naturalWidth; });
+  await page.evaluate(({ size, pad, CROP, BG }) => {
+    const ctx = document.getElementById("c").getContext("2d");
+    ctx.fillStyle = BG; ctx.fillRect(0, 0, size, size);
+    const inset = Math.round(size * pad), draw = size - inset * 2;
+    ctx.drawImage(document.getElementById("i"), CROP.sx, CROP.sy, CROP.side, CROP.side, inset, inset, draw, draw);
+  }, { size: t.size, pad: t.pad, CROP, BG });
+  const data = await page.evaluate(() => document.getElementById("c").toDataURL("image/png").split(",")[1]);
+  fs.writeFileSync(path.join(outDir, t.file), Buffer.from(data, "base64"));
   await page.close();
   console.log("wrote icons/" + t.file);
 }

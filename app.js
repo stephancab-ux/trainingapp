@@ -282,7 +282,7 @@ function renderFirstRun() {
   const def = E.snapToMonday(todayISO());
   document.body.insertAdjacentHTML("beforeend", `
     <div class="firstrun"><div class="wrap">
-      <h1>REM<em>O</em>NTE</h1>
+      <img class="fr-logo" src="./icons/logo-full.png" alt="Stephan Endurance — Plan. Perform. Progress.">
       <p class="note-sub">Your run + bike rebuild, on this phone and nowhere else. Easy weeks first, growth when you've earned it, deload every 4th week.</p>
       <div class="card">
         <div class="lab" style="margin-bottom:8px">Plan start</div>
