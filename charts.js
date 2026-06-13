@@ -14,9 +14,9 @@ const svg = (w, h, inner) =>
    weeks render faded, as cols between peaks. vol: engine.weeklyVolume().
    Pass `selected` to highlight one column; transparent hit rects carry
    data-wi for tap-to-inspect. */
-export function ridgeChart(vol, { width = 352, height = 158, selected = null } = {}) {
+export function ridgeChart(vol, { width = 352, height = 158, selected = null, colors = {} } = {}) {
   if (!vol.length) return "";
-  const HIKE = "#7fd6c0", GYM = "#c98bdb";
+  const RUN = colors.run || CY, RIDE = colors.bike || BIKE, HIKE = colors.hike || "#7fd6c0", GYM = colors.gym || "#c98bdb";
   const T = p => p.run + p.bike + (p.hike || 0) + (p.gym || 0);
   const W = width, H = height, base = H - 16;
   const max = Math.max(60, ...vol.map(v => Math.max(T(v), v.target || 0))) * 1.07;
@@ -31,8 +31,8 @@ export function ridgeChart(vol, { width = 352, height = 158, selected = null } =
     const dim = selected != null && selected !== i;
     const op = (p.isDeload ? 0.45 : 1) * (dim ? 0.45 : 1);
     s += `<g opacity="${op}">`;
-    s += `<rect x="${x}" y="${y(p.bike)}" width="${bw}" height="${Math.max(0, base - y(p.bike))}" fill="${BIKE}"/>`;
-    s += `<rect x="${x}" y="${y(runTop)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(runTop))}" ${p.hike || p.gym ? "" : "rx=\"2.5\""} fill="${CY}"/>`;
+    s += `<rect x="${x}" y="${y(p.bike)}" width="${bw}" height="${Math.max(0, base - y(p.bike))}" fill="${RIDE}"/>`;
+    s += `<rect x="${x}" y="${y(runTop)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(runTop))}" ${p.hike || p.gym ? "" : "rx=\"2.5\""} fill="${RUN}"/>`;
     if (p.hike) s += `<rect x="${x}" y="${y(hikeTop)}" width="${bw}" height="${Math.max(0, y(runTop) - y(hikeTop))}" ${p.gym ? "" : "rx=\"2.5\""} fill="${HIKE}"/>`;
     if (p.gym) s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(hikeTop) - y(tot))}" rx="2.5" fill="${GYM}"/>`;
     s += `</g>`;

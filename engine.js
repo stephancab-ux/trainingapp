@@ -939,6 +939,19 @@ export function effectiveAerobicTE(log, bounds) {
   if (log.aerobicTE != null) return { te: log.aerobicTE, estimated: false };
   return { te: estimateAerobicTE(log, bounds), estimated: true };
 }
+/* Coarse 'primary benefit' for a session, derived from aerobic TE + HR zone +
+   duration + type. Without anaerobic TE the top end can't be split, so VO2max /
+   anaerobic / sprint collapse into one "VO₂max / hard" label. */
+export function primaryBenefit(log, bounds) {
+  const { te } = effectiveAerobicTE(log, bounds);
+  if (te < 1) return "Recovery";
+  const z = zoneOfHR(bounds, log.avgHR), type = log.type;
+  if (z === 5 || type === "intervals" || type === "hills") return "VO₂max / hard";
+  if (z === 4 || type === "tempo") return "Threshold";
+  if (z === 3 || type === "climb") return "Tempo";
+  if (type === "long" || (log.min || 0) >= 90 || z == null || z <= 2) return "Base";
+  return "Tempo";
+}
 
 /* ---- performance & efficiency (no power → speed / climb-rate) ---- */
 export function sessionPerformance(log) {

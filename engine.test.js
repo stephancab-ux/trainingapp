@@ -898,6 +898,14 @@ test("effectiveAerobicTE prefers the real value, else a labeled estimate", () =>
   assert.equal(E.teBand(5).label, "Overreaching");
 });
 
+test("primaryBenefit derives a coarse label, merging the top end", () => {
+  // BOUNDS (max 183): Z2 110-128, Z3 128-146, Z4 146-165, Z5 165-183
+  assert.equal(E.primaryBenefit({ sport: "run", min: 20, avgHR: 100 }, BOUNDS), "Recovery");
+  assert.equal(E.primaryBenefit({ sport: "run", type: "long", min: 120, avgHR: 120 }, BOUNDS), "Base");
+  assert.equal(E.primaryBenefit({ sport: "run", type: "tempo", min: 40, avgHR: 150 }, BOUNDS), "Threshold");
+  assert.equal(E.primaryBenefit({ sport: "run", type: "intervals", min: 45, avgHR: 172 }, BOUNDS), "VO₂max / hard");
+});
+
 test("training load / intensity exclude a no-HR gym but include an HR gym", () => {
   const base = [{ date: "2026-06-15", sport: "run", min: 40, avgHR: 150 }];
   const noHR = base.concat([{ date: "2026-06-16", sport: "gym", min: 60 }]);
