@@ -1334,26 +1334,37 @@ export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1
   const med = arr => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
   const lastN = (pred, n) => logs.filter(pred).slice(-n).map(l => l.min);
+  const runish = sport === "run" || sport === "trail";
+
+  // hikes are low-intensity, time-based — no pace/zone prescription
+  if (sport === "hike") {
+    if (typeId === "long") {
+      const longs = logs.filter(l => l.sport === "hike").slice(-4).map(l => l.min);
+      return { targetMin: round5(avg(longs) || 180), zone: 1, note: "A big day out — steady, fuel well and enjoy it." };
+    }
+    const easy = logs.filter(l => l.sport === "hike").slice(-6).map(l => l.min);
+    return { targetMin: round5(med(easy) || 90), zone: 1, note: "An easy hike — keep the effort relaxed." };
+  }
 
   if (QUALITY_TEMPLATES[typeId]) {
     const t = QUALITY_TEMPLATES[typeId];
-    const base = sport === "run"
-      ? (med(lastN(l => l.sport === "run" && (l.min || 0) >= 20, 8)) || 35)
+    const base = runish
+      ? (med(lastN(l => isRunType(l) && (l.min || 0) >= 20, 8)) || 35)
       : (med(lastN(l => l.sport === "bike" && (l.min || 0) >= 30, 8)) || 60);
-    const r = { targetMin: round5(Math.max(sport === "run" ? 35 : 45, base + 10)), zone: t.zone, qualityTemplate: typeId, note: t.label };
+    const r = { targetMin: round5(Math.max(runish ? 35 : 45, base + 10)), zone: t.zone, qualityTemplate: typeId, note: t.label };
     if (typeId === "bikeClimb") r.targetAscent = climbTargetAscent({ logs, weekNum, settings });
     return r;
   }
   if (typeId === "long") {
-    if (sport === "run") {
-      const longs = logs.filter(l => l.sport === "run" && (l.type === "long" || (l.km || 0) > 12)).slice(-4).map(l => l.min);
-      return { targetMin: round5(avg(longs) || 75), zone: 2, note: "Steady and unhurried — your week's aerobic anchor." };
+    if (runish) {
+      const longs = logs.filter(l => isRunType(l) && (l.type === "long" || (l.km || 0) > 12)).slice(-4).map(l => l.min);
+      return { targetMin: round5(avg(longs) || 75), zone: 2, note: "Steady and unhurried — your aerobic anchor." };
     }
     const longs = logs.filter(l => l.sport === "bike" && (l.type === "long" || (l.km || 0) > 40)).slice(-4).map(l => l.min);
     return { targetMin: round5(avg(longs) || 120), zone: 2, note: "Long steady ride — build endurance." };
   }
-  if (sport === "run") {
-    const easy = lastN(l => l.sport === "run" && (!l.type || l.type === "easy") && (l.min || 0) >= 20, 8);
+  if (runish) {
+    const easy = lastN(l => isRunType(l) && (!l.type || l.type === "easy") && (l.min || 0) >= 20, 8);
     return { targetMin: round5(med(easy) || 35), zone: 2, note: "Conversational pace — keep it easy." };
   }
   const easyB = lastN(l => l.sport === "bike" && (!l.type || l.type === "easy") && (l.min || 0) >= 30, 8);

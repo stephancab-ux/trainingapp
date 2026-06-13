@@ -948,16 +948,18 @@ function renderDiary() {
         <span class="st done"><svg viewBox="0 0 24 24"><path d="M5 13l4.2 4L19 7"/></svg></span></button>`;
     }).join("");
   }).join("");
-  // per-sport summary for the selected week — only sports actually performed
+  // per-sport summary for the selected week — a bar per performed sport (length
+  // ∝ time), with the week's total time, distance and calories underneath
   const DSPORTS = [["run", "Run", "var(--cy)"], ["trail", "Trail", "#56dbe8"], ["bike", "Ride", "#8e9df8"], ["hike", "Hike", "#7fd6c0"], ["gym", "Gym", "#c98bdb"], ["other", "Other", "var(--mut)"]];
-  const sumRows = DSPORTS.map(([sp, lab, col]) => {
-    const s = sum.bySport[sp]; if (!s || !s.count) return "";
-    const bits = [fmtDur(s.min), s.km ? `${s.km.toFixed(1)} km` : "", s.ascent ? `${Math.round(s.ascent)} m↑` : "", s.cal ? `${Math.round(s.cal)} kcal` : "", s.load ? `load ${Math.round(s.load)}` : ""].filter(Boolean).join(" · ");
-    return `<div class="dsum-row"><span class="dsum-nm"><i style="background:${col}"></i>${lab}</span><span class="dsum-ct">${s.count}×</span><span class="dsum-v">${bits}</span></div>`;
+  const perf = DSPORTS.filter(([sp]) => sum.bySport[sp] && sum.bySport[sp].count);
+  const maxMin = Math.max(1, ...perf.map(([sp]) => sum.bySport[sp].min));
+  const sumBars = perf.map(([sp, lab, col]) => {
+    const s = sum.bySport[sp];
+    return `<div class="row"><span class="nm">${lab}</span><span class="bar"><i style="width:${Math.max(4, Math.round(s.min / maxMin * 100))}%;background:${col}"></i></span><span class="qty">${s.count}× · ${fmtDur(s.min)}</span></div>`;
   }).join("");
   const summaryCard = sum.total.count
-    ? `<div class="card"><div class="dsum">${sumRows}
-        <div class="dsum-row dsum-total"><span class="dsum-nm">Total</span><span class="dsum-ct">${sum.total.count}×</span><span class="dsum-v">${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.cal ? ` · ${Math.round(sum.total.cal)} kcal` : ""}${sum.total.load ? ` · load ${Math.round(sum.total.load)}` : ""}</span></div></div></div>`
+    ? `<div class="card" style="padding:13px 16px"><div class="tot">${sumBars}</div>
+        <div class="wktot">${fmtDur(sum.total.min)}${sum.total.km ? ` · ${sum.total.km.toFixed(1)} km` : ""}${sum.total.cal ? ` · ${Math.round(sum.total.cal).toLocaleString()} kcal` : ""}</div></div>`
     : `<div class="card"><p class="row-sub">Nothing logged ${diaryWeekOffset === 0 ? "this week yet" : "that week"} — tap ＋ to add an activity.</p></div>`;
 
   // full activity history with type + month filters, newest first, paginated
@@ -1767,16 +1769,13 @@ function openWorkoutPage(week, session, dateISO) {
 
 /* A one-off workout to do today that isn't in the program. */
 function openAdhocWorkout() {
-  const a = doc.settings.allowedTypes || {};
-  const acts = [
-    RUN_BASE.some(k => a[k] !== false) && { sport: "run", label: "Run" },
-    RIDE_BASE.some(k => a[k] !== false) && { sport: "bike", label: "Ride" },
-    GYM_BASE.some(k => a[k] !== false) && { sport: "gym", label: "Gym" },
-  ].filter(Boolean);
+  // every activity is offered — the "Workouts allowed" toggles are for the PLAN,
+  // not for spontaneously doing a workout today (the two are independent)
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"]];
   const sheet = openSheet(`
     <div class="sh-title">Do a workout</div>
     <div class="sh-sub">A one-off for today — not part of your program. We'll suggest one sized to your training.</div>
-    <div class="adhoc-acts">${acts.map(x => `<button class="btn ghost adhoc-act" data-asp="${x.sport}">${x.label}</button>`).join("")}</div>
+    <div class="adhoc-acts">${acts.map(([sp, l]) => `<button class="btn ghost adhoc-act" data-asp="${sp}">${l}</button>`).join("")}</div>
   `);
   sheet.querySelectorAll("[data-asp]").forEach(b => b.addEventListener("click", () => {
     const sp = b.dataset.asp;
@@ -1790,8 +1789,16 @@ function openAdhocWorkout() {
 
 /* Run/ride one-off: an adaptive prescription (suggestSession) you can adjust,
    then send to watch or log. Never written into doc.weeks. */
+/* Ungated workout types for the ad-hoc "+" — the plan's allowed-types don't
+   apply here; you can do any activity, any type, as a one-off. */
+const ADHOC_TYPES = {
+  run:   [{ id: "easy", label: "Easy", kind: "easy" }, { id: "runTempo", label: "Tempo", kind: "quality", tpl: "runTempo" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "runHills", label: "Hills", kind: "quality", tpl: "runHills" }, { id: "long", label: "Long", kind: "long" }],
+  trail: [{ id: "easy", label: "Easy", kind: "easy" }, { id: "long", label: "Long", kind: "long" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }],
+  bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
+  hike:  [{ id: "easy", label: "Hike", kind: "easy" }, { id: "long", label: "Big day", kind: "long" }],
+};
 function openAdhocSession(sport) {
-  const opts = sessionTypeOptions(sport);
+  const opts = ADHOC_TYPES[sport] || ADHOC_TYPES.run;
   let chosen = opts[0];
   const presc = () => E.suggestSession(doc.logs, sport, chosen.id, { settings: doc.settings, weekNum: currentWeek()?.weekNum || 1 });
   let p = presc(), dur = p.targetMin, zone = p.zone;
@@ -1818,7 +1825,7 @@ function openAdhocSession(sport) {
   };
   const refresh = () => {
     const tpl = chosen.tpl ? E.QUALITY_TEMPLATES[chosen.tpl] : null;
-    const pace = sport === "run" ? E.paceHint(doc.logs, bounds(), zone, doc.settings.easyPace) : null;
+    const pace = (sport === "run" || sport === "trail") ? E.paceHint(doc.logs, bounds(), zone, doc.settings.easyPace) : null;
     const lines = [p.note || (tpl ? tpl.label : "")];
     if (pace) lines.push(`Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km at Z${zone}`);
     if (chosen.id === "bikeClimb" && p.targetAscent) lines.push(`Target climb ≈ ${p.targetAscent} m of ascent`);
@@ -1840,7 +1847,7 @@ function openAdhocSession(sport) {
   sheet.querySelector("#ah-log").addEventListener("click", () => {
     const s = sessionObj();
     closeOverlay();
-    openLogSheet({ date: todayISO(), sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) });
+    openLogSheet({ date: todayISO(), sport, prefillMin: s.targetMin, title: SPORT_NAME[sport] || sport, type: typeOfSession(s) });
   });
 }
 

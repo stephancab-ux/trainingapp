@@ -424,6 +424,7 @@ svg text{font-family:inherit}
 .hlist{padding:2px 14px;max-height:none}
 .diary-filter{display:flex;gap:8px;margin:0 0 6px}
 .diary-filter .rangesel{flex:1}
+.wktot{margin-top:10px;text-align:center;font-size:13px;font-weight:700;color:var(--cy);font-variant-numeric:tabular-nums}
 
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{animation:none!important;transition:none!important}
