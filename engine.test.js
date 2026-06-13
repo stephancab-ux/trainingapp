@@ -398,3 +398,170 @@ test("consistency streak counts completed weeks ≥ 80 %", () => {
   assert.ok(c.cells[0].pct >= 0.8);
   assert.equal(c.streak, 0); // week 2 broke it
 });
+
+/* ---------- v1.2: elevation, dedup, rotation, layout ---------- */
+
+const BOUNDS = E.zoneBounds(SETTINGS); // Z2 110–128, Z3 128–146, Z4 146–165, Z5 165–183
+
+test("CSV captures Total Ascent in metres", () => {
+  const csv = [CSV_HEADER,
+    row("Cycling", "2026-06-14 09:00:00", "Climb", "30.0", "01:30:00", "138"),
+  ].join("\n");
+  // the row() helper puts "120" in the Total Ascent column
+  const ride = E.parseGarminCSV(csv).rows.find(r => r.sport === "bike");
+  assert.equal(ride.ascent, 120);
+});
+
+test("importMatches keys on duration+distance, not clock time", () => {
+  const rows = [
+    { date: "2026-07-01", sport: "bike", min: 43, km: 21.8, time: "18:43" }, // matches manual
+    { date: "2026-07-01", sport: "bike", min: 120, km: 60, time: "07:00" },  // different ride same day
+  ];
+  const logs = [{ id: "m1", date: "2026-07-01", sport: "bike", min: 45, km: 22, source: "manual" }];
+  const m = E.importMatches(rows, logs);
+  assert.equal(m[0].matches.length, 1, "close duration+distance matches the manual log");
+  assert.equal(m[0].matches[0].id, "m1");
+  assert.equal(m[1].matches.length, 0, "the long ride is not collapsed into it");
+});
+
+test("rotation respects allowed families; null when none allowed", () => {
+  const noHills = { runIntervals: true, runTempo: false, runHills: false, bikeIntervals: true, bikeClimb: true };
+  // run cycle would be intervals→tempo→hills; with only intervals allowed it stays intervals
+  assert.equal(E.qualityTemplateFor([], "run", noHills), "runQ1");
+  assert.equal(E.qualityTemplateFor([{ sessions: [{ sport: "run", kind: "quality" }] }], "run", noHills), "runQ1");
+  const noBike = { bikeIntervals: false, bikeClimb: false };
+  assert.equal(E.qualityTemplateFor([], "bike", noBike), null);
+});
+
+test("placeLayout honours a non-Sunday rest day with no back-to-back runs", () => {
+  const lay = E.placeLayout(3, 3, "wed"); // Wednesday off
+  assert.equal(lay.wed, "rest");
+  assert.equal(Object.values(lay).filter(v => v === "run").length, 3);
+  assert.equal(Object.values(lay).filter(v => v === "bike" || v === "bike-long").length, 3);
+  assert.equal(E.consecutiveRunDays(lay).length, 0, "no two runs on consecutive days");
+  assert.ok(Object.values(lay).includes("bike-long"));
+});
+
+test("relayoutWeek reflows around a moved rest day", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week } = E.relayoutWeek({ week: w1, runCount: 3, bikeCount: 3, restDay: "mon" });
+  assert.equal(week.sessions.find(s => s.day === "mon").sport, "rest");
+  assert.equal(week.targetMin.run + week.targetMin.bike > 0, true);
+});
+
+test("climbTargetAscent ramps with load and rounds to 50 m", () => {
+  const s = { climbBaseAscent: 500 };
+  assert.equal(E.climbTargetAscent({ weekNum: 1, settings: s }), 500);
+  assert.equal(E.climbTargetAscent({ weekNum: 5, settings: s }), 550); // +5% block (525), rounded to 50
+  const floored = E.climbTargetAscent({ weekNum: 1, settings: s,
+    logs: [{ sport: "bike", ascent: 1000 }] });
+  assert.equal(floored, 800, "floored at 80% of a recent big climb");
+});
+
+/* ---------- v1.2: intensity, load, efficiency, RPE ---------- */
+
+test("intensityOfLog by HR zone, falling back to type", () => {
+  assert.equal(E.intensityOfLog({ avgHR: 120 }, BOUNDS), "aerobic");   // Z2
+  assert.equal(E.intensityOfLog({ avgHR: 140 }, BOUNDS), "threshold"); // Z3
+  assert.equal(E.intensityOfLog({ avgHR: 170 }, BOUNDS), "anaerobic"); // Z5
+  assert.equal(E.intensityOfLog({ type: "intervals" }, BOUNDS), "anaerobic");
+  assert.equal(E.intensityOfLog({ type: "long" }, BOUNDS), "aerobic");
+});
+
+test("weeklyIntensity reports the 80/20 split", () => {
+  const logs = [
+    { date: "2026-06-15", sport: "run", min: 80, avgHR: 120, source: "manual" }, // aerobic
+    { date: "2026-06-17", sport: "run", min: 20, avgHR: 170, source: "manual" }, // anaerobic
+  ];
+  const wi = E.weeklyIntensity({ logs, bounds: BOUNDS, todayISO: "2026-06-21", n: 1 })[0];
+  assert.equal(wi.total, 100);
+  assert.ok(Math.abs(wi.easyPct - 0.8) < 1e-9);
+  assert.ok(Math.abs(wi.hardPct - 0.2) < 1e-9);
+});
+
+test("trainingLoad: a spike reads high-risk, a lull undertraining", () => {
+  const spike = [];
+  for (let d = 1; d <= 28; d++) {
+    const date = `2026-06-${String(d).padStart(2, "0")}`;
+    // light for 3 weeks, then a big final week
+    const min = d > 21 ? 120 : 20;
+    spike.push({ date, sport: "bike", min, rpe: 7, source: "manual" });
+  }
+  const tl = E.trainingLoad({ logs: spike, bounds: BOUNDS, todayISO: "2026-06-28" });
+  assert.ok(tl.acwr > 1.5, `acwr ${tl.acwr}`);
+  assert.equal(tl.status, "high-risk");
+
+  const lull = [{ date: "2026-06-01", sport: "bike", min: 120, rpe: 7, source: "manual" }];
+  const tl2 = E.trainingLoad({ logs: lull, bounds: BOUNDS, todayISO: "2026-06-28" });
+  assert.equal(tl2.acwr, 0); // nothing acute, some chronic → undertraining
+  assert.equal(tl2.status, "undertraining");
+});
+
+test("sessionEfficiency uses speed for runs and VAM for climbs", () => {
+  const run = E.sessionEfficiency({ sport: "run", km: 10, min: 50, rpe: 5 }); // 12 km/h ÷ 5
+  assert.equal(run.kind, "speed");
+  assert.ok(Math.abs(run.value - 12 / 5) < 1e-9);
+  const climb = E.sessionEfficiency({ sport: "bike", type: "climb", ascent: 600, min: 60, rpe: 6 });
+  assert.equal(climb.kind, "vam"); // 600 m/h ÷ 6
+  assert.ok(Math.abs(climb.value - 100) < 1e-9);
+});
+
+test("expectedRPE preset refines by history; deviation bands are context-aware", () => {
+  const logs = [{ type: "interval-stub" }];
+  // RPE 8 on an interval session is normal (preset 8) → yellow
+  assert.equal(E.rpeDeviation({ type: "intervals", rpe: 8 }, logs).band, "yellow");
+  // RPE 8 on a recovery ride (preset 3) → red
+  assert.equal(E.rpeDeviation({ type: "recovery", rpe: 8 }, logs).band, "red");
+  // an easy session that felt very light → green
+  assert.equal(E.rpeDeviation({ type: "easy", rpe: 2 }, logs).band, "green");
+});
+
+test("evaluateSession flags an easy run done too hot", () => {
+  const e = E.evaluateSession({ sport: "run", type: "easy", min: 35, km: 5, avgHR: 150 },
+    { bounds: BOUNDS, logs: [] });
+  assert.equal(e.intensity, "anaerobic"); // 150 = Z4
+  assert.match(e.verdict, /hot/);
+});
+
+/* ---------- v1.2: personal bests & coach ---------- */
+
+test("personalBests auto-derives records and manual entries win only when better", () => {
+  const logs = [
+    { id: "a", date: "2026-06-01", sport: "bike", km: 30, ascent: 800, min: 120 },
+    { id: "b", date: "2026-06-08", sport: "bike", km: 42, ascent: 600, min: 150 },
+    { id: "c", date: "2026-06-10", sport: "run", km: 10.1, min: 50 }, // ~10K
+  ];
+  const pbs = E.personalBests({ logs });
+  const ascent = pbs.find(p => p.key === "biggestAscent");
+  assert.equal(ascent.value, 800);
+  const longestRide = pbs.find(p => p.key === "longestRide");
+  assert.equal(longestRide.value, 42);
+  assert.ok(pbs.find(p => p.key === "run10k"), "a ~10K run sets the 10K record");
+
+  const withManual = E.personalBests({ logs, manualBests: [{ key: "biggestAscent", value: 1500, date: "2024-01-01" }] });
+  assert.equal(withManual.find(p => p.key === "biggestAscent").value, 1500);
+  const worse = E.personalBests({ logs, manualBests: [{ key: "biggestAscent", value: 100, date: "2024-01-01" }] });
+  assert.equal(worse.find(p => p.key === "biggestAscent").value, 800, "a worse manual entry doesn't override");
+});
+
+test("coachInsights fires categories with a why, stays quiet on no data, and carries actions", () => {
+  assert.deepEqual(E.coachInsights({ doc: { logs: [], weeks: [], settings: SETTINGS }, todayISO: "2026-06-21" }), []);
+
+  const doc = {
+    settings: SETTINGS, weeks: [], coachDismissed: {},
+    vo2History: [{ date: "2026-04-01", value: 42 }, { date: "2026-06-01", value: 45 }],
+    logs: [], manualBests: [],
+  };
+  const ins = E.coachInsights({ doc, todayISO: "2026-06-12" });
+  const vo2 = ins.find(i => i.id === "vo2");
+  assert.ok(vo2 && vo2.why && vo2.category === "improvement", "VO₂ gain surfaces with a why");
+
+  // an overreaching block should yield a recovery action
+  const logs = [];
+  for (let d = 1; d <= 28; d++)
+    logs.push({ date: `2026-06-${String(d).padStart(2, "0")}`, sport: "bike",
+                min: d > 21 ? 150 : 15, rpe: 7, source: "manual" });
+  const hot = E.coachInsights({ doc: { ...doc, logs }, todayISO: "2026-06-28" });
+  const rec = hot.find(i => i.action && i.action.kind === "insertRecoveryDay");
+  assert.ok(rec && rec.category === "recovery", "load spike → recovery action");
+});

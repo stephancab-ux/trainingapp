@@ -195,7 +195,9 @@ export function generateWeek1(startDate) {
    Long ride gets a double share; every session rounds to 5 min. */
 export function buildSessions(runMin, bikeMin, layout, opts = {}) {
   const { deload = false, quality = { run: false, bike: false },
-          runQTemplate = "runQ1", bikeQTemplate = "bikeQ1" } = opts;
+          climbTarget = null } = opts;
+  const runQTemplate = opts.runQTemplate || "runQ1";
+  const bikeQTemplate = opts.bikeQTemplate || "bikeQ1";
   const longCap = opts.longCap ?? (deload ? 90 : 210);
 
   const runDays = DAYS.filter(d => layout[d] === "run");
@@ -237,8 +239,10 @@ export function buildSessions(runMin, bikeMin, layout, opts = {}) {
     const min = bikeSplit[bikeDays.indexOf(day)];
     const kind = what === "bike-long" ? "long" : "easy";
     if (day === qBikeDay && min > 0) {
-      return { day, sport: "bike", kind: "quality", targetMin: min,
-               zone: QUALITY_TEMPLATES[bikeQTemplate].zone, qualityTemplate: bikeQTemplate };
+      const s = { day, sport: "bike", kind: "quality", targetMin: min,
+                  zone: QUALITY_TEMPLATES[bikeQTemplate].zone, qualityTemplate: bikeQTemplate };
+      if (bikeQTemplate === "bikeClimb" && climbTarget) s.targetAscent = climbTarget;
+      return s;
     }
     return { day, sport: "bike", kind, targetMin: min, zone: 2 };
   });
@@ -252,16 +256,18 @@ export function sumSessions(sessions, sport) {
    +10 %/week; any excess goes to the bike. */
 export function planNextWeek({ prevLoadWeek, chosenRate, settings, startDate, weekNum,
                                quality = { run: false, bike: false }, noQuality = false,
-                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1" }) {
+                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", logs = [] }) {
   const prevRun = prevLoadWeek.targetMin.run;
   const prevBike = prevLoadWeek.targetMin.bike;
   const prevTotal = prevRun + prevBike;
   const total = prevTotal * (1 + chosenRate);
   const runT = Math.min(prevRun * 1.10, (prevRun / prevTotal) * total);
   const bikeT = total - runT;
-  const q = noQuality ? { run: false, bike: false } : quality;
+  const q = noQuality ? { run: false, bike: false }
+    : { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate };
+  const climbTarget = climbTargetAscent({ logs, weekNum, settings });
   const sessions = buildSessions(runT, bikeT, settings.layout,
-    { quality: q, runQTemplate, bikeQTemplate, longCap: 210 });
+    { quality: q, runQTemplate, bikeQTemplate, longCap: 210, climbTarget });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: false, sessions,
     targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike") },
@@ -373,10 +379,17 @@ const QUALITY_ROTATION = {
   bike: ["intervals", "climb"],
 };
 
-export function qualityTemplateFor(weeks, sport) {
+const FAMILY_KEY = { run: { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" },
+                     bike: { intervals: "bikeIntervals", climb: "bikeClimb" } };
+
+/* Allowed-family aware (v1.2). `allowed` is settings.allowedFamilies or null
+   (= everything). Returns null when no family is allowed for the sport. */
+export function qualityTemplateFor(weeks, sport, allowed = null) {
   const count = weeks.reduce((a, w) =>
     a + w.sessions.filter(s => s.sport === sport && s.kind === "quality").length, 0);
-  const cycle = QUALITY_ROTATION[sport];
+  let cycle = QUALITY_ROTATION[sport];
+  if (allowed) cycle = cycle.filter(fam => allowed[FAMILY_KEY[sport][fam]] !== false);
+  if (!cycle.length) return null;
   const family = cycle[count % cycle.length];
   if (family === "tempo") return "runTempo";
   if (family === "hills") return "runHills";
@@ -417,49 +430,55 @@ export function projectWeeks({ weeks, settings, quality = { run: false, bike: fa
 
 /* ---------------- weekly mix change (§7.6) ---------------- */
 
-const RUN_PATTERNS = { 0: [], 1: ["wed"], 2: ["tue", "fri"], 3: ["mon", "wed", "fri"], 4: ["mon", "wed", "fri", "tue"] };
+/* Pick k days spread as evenly as possible across `arr`, preserving order. */
+function spreadPick(arr, k) {
+  if (k >= arr.length) return [...arr];
+  if (k <= 0) return [];
+  const out = [];
+  for (let i = 0; i < k; i++) out.push(arr[Math.round((i * (arr.length - 1)) / Math.max(1, k - 1))]);
+  return [...new Set(out)];
+}
 
-export function relayoutWeek({ week, runCount, bikeCount, prevRunMin = null,
+/* Fatigue-aware day assignment around a configurable rest day (v1.2): spread
+   sessions, keep runs apart, and sit the long ride just before the rest day. */
+export function placeLayout(runCount, bikeCount, restDay = "sun") {
+  const layout = {}; DAYS.forEach(d => { layout[d] = "rest"; });
+  const active = DAYS.filter(d => d !== restDay);
+  const used = spreadPick(active, Math.min(runCount + bikeCount, active.length));
+  let longDay = null;
+  if (bikeCount > 0) longDay = used.includes("sat") ? "sat" : used[used.length - 1];
+  const slots = used.filter(d => d !== longDay);
+  // alternate (even slots first) so runs land non-adjacent until forced
+  const order = slots.filter((_, i) => i % 2 === 0).concat(slots.filter((_, i) => i % 2 === 1));
+  order.slice(0, runCount).forEach(d => { layout[d] = "run"; });
+  if (longDay) layout[longDay] = "bike-long";
+  used.forEach(d => { if (layout[d] === "rest") layout[d] = "bike"; });
+  return layout;
+}
+
+export function relayoutWeek({ week, runCount, bikeCount, prevRunMin = null, restDay = null,
                                quality = { run: false, bike: false },
-                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1" }) {
+                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", climbTarget = null }) {
   const warnings = [];
   const oldRuns = week.sessions.filter(s => s.sport === "run").length;
   const oldBikes = week.sessions.filter(s => s.sport === "bike").length;
   const restDays = week.sessions.filter(s => s.sport === "rest").map(s => s.day);
-  const restDay = restDays.includes("sun") || !restDays.length ? "sun" : restDays[0];
+  const rest = restDay || (restDays.includes("sun") || !restDays.length ? "sun" : restDays[0]);
 
   let runMin = oldRuns > 0 ? week.targetMin.run * (runCount / oldRuns) : 35 * runCount;
   if (prevRunMin != null) runMin = Math.min(runMin, prevRunMin * 1.10);
   const bikeMin = oldBikes > 0 ? week.targetMin.bike * (bikeCount / oldBikes) : 60 * bikeCount;
 
-  const layout = {};
-  DAYS.forEach(d => { layout[d] = "rest"; });
-  const free = DAYS.filter(d => d !== restDay);
-  if (bikeCount > 0 && free.includes("sat")) layout.sat = "bike-long";
-  else if (bikeCount > 0) layout[free[free.length - 1]] = "bike-long";
-
-  const runPattern = (RUN_PATTERNS[runCount] || RUN_PATTERNS[4]).filter(d => layout[d] === "rest" && d !== restDay);
-  let placed = 0;
-  for (const d of runPattern) { if (placed < runCount) { layout[d] = "run"; placed++; } }
-  for (const d of free) {
-    if (placed >= runCount) break;
-    if (layout[d] === "rest") { layout[d] = "run"; placed++; }
-  }
-  let bikesLeft = bikeCount - (Object.values(layout).includes("bike-long") ? 1 : 0);
-  for (const d of free) {
-    if (bikesLeft <= 0) break;
-    if (layout[d] === "rest") { layout[d] = "bike"; bikesLeft--; }
-  }
+  const layout = placeLayout(runCount, bikeCount, rest);
 
   for (let i = 0; i < DAYS.length - 1; i++) {
-    if (layout[DAYS[i]] === "run" && layout[DAYS[i + 1]] === "run") {
-      warnings.push("consecutive-runs");
-      break;
-    }
+    if (layout[DAYS[i]] === "run" && layout[DAYS[i + 1]] === "run") { warnings.push("consecutive-runs"); break; }
   }
 
+  const q = { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate };
   const sessions = buildSessions(runMin, bikeMin, layout,
-    { deload: week.isDeload, quality, runQTemplate, bikeQTemplate, longCap: week.isDeload ? 90 : 210 });
+    { deload: week.isDeload, quality: q, runQTemplate, bikeQTemplate,
+      longCap: week.isDeload ? 90 : 210, climbTarget });
   return {
     week: { ...week, sessions,
             targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike") } },
@@ -517,7 +536,8 @@ export function parseGarminCSV(text) {
   const header = rows[0].map(h => h.trim());
   const col = name => header.indexOf(name);
   const iType = col("Activity Type"), iDate = col("Date"), iTime = col("Time"),
-        iDist = col("Distance"), iHR = col("Avg HR"), iTitle = col("Title");
+        iDist = col("Distance"), iHR = col("Avg HR"), iTitle = col("Title"),
+        iAsc = col("Total Ascent");
   if (iType < 0 || iDate < 0 || iTime < 0) {
     return { error: "Doesn't look like a Garmin activities CSV (missing Activity Type / Date / Time columns)" };
   }
@@ -530,9 +550,11 @@ export function parseGarminCSV(text) {
     if (!m || !min) { counts.bad++; continue; }
     const km = parseFloat((r[iDist] ?? "").replace(/[",]/g, "")) || null;
     const hr = parseInt((r[iHR] ?? "").replace(/[^\d]/g, ""), 10) || null;
+    const ascent = iAsc >= 0 ? (parseInt((r[iAsc] ?? "").replace(/[^\d]/g, ""), 10) || null) : null;
     out.push({
       date: m[1], time: `${m[2]}:${m[3]}`, sport, min,
-      km, avgHR: hr, note: (iTitle >= 0 && r[iTitle]) ? r[iTitle].trim() : undefined,
+      km, avgHR: hr, ascent: ascent ?? undefined,
+      note: (iTitle >= 0 && r[iTitle]) ? r[iTitle].trim() : undefined,
       activityType: type,
     });
     counts[sport]++;
@@ -540,16 +562,34 @@ export function parseGarminCSV(text) {
   return { rows: out, counts };
 }
 
-/* §9 dedupe: same sport + same date, within ±10 min when both have a
-   time-of-day (seed/manual logs have none — date match is enough). */
-export function dedupeImports(rows, logs) {
+/* §9 dedupe (v1.2). Manual logs store no clock time (only a 5-min-stepped
+   duration), so a Garmin row matches an existing log on same sport + same
+   date + duration within ±10 min + distance within ±0.5 km. When both have a
+   clock time it must also be within ±10 min — that only disambiguates two
+   same-sport sessions on one day. Returns, per row, the candidate matches so
+   the UI can ask merge / skip / keep-both. */
+export function importMatches(rows, logs) {
   const toMin = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  const fresh = [], dupes = [];
-  for (const row of rows) {
-    const dup = logs.some(l =>
+  const closeMin = (a, b) => a == null || b == null ? true : Math.abs(a - b) <= 10;
+  const closeKm = (a, b) => a == null || b == null ? true : Math.abs(a - b) <= 0.5;
+  return rows.map(row => {
+    const matches = logs.filter(l =>
       l.sport === row.sport && l.date === row.date &&
+      closeMin(l.min, row.min) && closeKm(l.km, row.km) &&
       (l.time == null || row.time == null || Math.abs(toMin(l.time) - toMin(row.time)) <= 10));
-    (dup ? dupes : fresh).push(row);
+    // best match first: closest duration, then distance
+    matches.sort((a, b) =>
+      (Math.abs((a.min || 0) - row.min) - Math.abs((b.min || 0) - row.min)) ||
+      (Math.abs((a.km || 0) - (row.km || 0)) - Math.abs((b.km || 0) - (row.km || 0))));
+    return { row, matches };
+  });
+}
+
+/* Back-compat helper used by tests/older callers: split fresh vs duplicates. */
+export function dedupeImports(rows, logs) {
+  const fresh = [], dupes = [];
+  for (const { row, matches } of importMatches(rows, logs)) {
+    (matches.length ? dupes : fresh).push(row);
   }
   return { fresh, dupes };
 }
@@ -601,4 +641,278 @@ export function consistency({ weeks, logs, todayISO, n = 12 }) {
     else break;
   }
   return { cells, streak };
+}
+
+/* ================= v1.2 analytics (all pure) ================= */
+
+const TRAIN = l => l && (l.sport === "run" || l.sport === "bike") && l.source !== "seed";
+const speedKmh = l => (l.km > 0 && l.min > 0) ? (l.km * 60) / l.min : null;
+const vam = l => (l.ascent > 0 && l.min > 0) ? (l.ascent * 60) / l.min : null; // m/h climbed
+
+/* Which HR zone (1–5) a heart rate sits in; null when no HR. */
+export function zoneOfHR(bounds, hr) {
+  if (hr == null) return null;
+  for (const b of bounds) if (hr <= b.hi) return b.z;
+  return 5;
+}
+
+/* ---- intensity: aerobic / threshold / anaerobic ---- */
+const TYPE_INTENSITY = {
+  recovery: "aerobic", easy: "aerobic", long: "aerobic",
+  tempo: "threshold", climb: "threshold",
+  intervals: "anaerobic", hills: "anaerobic",
+};
+export function intensityOfLog(log, bounds) {
+  const z = zoneOfHR(bounds, log.avgHR);
+  if (z != null) return z <= 2 ? "aerobic" : z === 3 ? "threshold" : "anaerobic";
+  return TYPE_INTENSITY[log.type] || "aerobic";
+}
+
+/* Per-week minutes & % in each band, last n Monday-weeks, + an 80/20 read. */
+export function weeklyIntensity({ logs, bounds, todayISO, n = 12 }) {
+  const thisMonday = addDays(todayISO, -dayIndex(todayISO));
+  const out = [];
+  for (let k = n - 1; k >= 0; k--) {
+    const start = addDays(thisMonday, -7 * k), end = addDays(start, 6);
+    const band = { aerobic: 0, threshold: 0, anaerobic: 0 };
+    logs.filter(l => TRAIN(l) && l.date >= start && l.date <= end)
+        .forEach(l => { band[intensityOfLog(l, bounds)] += l.min || 0; });
+    const tot = band.aerobic + band.threshold + band.anaerobic;
+    out.push({ start, ...band, total: tot, current: start === thisMonday,
+               easyPct: tot ? band.aerobic / tot : null,
+               hardPct: tot ? (band.threshold + band.anaerobic) / tot : null });
+  }
+  return out;
+}
+
+/* ---- training load (Foster sRPE; HR/zone or type fallback) ---- */
+const ZONE_EFFORT = { 1: 2, 2: 4, 3: 6, 4: 8, 5: 9 };
+const TYPE_EFFORT = { recovery: 3, easy: 4, long: 5, tempo: 6, climb: 7, intervals: 8, hills: 8 };
+export function sessionEffort(log, bounds) {
+  if (log.rpe != null) return log.rpe;
+  const z = zoneOfHR(bounds, log.avgHR);
+  if (z != null) return ZONE_EFFORT[z];
+  return TYPE_EFFORT[log.type] || 5;
+}
+export function sessionLoad(log, bounds) {
+  if (!log.min) return 0;
+  return Math.round(log.min * sessionEffort(log, bounds));
+}
+export function trainingLoad({ logs, bounds, todayISO, n = 12 }) {
+  const train = logs.filter(TRAIN);
+  const loadOn = (a, b) => train.filter(l => l.date >= a && l.date <= b)
+                                .reduce((s, l) => s + sessionLoad(l, bounds), 0);
+  const acute = loadOn(addDays(todayISO, -6), todayISO);
+  const chronic = loadOn(addDays(todayISO, -27), todayISO) / 4;
+  const acwr = chronic > 0 ? acute / chronic : null;
+  const status = acwr == null ? "building"
+    : acwr < 0.8 ? "undertraining" : acwr <= 1.3 ? "optimal"
+    : acwr <= 1.5 ? "overreaching" : "high-risk";
+  const thisMonday = addDays(todayISO, -dayIndex(todayISO));
+  const weeks = [];
+  for (let k = n - 1; k >= 0; k--) {
+    const start = addDays(thisMonday, -7 * k);
+    weeks.push({ start, load: loadOn(start, addDays(start, 6)), current: start === thisMonday });
+  }
+  return { weeks, acute: Math.round(acute), chronic: Math.round(chronic), acwr, status };
+}
+
+/* ---- performance & efficiency (no power → speed / climb-rate) ---- */
+export function sessionPerformance(log) {
+  if (log.type === "climb" || (log.sport === "bike" && vam(log) && !speedKmh(log)))
+    return vam(log) == null ? null : { value: vam(log), kind: "vam" };
+  const s = speedKmh(log);
+  return s == null ? null : { value: s, kind: "speed" };
+}
+export function sessionEfficiency(log) {
+  const p = sessionPerformance(log);
+  if (!p || !log.rpe) return null;
+  return { value: p.value / log.rpe, kind: p.kind };
+}
+
+/* ---- expected RPE: preset per type, refined by your own history ---- */
+const RPE_PRESET = { recovery: 3, easy: 4, long: 5, tempo: 6.5, climb: 7, intervals: 8, hills: 8 };
+export function expectedRPE(log, logs) {
+  const type = log.type || "easy";
+  const preset = RPE_PRESET[type] ?? 5;
+  const sameType = logs.filter(l => l !== log && l.type === type && l.rpe != null && TRAIN(l))
+                       .slice(-6).map(l => l.rpe);
+  if (sameType.length < 3) return preset;
+  const avg = sameType.reduce((a, b) => a + b, 0) / sameType.length;
+  return 0.5 * preset + 0.5 * avg;
+}
+export function rpeDeviation(log, logs) {
+  if (log.rpe == null) return { dev: null, band: "none" };
+  const dev = log.rpe - expectedRPE(log, logs);
+  return { dev, band: dev <= -1.5 ? "green" : dev >= 1.5 ? "red" : "yellow" };
+}
+
+/* ---- per-session evaluation surfaced as a tag + one-liner ---- */
+export function evaluateSession(log, { bounds, logs = [], plannedSession = null } = {}) {
+  const intensity = intensityOfLog(log, bounds);
+  const { band } = rpeDeviation(log, logs);
+  const z = zoneOfHR(bounds, log.avgHR);
+  const easyKind = log.type === "easy" || log.type === "long" || log.type === "recovery"
+    || (plannedSession && (plannedSession.kind === "easy" || plannedSession.kind === "long"));
+  let verdict;
+  if (easyKind && z != null && z >= 3) verdict = "ran this one hot — easy days belong in Z2";
+  else if (band === "red") verdict = "harder than usual — watch fatigue";
+  else if (band === "green") verdict = "felt easy — recovering well";
+  else if (log.sport === "run" && easyKind && improvingEasyPace(log, logs)) verdict = "improving — faster at the same effort";
+  else verdict = "on target";
+  return { intensity, rpeBand: band, verdict };
+}
+function improvingEasyPace(log, logs) {
+  const s = speedKmh(log);
+  if (s == null) return false;
+  const prior = logs.filter(l => l !== log && l.sport === "run" && TRAIN(l) &&
+                  (l.type === "easy" || l.type == null) && speedKmh(l) && l.date < log.date).slice(-5);
+  if (prior.length < 3) return false;
+  const avg = prior.map(speedKmh).reduce((a, b) => a + b, 0) / prior.length;
+  return s > avg * 1.02;
+}
+
+/* ---- climb prescription target (metres), ramps with load ---- */
+export function climbTargetAscent({ logs = [], weekNum = 1, settings = {} }) {
+  const base = settings.climbBaseAscent || 500;
+  const block = Math.floor((weekNum - 1) / 4);
+  let target = base * Math.pow(1.05, block);
+  const recent = logs.filter(l => l.sport === "bike" && l.ascent > 0).slice(-8).map(l => l.ascent);
+  if (recent.length) target = Math.max(target, Math.max(...recent) * 0.8);
+  return Math.round(target / 50) * 50;
+}
+
+/* ---- personal bests, auto from logs merged with manual entries ---- */
+const PB_DISTANCES = [
+  { key: "run5k",   sport: "run",  std: 5,       band: [4.5, 7],     label: "5K" },
+  { key: "run10k",  sport: "run",  std: 10,      band: [9, 13],      label: "10K" },
+  { key: "runHalf", sport: "run",  std: 21.0975, band: [19, 25],     label: "Half marathon" },
+  { key: "runFull", sport: "run",  std: 42.195,  band: [38, 46],     label: "Marathon" },
+  { key: "bike40k", sport: "bike", std: 40,      band: [35, 50],     label: "40K ride" },
+];
+export const PB_ORDER = ["run5k", "run10k", "runHalf", "runFull", "bike40k",
+                         "longestRun", "longestRide", "biggestAscent", "longestSession"];
+export const PB_LOWER_BETTER = new Set(["run5k", "run10k", "runHalf", "runFull", "bike40k"]);
+
+export function personalBests({ logs = [], manualBests = [] } = {}) {
+  const rec = {};
+  const put = (key, value, log, extra = {}) => {
+    if (value == null) return;
+    const lower = PB_LOWER_BETTER.has(key);
+    if (!rec[key] || (lower ? value < rec[key].value : value > rec[key].value))
+      rec[key] = { key, value, date: log?.date, logId: log?.id, ...extra };
+  };
+  for (const l of logs) {
+    if (l.sport === "run" && l.km > 0) put("longestRun", l.km, l, { unit: "km" });
+    if (l.sport === "bike" && l.km > 0) put("longestRide", l.km, l, { unit: "km" });
+    if (l.sport === "bike" && l.ascent > 0) put("biggestAscent", l.ascent, l, { unit: "m" });
+    if (l.min > 0 && (l.sport === "run" || l.sport === "bike")) put("longestSession", l.min, l, { unit: "min" });
+    for (const d of PB_DISTANCES) {
+      if (l.sport === d.sport && l.km >= d.band[0] && l.km <= d.band[1] && l.min > 0) {
+        put(d.key, (l.min * 60) * (d.std / l.km), l, { unit: "time" }); // normalized seconds
+      }
+    }
+  }
+  for (const m of manualBests) {
+    const lower = PB_LOWER_BETTER.has(m.key);
+    if (m.value == null) continue;
+    if (!rec[m.key] || (lower ? m.value < rec[m.key].value : m.value > rec[m.key].value))
+      rec[m.key] = { ...rec[m.key], key: m.key, value: m.value, date: m.date, manual: true,
+                     unit: rec[m.key]?.unit || pbUnit(m.key) };
+  }
+  return PB_ORDER.filter(k => rec[k]).map(k => ({ label: pbLabel(k), ...rec[k] }));
+}
+function pbUnit(key) {
+  if (PB_LOWER_BETTER.has(key)) return "time";
+  if (key === "biggestAscent") return "m";
+  if (key === "longestSession") return "min";
+  return "km";
+}
+function pbLabel(key) {
+  const d = PB_DISTANCES.find(x => x.key === key);
+  if (d) return d.label;
+  return { longestRun: "Longest run", longestRide: "Longest ride",
+           biggestAscent: "Biggest climb", longestSession: "Longest session" }[key] || key;
+}
+
+/* ---- the offline AI coach: deterministic, ranked, explained ---- */
+export function coachInsights({ doc, todayISO }) {
+  const out = [];
+  const logs = doc.logs || [];
+  const bounds = zoneBounds(doc.settings);
+  const add = (o) => out.push({ impact: 0.5, confidence: 0.5, ...o });
+
+  // VO₂ trend over ~6 weeks
+  const vo2 = (doc.vo2History || []).filter(v => v.value);
+  if (vo2.length >= 2) {
+    const last = vo2[vo2.length - 1];
+    const ref = vo2.filter(v => v.date <= addDays(last.date, -35)).slice(-1)[0] || vo2[0];
+    if (ref && ref !== last) {
+      const pct = ((last.value - ref.value) / ref.value) * 100;
+      if (Math.abs(pct) >= 2)
+        add({ id: "vo2", category: pct > 0 ? "improvement" : "trend",
+              title: `VO₂max ${pct > 0 ? "up" : "down"} ${Math.abs(pct).toFixed(0)}%`,
+              body: pct > 0 ? "Your engine is growing." : "VO₂ has slipped — keep aerobic volume up.",
+              why: `${ref.value} → ${last.value} ml/kg/min since ${ref.date}.`,
+              impact: 0.8, confidence: 0.7 });
+    }
+  }
+
+  // training load / ACWR
+  const tl = trainingLoad({ logs, bounds, todayISO });
+  if (tl.acwr != null && tl.chronic > 0) {
+    if (tl.status === "high-risk")
+      add({ id: "load-high", category: "recovery", title: "Load spike — back off",
+            body: "Your recent load jumped well above your baseline. Take an easy day before the next hard one.",
+            why: `7-day load ${tl.acute} vs 4-week baseline ${tl.chronic} (ratio ${tl.acwr.toFixed(2)}).`,
+            impact: 0.95, confidence: 0.75, action: { kind: "insertRecoveryDay" } });
+    else if (tl.status === "undertraining")
+      add({ id: "load-low", category: "recommendation", title: "Room to build",
+            body: "Your load is well under your baseline — you can safely add a little volume.",
+            why: `7-day load ${tl.acute} vs 4-week baseline ${tl.chronic} (ratio ${tl.acwr.toFixed(2)}).`,
+            impact: 0.6, confidence: 0.6, action: { kind: "addEasyVolume" } });
+  }
+
+  // aerobic / anaerobic balance (this week)
+  const wi = weeklyIntensity({ logs, bounds, todayISO, n: 1 })[0];
+  if (wi && wi.total >= 60) {
+    const hard = Math.round(wi.hardPct * 100);
+    if (hard < 10)
+      add({ id: "balance-easy", category: "recommendation", title: "Add some intensity",
+            body: `Only ${hard}% of this week is hard work — one quality session would sharpen you up.`,
+            why: `${Math.round(wi.easyPct * 100)}% easy / ${hard}% hard this week.`,
+            impact: 0.6, confidence: 0.6, action: { kind: "addQuality" } });
+    else if (hard > 35)
+      add({ id: "balance-hard", category: "recovery", title: "Skewing hard",
+            body: `${hard}% of this week is hard — most weeks train best near 80/20. Add easy volume.`,
+            why: `${Math.round(wi.easyPct * 100)}% easy / ${hard}% hard this week.`,
+            impact: 0.65, confidence: 0.6, action: { kind: "addEasyVolume" } });
+  }
+
+  // consistency streak
+  const cons = consistency({ weeks: doc.weeks || [], logs, todayISO });
+  if (cons.streak >= 3)
+    add({ id: "streak", category: "strength", title: `${cons.streak}-week streak`,
+          body: "You've hit your plan consistently — this is exactly how fitness comes back.",
+          why: `${cons.streak} straight weeks at ≥ 80% completion.`,
+          impact: 0.5, confidence: 0.8 });
+
+  // new personal bests in the last 7 days
+  const pbs = personalBests({ logs, manualBests: doc.manualBests || [] });
+  const freshPB = pbs.find(p => p.date && p.date >= addDays(todayISO, -7) && !p.manual);
+  if (freshPB)
+    add({ id: "pb-" + freshPB.key, category: "strength", title: `New PB — ${freshPB.label}`,
+          body: "A personal best this week. Bank it and recover well.",
+          why: `Set on ${freshPB.date}.`, impact: 0.7, confidence: 0.9 });
+
+  // easy-pace improving (learned model)
+  const hint = paceHint(logs, bounds, 2, doc.settings.easyPace);
+  if (hint.learned && hint.n >= 4)
+    add({ id: "pace", category: "improvement", title: "Easy pace improving",
+          body: "You're running faster at the same easy heart rate — the clearest sign of aerobic fitness.",
+          why: `Learned from your last ${hint.n} easy runs.`, impact: 0.6, confidence: 0.6 });
+
+  const dismissed = doc.coachDismissed || {};
+  return out.filter(i => !dismissed[i.id])
+            .sort((a, b) => (b.impact * b.confidence) - (a.impact * a.confidence));
 }
