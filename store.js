@@ -3,7 +3,7 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /* The Progress cards in their default order; `on` = shown out of the box.
    v1.6 merged pairs behind a toggle: load (focus/daily), speedByType (run/ride),
@@ -18,9 +18,7 @@ export const PROGRESS_CARDS = [
   { id: "coach",       on: true },
   { id: "bests",       on: true },
   { id: "balance",     on: false },
-  { id: "speedByType", on: false },
-  { id: "distance",    on: false },
-  { id: "ascent",      on: false },
+  { id: "perf",        on: false },
   { id: "paceVsRpe",   on: false },
   { id: "consistency", on: false },
 ];
@@ -220,6 +218,18 @@ const MIGRATIONS = {
       const entry = { id, on: !!c.on }; seen.set(id, entry); merged.push(entry);
     }
     return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 7 };
+  },
+  // v8: speed/climbing/distance cards merged into one "perf" card.
+  7: d => {
+    const alias = { speedByType: "perf", distance: "perf", ascent: "perf" };
+    const cards = Array.isArray(d.settings?.progressCards) ? d.settings.progressCards : [];
+    const seen = new Map(), merged = [];
+    for (const c of cards) {
+      const id = alias[c.id] || c.id;
+      if (seen.has(id)) { if (c.on) seen.get(id).on = true; continue; }
+      const entry = { id, on: !!c.on }; seen.set(id, entry); merged.push(entry);
+    }
+    return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 8 };
   },
 };
 

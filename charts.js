@@ -79,6 +79,7 @@ export function lineChart(points, opts = {}) {
     ? padTop + ((v - lo) / (hi - lo)) * (H - padTop - padBottom)
     : padTop + ((hi - v) / (hi - lo)) * (H - padTop - padBottom);
   let s = "";
+  const rLabels = []; // right-edge dashed-line labels (target + averages), nudged apart at the end
   // Garmin-style optimal-range band, drawn behind everything
   if (band && band.length >= 2) {
     const top = band.map(b => `${X(b.x).toFixed(1)},${Y(b.hi).toFixed(1)}`).join(" ");
@@ -93,7 +94,7 @@ export function lineChart(points, opts = {}) {
   }
   if (target != null) {
     s += `<line x1="${L}" y1="${Y(target)}" x2="${W - 14}" y2="${Y(target)}" stroke="${SAND}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
-    s += `<text x="${W}" y="${Y(target) + 3.5}" fill="${SAND}" font-size="10" text-anchor="end" font-weight="700">${targetLabel}</text>`;
+    rLabels.push({ y0: Y(target), text: targetLabel, color: SAND, weight: 700, op: 1 });
   }
   // faint dashed mean line per series (range average), drawn under the points
   if (avg) {
@@ -103,7 +104,7 @@ export function lineChart(points, opts = {}) {
       const m = se.points.reduce((a, p) => a + p.y, 0) / se.points.length;
       const col = se.color || color;
       s += `<line x1="${L}" y1="${Y(m)}" x2="${W - 4}" y2="${Y(m)}" stroke="${col}" stroke-width="1.2" stroke-dasharray="3 4" opacity="0.45"/>`;
-      s += `<text x="${W - 2}" y="${Y(m) - 3}" fill="${col}" font-size="9" text-anchor="end" opacity="0.85">${yf(m)}</text>`;
+      rLabels.push({ y0: Y(m), text: yf(m), color: col, weight: 650, op: 0.85 });
     });
   }
   series.forEach((se, si) => {
@@ -130,6 +131,16 @@ export function lineChart(points, opts = {}) {
       s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${sel ? 4.5 : 2.5}" fill="${sel ? "#fff" : dotCol}" ${sel ? `stroke="${col}" stroke-width="2"` : ""}/>`;
     });
   });
+  // place the collected right-edge labels, nudging any that would overlap so all stay readable
+  if (rLabels.length) {
+    rLabels.sort((a, b) => a.y0 - b.y0);
+    const GAP = 11; let prev = -Infinity;
+    for (const lab of rLabels) { lab.y = Math.max(lab.y0, prev + GAP); prev = lab.y; }
+    const top = padTop + 8, bot = H - padBottom - 2, overflow = rLabels[rLabels.length - 1].y - bot;
+    if (overflow > 0) for (const lab of rLabels) lab.y = Math.max(top, lab.y - overflow);
+    for (const lab of rLabels)
+      s += `<text x="${W - 2}" y="${lab.y}" fill="${lab.color}" font-size="9.5" text-anchor="end" font-weight="${lab.weight}" opacity="${lab.op}">${lab.text}</text>`;
+  }
   if (xLabels) {
     s += `<text x="${L}" y="${H - 4}" fill="${MUT}" font-size="9.5" font-weight="650">${xLabels[0]}</text>`;
     s += `<text x="${W - 4}" y="${H - 4}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${xLabels[1]}</text>`;
