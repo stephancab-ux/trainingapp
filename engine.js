@@ -1563,6 +1563,31 @@ export function coachInsights({ doc, todayISO }) {
           body: "Most recent gym sessions have no HR or RPE, so they count toward time only — not your aerobic/anaerobic balance or training load.",
           why: `${gymNoHR.length} of ${recentGym.length} recent gym logs had no effort signal.`, impact: 0.4, confidence: 0.7 });
 
+  // aerobic Training Effect picture — last ~10 days of cardio sessions
+  const teLogs = logs.filter(l => l.date >= addDays(todayISO, -10) &&
+    ["run", "trail", "bike", "hike", "gym"].includes(l.sport) && (l.min || 0) >= 15);
+  if (teLogs.length >= 3) {
+    const tes = teLogs.map(l => effectiveAerobicTE(l, bounds));
+    const peak = Math.max(...tes.map(t => t.te));
+    const avg = tes.reduce((a, t) => a + t.te, 0) / tes.length;
+    const estShare = tes.filter(t => t.estimated).length / tes.length;
+    if (peak >= 4.5 && avg >= 3.2)
+      add({ id: "te-high", category: "recovery", title: "Big training-effect spikes",
+            body: "Several recent sessions hit a high aerobic Training Effect. Make sure an easy day follows each one.",
+            why: `Peak ${peak.toFixed(1)}/5, averaging ${avg.toFixed(1)} over ${teLogs.length} sessions.`,
+            impact: 0.6, confidence: 0.6 });
+    else if (peak < 3 && avg < 2.6)
+      add({ id: "te-low", category: "recommendation", title: "Sessions are only maintaining",
+            body: "Recent training effect has stayed in the maintaining band — a longer steady effort or some threshold work would nudge it into the impacting zone (3.0+).",
+            why: `Top session ${peak.toFixed(1)}/5 across ${teLogs.length} sessions.`,
+            impact: 0.55, confidence: 0.6, action: { kind: "addQuality" } });
+    if (estShare >= 0.7)
+      add({ id: "te-est", category: "recommendation", title: "Training Effect is estimated",
+            body: "Most sessions have no Garmin Aerobic TE, so it's estimated from heart rate. Import your Garmin CSV — or enter it when you log — for the real value.",
+            why: `${Math.round(estShare * 100)}% of recent sessions had no imported TE.`,
+            impact: 0.35, confidence: 0.7 });
+  }
+
   const dismissed = doc.coachDismissed || {};
   return out.filter(i => !dismissed[i.id])
             .sort((a, b) => (b.impact * b.confidence) - (a.impact * a.confidence));

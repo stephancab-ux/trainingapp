@@ -599,6 +599,19 @@ test("coachInsights fires categories with a why, stays quiet on no data, and car
   assert.ok(rec && rec.category === "recovery", "load spike → recovery action");
 });
 
+test("coachInsights surfaces aerobic Training Effect coaching", () => {
+  const base = { settings: SETTINGS, weeks: [], coachDismissed: {}, vo2History: [], manualBests: [] };
+  const hi = [];
+  for (let d = 18; d <= 27; d += 3) hi.push({ id: "h" + d, date: `2026-06-${d}`, sport: "run", min: 90, avgHR: 175, source: "manual" });
+  assert.ok(E.coachInsights({ doc: { ...base, logs: hi }, todayISO: "2026-06-28" }).find(i => i.id === "te-high"),
+    "repeated high-TE sessions → recovery nudge");
+
+  const lo = [];
+  for (let d = 18; d <= 27; d += 3) lo.push({ id: "l" + d, date: `2026-06-${d}`, sport: "run", type: "easy", min: 30, avgHR: 120, source: "manual" });
+  const teLo = E.coachInsights({ doc: { ...base, logs: lo }, todayISO: "2026-06-28" }).find(i => i.id === "te-low");
+  assert.ok(teLo && teLo.action && teLo.action.kind === "addQuality", "maintaining-only TE → add quality");
+});
+
 /* ---------- v1.3: trail/hike, calories, range, adherence, FIT ---------- */
 
 test("trail counts as run for plan volume; hike does not", () => {
