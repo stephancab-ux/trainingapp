@@ -34,6 +34,8 @@ export function uid() {
 export function defaultSettings() {
   return {
     maxHR: 183,
+    maxHRAuto: true,
+    age: null,
     restingHR: null,
     lthr: null,
     customZones: null,

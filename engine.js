@@ -103,6 +103,22 @@ export function zoneMid(bounds, z) {
   return Math.round((b.lo + b.hi) / 2);
 }
 
+/* Age-based max-HR estimate — Tanaka (208 − 0.7·age), more accurate than the
+   old 220−age. A measured/observed max from activities should still win. */
+export function estMaxHRFromAge(age) {
+  if (!age || age < 5 || age > 120) return null;
+  return Math.round(208 - 0.7 * age);
+}
+
+/* The highest max-HR seen across logged/imported run & bike activities. */
+export function observedMaxHR(logs) {
+  let m = 0;
+  for (const l of logs) {
+    if ((l.sport === "run" || l.sport === "bike") && l.maxHR > m) m = l.maxHR;
+  }
+  return m || null;
+}
+
 /* ---------------- pace model (§5) ---------------- */
 
 export const COLD_START_PACE = { 2: [420, 465], 3: [375, 405], 4: [325, 355], 5: [270, 300] };
@@ -537,7 +553,7 @@ export function parseGarminCSV(text) {
   const col = name => header.indexOf(name);
   const iType = col("Activity Type"), iDate = col("Date"), iTime = col("Time"),
         iDist = col("Distance"), iHR = col("Avg HR"), iTitle = col("Title"),
-        iAsc = col("Total Ascent");
+        iAsc = col("Total Ascent"), iMaxHR = col("Max HR");
   if (iType < 0 || iDate < 0 || iTime < 0) {
     return { error: "Doesn't look like a Garmin activities CSV (missing Activity Type / Date / Time columns)" };
   }
@@ -551,9 +567,10 @@ export function parseGarminCSV(text) {
     const km = parseFloat((r[iDist] ?? "").replace(/[",]/g, "")) || null;
     const hr = parseInt((r[iHR] ?? "").replace(/[^\d]/g, ""), 10) || null;
     const ascent = iAsc >= 0 ? (parseInt((r[iAsc] ?? "").replace(/[^\d]/g, ""), 10) || null) : null;
+    const maxHR = iMaxHR >= 0 ? (parseInt((r[iMaxHR] ?? "").replace(/[^\d]/g, ""), 10) || null) : null;
     out.push({
       date: m[1], time: `${m[2]}:${m[3]}`, sport, min,
-      km, avgHR: hr, ascent: ascent ?? undefined,
+      km, avgHR: hr, maxHR: maxHR ?? undefined, ascent: ascent ?? undefined,
       note: (iTitle >= 0 && r[iTitle]) ? r[iTitle].trim() : undefined,
       activityType: type,
     });

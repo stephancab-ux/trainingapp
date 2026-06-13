@@ -208,8 +208,19 @@ function toast(msg) {
 
 function persist(mutate) {
   mutate && mutate();
+  autoBumpMaxHR();
   S.save(doc);
   render();
+}
+
+/* Raise max HR when an activity shows a higher one (opt-out in Settings). */
+function autoBumpMaxHR() {
+  if (!doc.settings.maxHRAuto) return;
+  const obs = E.observedMaxHR(doc.logs);
+  if (obs && obs > doc.settings.maxHR) {
+    doc.settings.maxHR = obs;
+    toast(`Max HR raised to ${obs} from your activity`);
+  }
 }
 
 /* ---------------- plan state helpers ---------------- */
@@ -570,6 +581,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>
     ${ascentRow}
     <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
+    <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
       `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}">${i + 1}</button>`).join("")}</div>
     <div class="frow"><span class="l">Note</span><input type="text" id="lg-note" placeholder="optional" value="${isEdit ? esc(log.note || "") : ""}"></div>
@@ -593,17 +605,18 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     min = readMin();
     const km = num(sheet.querySelector("#lg-km").value);
     const hr = num(sheet.querySelector("#lg-hr").value);
+    const mhr = num(sheet.querySelector("#lg-maxhr").value);
     const asc = sheet.querySelector("#lg-asc") ? num(sheet.querySelector("#lg-asc").value) : null;
     const note = sheet.querySelector("#lg-note").value.trim();
     closeOverlay();
     persist(() => {
       if (isEdit) {
-        Object.assign(log, { min, km: km ?? undefined, avgHR: hr ?? undefined,
+        Object.assign(log, { min, km: km ?? undefined, avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
                              ascent: asc ?? undefined, rpe: rpe ?? undefined,
                              note: note || undefined, type: typ ?? undefined });
       } else {
         doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
-                        avgHR: hr ?? undefined, ascent: asc ?? undefined, rpe: rpe ?? undefined,
+                        avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined, rpe: rpe ?? undefined,
                         note: note || undefined, type: typ ?? undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
@@ -1572,7 +1585,9 @@ function renderSettings() {
   page.innerHTML = `
     <h1 class="page">Settings</h1>
     <div class="group"><div class="gh">Heart rate</div><div class="scard">
-      <button class="srow" id="st-max"><span class="l">Max HR</span><span class="v">${st.maxHR} bpm</span><span class="chev">›</span></button>
+      <button class="srow" id="st-max"><span class="l">Max HR<span>${st.maxHRAuto ? "auto-updates from your activities" : "set manually"}</span></span><span class="v">${st.maxHR} bpm</span><span class="chev">›</span></button>
+      <button class="srow tog" data-tog="maxHRAuto"><span class="l">Auto-update max HR<span>raise it when an activity goes higher</span></span><span class="switch ${st.maxHRAuto ? "on" : ""}"></span></button>
+      <button class="srow" id="st-age"><span class="l">Age<span>estimates max HR (208 − 0.7 × age)</span></span><span class="v ${st.age ? "" : "add"}">${st.age ? st.age + " yr" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-rhr"><span class="l">Resting HR<span>adding it switches zones to Karvonen</span></span><span class="v ${st.restingHR ? "" : "add"}">${st.restingHR ? st.restingHR + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lthr"><span class="l">Lactate threshold<span>optional — enables LTHR-based zones</span></span><span class="v ${st.lthr ? "" : "add"}">${st.lthr ? st.lthr + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-method"><span class="l">Zone method</span><span class="v">${METHOD_LABEL[st.zoneMethod] || st.zoneMethod}</span><span class="chev">›</span></button>
@@ -1611,6 +1626,10 @@ function renderSettings() {
     title: "Max HR", label: "Max HR", suffix: "bpm", value: st.maxHR, min: 120, max: 220,
     onSave: v => { st.maxHR = Math.round(v); toast("Zones updated"); },
   }));
+  page.querySelector('[data-tog="maxHRAuto"]').addEventListener("click", () => {
+    persist(() => { st.maxHRAuto = !st.maxHRAuto; });
+  });
+  $("#st-age").addEventListener("click", openAgeSheet);
   $("#st-rhr").addEventListener("click", () => openValueSheet({
     title: "Resting HR", label: "Resting HR", suffix: "bpm", value: st.restingHR ?? "", min: 30, max: 100, allowClear: !!st.restingHR,
     onSave: v => {
@@ -1728,6 +1747,46 @@ function openCustomZones() {
     closeOverlay();
     persist(() => { doc.settings.customZones = zones; doc.settings.zoneMethod = "custom"; });
     toast("Custom zones active");
+  });
+}
+
+function openAgeSheet() {
+  const st = doc.settings;
+  let age = st.age || "";
+  const sheet = openSheet(`
+    <div class="sh-title">Age</div>
+    <div class="sh-sub">Used only to estimate a starting max HR. A real max seen in your activities always wins.</div>
+    <div class="frow"><span class="l">Age</span><input type="text" inputmode="numeric" id="ag-val" value="${age}" placeholder="—"><span class="suffix">years</span></div>
+    <div class="callout" id="ag-est">Enter your age to see the estimate.</div>
+    <button class="btn" id="ag-apply">Save &amp; use as max HR</button>
+    <button class="btn ghost" id="ag-save">Save age only</button>
+    ${st.age ? `<button class="btn ghost" id="ag-clear">Clear</button>` : ""}
+  `);
+  const input = sheet.querySelector("#ag-val");
+  const est = () => E.estMaxHRFromAge(num(input.value));
+  const refresh = () => {
+    const e = est();
+    sheet.querySelector("#ag-est").innerHTML = e
+      ? `Estimated max HR ≈ <b>${e} bpm</b> (208 − 0.7 × age). Your zones recompute from this.`
+      : "Enter your age to see the estimate.";
+  };
+  input.addEventListener("input", refresh); refresh();
+  sheet.querySelector("#ag-apply").addEventListener("click", () => {
+    const a = num(input.value), e = est();
+    if (!e) { toast("Enter a valid age"); return; }
+    closeOverlay();
+    persist(() => { st.age = Math.round(a); st.maxHR = e; });
+    toast(`Max HR set to ${e} from age`);
+  });
+  sheet.querySelector("#ag-save").addEventListener("click", () => {
+    const a = num(input.value);
+    if (!a) { toast("Enter a valid age"); return; }
+    closeOverlay();
+    persist(() => { st.age = Math.round(a); });
+    toast("Age saved");
+  });
+  sheet.querySelector("#ag-clear")?.addEventListener("click", () => {
+    closeOverlay(); persist(() => { st.age = null; }); toast("Cleared");
   });
 }
 
@@ -1860,7 +1919,7 @@ function importJSON(file) {
 }
 
 const csvLog = r => ({ id: S.uid(), date: r.date, time: r.time, sport: r.sport, min: r.min,
-                       km: r.km ?? undefined, avgHR: r.avgHR ?? undefined,
+                       km: r.km ?? undefined, avgHR: r.avgHR ?? undefined, maxHR: r.maxHR ?? undefined,
                        ascent: r.ascent ?? undefined, note: r.note || undefined, source: "csv" });
 
 function importCSV(file) {
@@ -1906,8 +1965,8 @@ function importCSV(file) {
           if (choice[i] === "both") { doc.logs.push(csvLog(m.row)); added++; }
           else if (choice[i] === "merge") {
             const t = m.matches[0]; const r = m.row;
-            t.avgHR = t.avgHR ?? r.avgHR; t.km = t.km ?? r.km; t.ascent = t.ascent ?? r.ascent;
-            t.time = t.time ?? r.time; merged++;
+            t.avgHR = t.avgHR ?? r.avgHR; t.maxHR = t.maxHR ?? r.maxHR; t.km = t.km ?? r.km;
+            t.ascent = t.ascent ?? r.ascent; t.time = t.time ?? r.time; merged++;
           } else skipped++;
         });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));

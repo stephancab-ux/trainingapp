@@ -403,13 +403,23 @@ test("consistency streak counts completed weeks ≥ 80 %", () => {
 
 const BOUNDS = E.zoneBounds(SETTINGS); // Z2 110–128, Z3 128–146, Z4 146–165, Z5 165–183
 
-test("CSV captures Total Ascent in metres", () => {
+test("CSV captures Total Ascent in metres + Max HR", () => {
   const csv = [CSV_HEADER,
     row("Cycling", "2026-06-14 09:00:00", "Climb", "30.0", "01:30:00", "138"),
   ].join("\n");
-  // the row() helper puts "120" in the Total Ascent column
+  // the row() helper puts "120" in Total Ascent and 176 in Max HR
   const ride = E.parseGarminCSV(csv).rows.find(r => r.sport === "bike");
   assert.equal(ride.ascent, 120);
+  assert.equal(ride.maxHR, 176);
+});
+
+test("age estimates max HR (Tanaka); observed max wins from activities", () => {
+  assert.equal(E.estMaxHRFromAge(40), Math.round(208 - 0.7 * 40)); // 180
+  assert.equal(E.estMaxHRFromAge(0), null);
+  assert.equal(E.observedMaxHR([
+    { sport: "run", maxHR: 178 }, { sport: "bike", maxHR: 191 }, { sport: "other", maxHR: 200 },
+  ]), 191); // ignores non run/bike
+  assert.equal(E.observedMaxHR([{ sport: "run", avgHR: 150 }]), null);
 });
 
 test("importMatches keys on duration+distance, not clock time", () => {
