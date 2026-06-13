@@ -1099,12 +1099,20 @@ function currentTypeId(s) {
 /* Full per-session editor: change duration, zone, type, climb target, note;
    log it, or send the structured workout to a Garmin watch (.FIT). */
 function openSessionEditor(week, s, st) {
+  const a = doc.settings.allowedTypes || {};
+  const activities = [
+    RUN_BASE.some(k => a[k] !== false) && { sport: "run", label: "Run" },
+    RIDE_BASE.some(k => a[k] !== false) && { sport: "bike", label: "Ride" },
+    GYM_BASE.some(k => a[k] !== false) && { sport: "gym", label: "Gym" },
+  ].filter(Boolean);
   const opts = sessionTypeOptions(s.sport);
   let chosen = opts.find(o => o.id === currentTypeId(s)) || opts[0];
   let dur = s.targetMin, zone = s.zone || 2;
   const sheet = openSheet(`
     <div class="sh-title">${fmtDate(st.date)}</div>
-    <div class="sh-sub">${SPORT_NAME[s.sport]} session — adjust anything for this day</div>
+    <div class="sh-sub">${SPORT_NAME[s.sport]} session — adjust anything, or switch the activity</div>
+    ${activities.length > 1 ? `<div class="type-row"><span class="l">Activity</span><span class="opts" id="se-act">${activities.map(act =>
+      `<button data-actsw="${act.sport}" class="${act.sport === s.sport ? "on" : ""}">${act.label}</button>`).join("")}</span></div>` : ""}
     <div class="type-row"><span class="l">Type</span><span class="opts" id="se-types">${opts.map(o =>
       `<button data-se="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
     <div class="frow"><span class="l">Duration</span>
@@ -1129,6 +1137,29 @@ function openSessionEditor(week, s, st) {
       : `Keep it ${chosen.id === "long" ? "steady and unhurried" : "conversational"} at Z${zone}.`;
   };
   refresh();
+  const recompute = () => { week.targetMin = { run: E.sumSessions(week.sessions, "run"), bike: E.sumSessions(week.sessions, "bike"), gym: E.sumSessions(week.sessions, "gym") }; };
+  sheet.querySelectorAll("[data-actsw]").forEach(b => b.addEventListener("click", () => {
+    const ns = b.dataset.actsw;
+    if (ns === s.sport) return;
+    const keep = readMin();
+    if (ns === "gym") {
+      closeOverlay();
+      persist(() => {
+        Object.assign(s, { sport: "gym", kind: "easy", targetMin: E.snapGymMinutes(keep || 45),
+          venue: doc.settings.gymVenueDefault || "home",
+          gym: { seed: E.hashSeed(`${week.id}-${s.day}-${s.slot ?? 0}`), avoidIds: [], swaps: {} } });
+        delete s.zone; delete s.qualityTemplate; delete s.targetAscent; recompute();
+      });
+      openWorkoutPage(week, s, st.date);
+      return;
+    }
+    closeOverlay();
+    persist(() => {
+      Object.assign(s, { sport: ns, kind: "easy", zone: 2, targetMin: keep || (ns === "run" ? 35 : 60) });
+      delete s.qualityTemplate; delete s.targetAscent; delete s.gym; delete s.venue; recompute();
+    });
+    openSessionEditor(week, s, sessionStatus(week, s));
+  }));
   sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => { minInput.value = Math.max(5, readMin() + +b.dataset.d); }));
   sheet.querySelectorAll("[data-se]").forEach(b => b.addEventListener("click", () => {
     chosen = opts.find(o => o.id === b.dataset.se);
@@ -1150,7 +1181,7 @@ function openSessionEditor(week, s, st) {
     else delete s.targetAscent;
     const note = sheet.querySelector("#se-note").value.trim();
     s.note = note || undefined;
-    week.targetMin = { run: E.sumSessions(week.sessions, "run"), bike: E.sumSessions(week.sessions, "bike") };
+    recompute();
   };
   sheet.querySelector("#se-save").addEventListener("click", () => { closeOverlay(); persist(applyEdits); toast("Session updated"); });
   sheet.querySelector("#se-log").addEventListener("click", () => {
