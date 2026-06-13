@@ -35,6 +35,32 @@ const ICONS = {
 };
 const sportClass = sp => sp === "run" ? "runc" : sp === "bike" ? "bikec" : "restc";
 
+const ICONS_UI = {
+  sliders: `<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></svg>`,
+  coach: `<svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.5-3.2 7.3-8 9-4.8-1.7-8-4.5-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>`,
+};
+const CAT_META = {
+  strength:       { label: "Strength", color: "var(--cy)" },
+  improvement:    { label: "Improvement", color: "var(--cy)" },
+  recommendation: { label: "Recommendation", color: "var(--sand)" },
+  recovery:       { label: "Recovery alert", color: "var(--bad)" },
+  trend:          { label: "Performance trend", color: "var(--sub)" },
+};
+function coachMini(i) {
+  const c = CAT_META[i.category] || CAT_META.trend;
+  return `<div class="cmini"><span class="cdot" style="background:${c.color}"></span><span><b>${esc(i.title)}</b> ${esc(i.body)}</span></div>`;
+}
+
+const DAY_LABEL = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday",
+                    fri: "Friday", sat: "Saturday", sun: "Sunday" };
+const WORKOUT_TOGGLES = [
+  ["runIntervals", "Speed repeats (run)", "Z4 interval runs"],
+  ["runTempo", "Tempo (run)", "steady Z3 efforts"],
+  ["runHills", "Hill repeats (run)", "short uphill surges"],
+  ["bikeIntervals", "Sweet spot (ride)", "Z3–Z4 ride intervals"],
+  ["bikeClimb", "Climbing (ride)", "long sustained climbs"],
+];
+
 /* Workout-type tags on logs (v1.1). Purely descriptive — no plan math. */
 const LOG_TYPES = {
   run:  [["easy", "Easy"], ["tempo", "Tempo"], ["intervals", "Intervals"], ["hills", "Hills"], ["long", "Long"]],
@@ -47,6 +73,18 @@ const TYPE_NAME = {
 function logTitle(l) {
   return TYPE_NAME[l.sport]?.[l.type] ||
     (l.sport === "bike" ? "Ride" : l.sport[0].toUpperCase() + l.sport.slice(1));
+}
+
+/* Per-session evaluation tag (v1.2): a coloured verdict from the engine. */
+const EVAL_DOT = { green: "var(--cy)", yellow: "var(--sub)", red: "var(--bad)", none: "var(--mut)" };
+function evalOf(log, plannedSession = null) {
+  if (!log || (log.sport !== "run" && log.sport !== "bike")) return null;
+  return E.evaluateSession(log, { bounds: bounds(), logs: doc.logs, plannedSession });
+}
+function evalChip(log, plannedSession = null) {
+  const e = evalOf(log, plannedSession);
+  if (!e) return "";
+  return `<span class="eval-chip"><i style="background:${EVAL_DOT[e.rpeBand]}"></i>${esc(e.verdict)}</span>`;
 }
 
 function kindLabel(s) {
@@ -295,8 +333,105 @@ function setTab(name) {
 function render() {
   $("#weekdot").hidden = !checkinDue();
   $("#fab").hidden = tab !== "week";
+  const cd = $("#coachdot");
+  if (cd) cd.hidden = !hasFreshCoach();
   renderBanner();
-  ({ today: renderToday, week: renderWeek, progress: renderProgress, settings: renderSettings })[tab]();
+  ({ today: renderToday, week: renderWeek, progress: renderProgress, coach: renderCoach, settings: renderSettings })[tab]();
+}
+
+/* A badge on the Coach tab when there's an undismissed high-impact insight. */
+function hasFreshCoach() {
+  try {
+    return E.coachInsights({ doc, todayISO: todayISO() })
+      .some(i => i.impact * i.confidence >= 0.5);
+  } catch { return false; }
+}
+
+/* ---------------- COACH ---------------- */
+
+function renderCoach() {
+  const page = $('[data-page="coach"]');
+  const ins = E.coachInsights({ doc, todayISO: todayISO() });
+  const groups = ["recovery", "recommendation", "improvement", "strength", "trend"];
+  const GROUP_TITLE = { recovery: "Recovery alerts", recommendation: "Recommendations",
+    improvement: "Improvements", strength: "Strengths", trend: "Performance trends" };
+
+  let body = `<h1 class="page">Coach</h1>
+    <p class="row-sub" style="margin:-4px 0 4px">Reviewed offline from your own data after every workout and week.</p>`;
+  if (!ins.length) {
+    body += `<div class="card pc"><p class="row-sub">Nothing to flag yet — keep logging runs, rides, weigh-ins and RPE, and your coach will start spotting trends, risks and wins.</p></div>`;
+  } else {
+    for (const g of groups) {
+      const items = ins.filter(i => i.category === g);
+      if (!items.length) continue;
+      body += `<div class="cgroup"><div class="gh">${GROUP_TITLE[g]}</div>`;
+      for (const i of items) {
+        const c = CAT_META[i.category] || CAT_META.trend;
+        body += `<div class="card coachcard"><div class="cc-top"><span class="cdot" style="background:${c.color}"></span>
+          <b>${esc(i.title)}</b><button class="cc-x" data-dismiss="${esc(i.id)}" aria-label="Dismiss">×</button></div>
+          <p class="cc-body">${esc(i.body)}</p>
+          <p class="cc-why">${esc(i.why || "")}</p>
+          ${i.action ? `<button class="btn mini" data-act="${esc(i.id)}">${ACTION_LABEL[i.action.kind] || "Apply"}</button>` : ""}</div>`;
+      }
+      body += `</div>`;
+    }
+  }
+  page.innerHTML = body;
+
+  page.querySelectorAll("[data-dismiss]").forEach(b => b.addEventListener("click", () => {
+    persist(() => { doc.coachDismissed = { ...doc.coachDismissed, [b.dataset.dismiss]: todayISO() }; });
+  }));
+  page.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
+    const insight = ins.find(i => i.id === b.dataset.act);
+    if (insight) applyCoachAction(insight);
+  }));
+}
+
+const ACTION_LABEL = { addQuality: "Add an interval session", addTempo: "Add a tempo session",
+  addEasyVolume: "Add easy volume", insertRecoveryDay: "Make a day easy" };
+
+function applyCoachAction(insight) {
+  const week = currentWeek() || lastWeek();
+  if (!week) { toast("No active week"); return; }
+  const kind = insight.action.kind;
+  const confirm = (msg, fn) => openModal("Apply this?", msg, [
+    { label: "Do it", fn }, { label: "Not now", cls: "ghost" }]);
+
+  if (kind === "addEasyVolume") {
+    const bikes = week.sessions.filter(s => s.sport === "bike").length;
+    const runs = week.sessions.filter(s => s.sport === "run").length;
+    if (runs + bikes >= 6) { toast("Week's already full — try next week"); return; }
+    confirm("Add one easy ride to this week, placed on your freshest day?", () => changeMix(week, runs, bikes + 1));
+  } else if (kind === "addQuality" || kind === "addTempo") {
+    confirm(kind === "addTempo" ? "Set this week's quality run to a tempo session?" : "Add an interval session to this week?", () => {
+      persist(() => {
+        if (!doc.settings.qualityOverride && !qstate().run) doc.settings.qualityOverride = true;
+        const idx = weekIndex(week);
+        const q = qstate();
+        const allow = doc.settings.allowedFamilies;
+        const { week: nw } = E.relayoutWeek({
+          week, runCount: week.sessions.filter(s => s.sport === "run").length,
+          bikeCount: week.sessions.filter(s => s.sport === "bike").length,
+          restDay: doc.settings.restDay, quality: { run: q.run || true, bike: q.bike },
+          runQTemplate: kind === "addTempo" ? "runTempo" : E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow),
+          bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
+          climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: week.weekNum, settings: doc.settings }),
+        });
+        doc.weeks[idx] = nw;
+      });
+      toast("Done — check the Week tab");
+    });
+  } else if (kind === "insertRecoveryDay") {
+    confirm("Turn this week's hardest remaining session into an easy one?", () => {
+      persist(() => {
+        const hard = week.sessions.filter(s => s.kind === "quality" || s.kind === "long")
+          .sort((a, b) => b.targetMin - a.targetMin)[0];
+        if (hard) { hard.kind = "easy"; hard.zone = 2; delete hard.qualityTemplate; delete hard.targetAscent; }
+        week.targetMin = { run: E.sumSessions(week.sessions, "run"), bike: E.sumSessions(week.sessions, "bike") };
+      });
+      toast("Eased the hardest session");
+    });
+  }
 }
 
 function renderBanner() {
@@ -351,7 +486,8 @@ function renderToday() {
     card = `<div class="card">
       <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip zc2">DONE ✓</span></div>
       <div class="bignum">${l.min}<small>min logged</small></div>
-      <p class="t-note">${[l.km ? `${l.km} km` : "", l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ") || "Nice. That's the whole job."}</p>
+      <p class="t-note">${[l.km ? `${l.km} km` : "", l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "", l.ascent ? `${l.ascent} m ↑` : "", l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ") || "Nice. That's the whole job."}</p>
+      ${evalChip(l, s)}
       <div class="t-actions"><button class="btn ghost" id="td-edit">Edit this log</button></div>
     </div>`;
   } else {
@@ -365,6 +501,7 @@ function renderToday() {
         <div class="midnum">${z.lo}–${z.hi} <span class="unit">bpm</span></div></div>
       ${tpl ? `<div class="t-block"><div class="lab">Session</div>
         <div class="t-pace-v">${tpl.label}</div>
+        ${s.targetAscent ? `<p class="row-sub" style="margin-top:3px;color:var(--sand)">Target climb ≈ ${s.targetAscent} m of ascent</p>` : ""}
         <p class="row-sub" style="margin-top:3px">${E.QUALITY_WARMUP}</p></div>` : ""}
       ${pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
         <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : pace.manual ? "your pace setting — easy runs will tune this" : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
@@ -422,23 +559,27 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
   const typeRow = LOG_TYPES[sport] ? `
     <div class="type-row"><span class="l">Type</span><span class="opts">${LOG_TYPES[sport].map(([k, lab]) =>
       `<button data-ty="${k}" class="${typ === k ? "on" : ""}">${lab}</button>`).join("")}</span></div>` : "";
+  const ascentRow = sport === "bike" ? `
+    <div class="frow"><span class="l">Ascent</span><input type="text" inputmode="numeric" id="lg-asc" placeholder="—" value="${isEdit && log.ascent != null ? log.ascent : ""}"><span class="suffix">m</span></div>` : "";
   const sheet = openSheet(`
     <div class="sh-title">${isEdit ? "Edit" : "Log"} · ${esc(title || sport)}</div>
     <div class="sh-sub">${fmtDate(date)}${isEdit ? "" : " — pre-filled with the plan"}</div>
     <div class="frow"><span class="l">Duration</span>
-      <span class="stepper"><button data-d="-5">−</button><span class="v" id="lg-min">${min} min</span><button data-d="5">+</button></span></div>
+      <span class="stepper"><button data-d="-1">−</button><input type="text" inputmode="numeric" class="v dur" id="lg-min" value="${min}"><span class="suffix">min</span><button data-d="1">+</button></span></div>
     ${typeRow}
-    <div class="frow"><span class="l">Distance</span><input type="number" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>
-    <div class="frow"><span class="l">Avg heart rate</span><input type="number" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
+    <div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>
+    ${ascentRow}
+    <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
       `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}">${i + 1}</button>`).join("")}</div>
     <div class="frow"><span class="l">Note</span><input type="text" id="lg-note" placeholder="optional" value="${isEdit ? esc(log.note || "") : ""}"></div>
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
   `);
+  const minInput = sheet.querySelector("#lg-min");
+  const readMin = () => { const v = Math.round(num(minInput.value) ?? min); return Math.max(1, v || 1); };
   sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => {
-    min = Math.max(5, min + parseInt(b.dataset.d, 10));
-    sheet.querySelector("#lg-min").textContent = `${min} min`;
+    minInput.value = Math.max(1, readMin() + parseInt(b.dataset.d, 10));
   }));
   sheet.querySelectorAll("[data-ty]").forEach(b => b.addEventListener("click", () => {
     typ = b.dataset.ty;
@@ -449,18 +590,20 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     sheet.querySelectorAll("[data-rpe]").forEach(x => x.classList.toggle("on", +x.dataset.rpe === rpe));
   }));
   sheet.querySelector("#lg-save").addEventListener("click", () => {
+    min = readMin();
     const km = num(sheet.querySelector("#lg-km").value);
     const hr = num(sheet.querySelector("#lg-hr").value);
+    const asc = sheet.querySelector("#lg-asc") ? num(sheet.querySelector("#lg-asc").value) : null;
     const note = sheet.querySelector("#lg-note").value.trim();
     closeOverlay();
     persist(() => {
       if (isEdit) {
         Object.assign(log, { min, km: km ?? undefined, avgHR: hr ?? undefined,
-                             rpe: rpe ?? undefined, note: note || undefined,
-                             type: typ ?? undefined });
+                             ascent: asc ?? undefined, rpe: rpe ?? undefined,
+                             note: note || undefined, type: typ ?? undefined });
       } else {
         doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
-                        avgHR: hr ?? undefined, rpe: rpe ?? undefined,
+                        avgHR: hr ?? undefined, ascent: asc ?? undefined, rpe: rpe ?? undefined,
                         note: note || undefined, type: typ ?? undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
@@ -653,12 +796,15 @@ function changeMix(week, runCount, bikeCount) {
   const prev = idx > 0 ? doc.weeks[idx - 1] : null;
   const qs = qstate();
   const ci = doc.checkins.find(c => c.weekId === week.id);
+  const allow = doc.settings.allowedFamilies;
   const { week: newWeek, warnings } = E.relayoutWeek({
     week, runCount, bikeCount,
     prevRunMin: prev ? prev.targetMin.run : null,
+    restDay: doc.settings.restDay,
     quality: ci?.noQuality ? { run: false, bike: false } : { run: qs.run, bike: qs.bike },
-    runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run"),
-    bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike"),
+    runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow),
+    bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
+    climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: week.weekNum, settings: doc.settings }),
   });
   const apply = () => {
     persist(() => { doc.weeks[idx] = newWeek; });
@@ -670,6 +816,71 @@ function changeMix(week, runCount, bikeCount) {
       { label: "Undo", cls: "ghost" },
     ]);
   } else apply();
+}
+
+/* Re-lay a week around the current rest day / counts (used after moving the
+   rest day). Mutates doc.weeks in place — call inside persist(). */
+function reflowWeek(week) {
+  if (!week) return;
+  const idx = weekIndex(week);
+  const qs = qstate();
+  const ci = doc.checkins.find(c => c.weekId === week.id);
+  const allow = doc.settings.allowedFamilies;
+  const runs = week.sessions.filter(s => s.sport === "run").length;
+  const bikes = week.sessions.filter(s => s.sport === "bike").length;
+  const { week: nw } = E.relayoutWeek({
+    week, runCount: runs, bikeCount: bikes, restDay: doc.settings.restDay,
+    quality: ci?.noQuality ? { run: false, bike: false } : { run: qs.run, bike: qs.bike },
+    runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow),
+    bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
+    climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: week.weekNum, settings: doc.settings }),
+  });
+  doc.weeks[idx] = nw;
+}
+
+/* When a workout family is toggled off, swap any planned session of that
+   family in the current week to the next allowed one (or to easy). */
+function applyAllowedToCurrentWeek() {
+  const week = currentWeek() || lastWeek();
+  if (!week) return;
+  const allow = doc.settings.allowedFamilies;
+  const idx = weekIndex(week);
+  const famKeyOf = t => t.sport === "run"
+    ? { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" }[t.family]
+    : { intervals: "bikeIntervals", climb: "bikeClimb" }[t.family];
+  for (const s of week.sessions) {
+    if (s.kind !== "quality" || !s.qualityTemplate) continue;
+    const t = E.QUALITY_TEMPLATES[s.qualityTemplate];
+    if (allow[famKeyOf(t)] === false) {
+      const repl = E.qualityTemplateFor(doc.weeks.slice(0, idx), s.sport, allow);
+      if (repl) { s.qualityTemplate = repl; s.zone = E.QUALITY_TEMPLATES[repl].zone;
+                  if (repl !== "bikeClimb") delete s.targetAscent; }
+      else { s.kind = "easy"; s.zone = 2; delete s.qualityTemplate; delete s.targetAscent; }
+    }
+  }
+  week.targetMin = { run: E.sumSessions(week.sessions, "run"), bike: E.sumSessions(week.sessions, "bike") };
+}
+
+function openRestDaySheet() {
+  const st = doc.settings;
+  const sheet = openSheet(`
+    <div class="sh-title">Rest day</div>
+    <div class="sh-sub">Pick your day off — the week's sessions redistribute around it.</div>
+    ${E.DAYS.map(d => `<button class="srow" data-rd="${d}"><span class="l">${DAY_LABEL[d]}</span>${st.restDay === d ? `<span class="v" style="color:var(--cy)">current</span>` : `<span class="chev">›</span>`}</button>`).join("")}
+  `);
+  sheet.querySelectorAll("[data-rd]").forEach(b => b.addEventListener("click", () => {
+    const day = b.dataset.rd;
+    closeOverlay();
+    if (day === st.restDay) return;
+    persist(() => {
+      const runs = E.DAYS.filter(d => st.layout[d] === "run").length || 3;
+      const bikes = E.DAYS.filter(d => st.layout[d] === "bike" || st.layout[d] === "bike-long").length || 3;
+      st.restDay = day;
+      st.layout = E.placeLayout(runs, bikes, day);
+      reflowWeek(currentWeek() || lastWeek());
+    });
+    toast(`Rest day → ${DAY_LABEL[day]}`);
+  }));
 }
 
 function unlockCard() {
@@ -698,7 +909,7 @@ function comingWeeksCard() {
   if (!doc.weeks.length) return "";
   const q = qstate();
   const proj = E.projectWeeks({ weeks: doc.weeks, settings: doc.settings,
-                                quality: { run: q.run, bike: q.bike } });
+                                quality: { run: q.run, bike: q.bike }, logs: doc.logs });
   if (!proj.length) return "";
   const ratePct = Math.round(doc.settings.growthRate * 100);
   return `<div class="card" style="padding:13px 16px">
@@ -728,7 +939,13 @@ function openWorkoutChooser(week, s, st) {
     a + w.sessions.filter(x => x.sport === s.sport && x.kind === "quality").length, 0);
   const intervalKey = cur?.family === "intervals" ? s.qualityTemplate
     : s.sport === "run" ? (count >= 4 ? "runQ2" : "runQ1") : (count >= 4 ? "bikeQ2" : "bikeQ1");
-  const keys = s.sport === "run" ? [intervalKey, "runTempo", "runHills"] : [intervalKey, "bikeClimb"];
+  const allow = doc.settings.allowedFamilies || {};
+  const allKeys = s.sport === "run" ? [intervalKey, "runTempo", "runHills"] : [intervalKey, "bikeClimb"];
+  // keep the current one available, plus any allowed family
+  const keys = allKeys.filter(k => k === s.qualityTemplate ||
+    allow[E.QUALITY_TEMPLATES[k].sport === "run"
+      ? { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" }[E.QUALITY_TEMPLATES[k].family]
+      : { intervals: "bikeIntervals", climb: "bikeClimb" }[E.QUALITY_TEMPLATES[k].family]] !== false);
 
   const sheet = openSheet(`
     <div class="sh-title">${kindLabel(s)} · ${s.targetMin} min</div>
@@ -768,6 +985,7 @@ function openHistory() {
       const extra = [l.km ? `${l.km} km` : "",
         l.km && l.sport === "run" ? E.fmtPace(l.min * 60 / l.km) + " /km" : "",
         l.km && l.sport === "bike" ? (l.km / (l.min / 60)).toFixed(1) + " km/h" : "",
+        l.ascent ? `${l.ascent} m ↑` : "",
         l.avgHR ? `${l.avgHR} bpm` : ""].filter(Boolean).join(" · ");
       return `<button class="hrow" data-id="${l.id}">
         <span class="ic ${sportClass(l.sport)}" style="width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center">${ICONS[l.sport] || ICONS.other}</span>
@@ -806,7 +1024,7 @@ function openCheckin(week) {
   function render1() {
     el.querySelector(".wrap").innerHTML = head("Step 1 — weight. Optional, but the trend is half the goal.") + `
       <div class="card"><div class="frow" style="border:none"><span class="l">Weight today</span>
-        <input type="number" step="0.1" inputmode="decimal" id="ci-kg" placeholder="${lastKg ?? "—"}" value="${state.weightKg ?? ""}"><span class="suffix">kg</span></div></div>
+        <input type="text" step="0.1" inputmode="decimal" id="ci-kg" placeholder="${lastKg ?? "—"}" value="${state.weightKg ?? ""}"><span class="suffix">kg</span></div></div>
       ${navBtns("Continue", true)}`;
     wire(() => { state.weightKg = num(el.querySelector("#ci-kg").value); go(2); }, () => go(2));
   }
@@ -824,7 +1042,7 @@ function openCheckin(week) {
   function render3() {
     el.querySelector(".wrap").innerHTML = head("Step 3 — recovery signals. Both optional.") + `
       <div class="card">
-        <div class="frow"><span class="l">HRV · 7-day avg</span><input type="number" inputmode="numeric" id="ci-hrv" placeholder="—" value="${state.hrv7d ?? ""}"><span class="suffix">ms</span></div>
+        <div class="frow"><span class="l">HRV · 7-day avg</span><input type="text" inputmode="numeric" id="ci-hrv" placeholder="—" value="${state.hrv7d ?? ""}"><span class="suffix">ms</span></div>
         <div class="frow" style="border:none"><span class="l">Sleep quality</span>
           <span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end">${[1, 2, 3, 4, 5].map(n =>
             `<button data-sleep="${n}" style="flex:0 0 44px" class="${state.sleep === n ? "on" : ""}">${n}</button>`).join("")}</span></div>
@@ -852,14 +1070,15 @@ function openCheckin(week) {
       ${state.weightKg ? `<span class="chip"><b>${state.weightKg}</b>&nbsp;kg</span>` : ""}
       ${state.hrv7d ? `<span class="chip">HRV&nbsp;<b>${state.hrv7d}</b>&nbsp;ms</span>` : ""}</div>`;
 
+    const allow = doc.settings.allowedFamilies;
     const build = ratePct => nextIsDeload
       ? E.deloadWeek({ prevLoadWeek: prevLoad, startDate, weekNum: nextNum })
       : E.planNextWeek({
           prevLoadWeek: prevLoad, chosenRate: ratePct / 100, settings: doc.settings,
-          startDate, weekNum: nextNum,
+          startDate, weekNum: nextNum, logs: doc.logs,
           quality: { run: qs.run, bike: qs.bike }, noQuality: rec.noQuality,
-          runQTemplate: E.qualityTemplateFor(doc.weeks, "run"),
-          bikeQTemplate: E.qualityTemplateFor(doc.weeks, "bike"),
+          runQTemplate: E.qualityTemplateFor(doc.weeks, "run", allow),
+          bikeQTemplate: E.qualityTemplateFor(doc.weeks, "bike", allow),
         });
 
     const previewRows = nw => nw.sessions.filter(s => s.sport !== "rest").map(s => {
@@ -964,84 +1183,354 @@ function ridgeDetail(vol) {
   return `<div class="callout">${fmtShort(p.start)} – ${fmtShort(E.addDays(p.start, 6))} · ${parts.join(" · ")}</div>`;
 }
 
+let lineSel = {}; // cardId -> {si,pi} | null
+const X0 = "2025-01-01";
+const dnum = iso => Math.round((E.parseISO(iso) - E.parseISO(X0)) / 864e5);
+const byDate = (a, b) => (a.date < b.date ? -1 : 1);
+
+const CARD_LABEL = {
+  volume: "Weekly volume", trainingLoad: "Training load", weight: "Weight",
+  pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
+  vo2: "VO₂ max", balance: "Aerobic / anaerobic", runSpeed: "Running speed by type",
+  rideSpeed: "Ride speed", ascent: "Climbing / ascent", paceVsRpe: "Pace vs RPE",
+  efficiency: "Efficiency trend", rpeHeatmap: "RPE calendar", rpeByType: "RPE by type",
+  consistency: "Consistency",
+};
+
+function lineDetail(id, series, fmtVal) {
+  const sel = lineSel[id];
+  const p = sel && series[sel.si] && series[sel.si].points[sel.pi];
+  if (!p) return "";
+  return `<div class="callout">${fmtShort(p.date)} · ${fmtVal(p, sel.si)}</div>`;
+}
+
 function renderProgress() {
   const page = $('[data-page="progress"]');
   const t = todayISO();
-  const vol = E.weeklyVolume({ logs: doc.logs, weeks: doc.weeks, todayISO: t, n: 12 });
+  const B = bounds();
 
-  const wi = doc.weighIns;
-  const lastW = wi.length ? wi[wi.length - 1] : null;
-  const vo2 = doc.vo2History;
-  const lastV = vo2.length ? vo2[vo2.length - 1] : null;
+  const wi = doc.weighIns, lastW = wi.length ? wi[wi.length - 1] : null;
+  const vo2 = doc.vo2History, lastV = vo2.length ? vo2[vo2.length - 1] : null;
   const vo2AtTarget = lastW && lastV ? E.vo2AtTargetWeight(lastV.value, lastW.kg, doc.settings.targetWeightKg) : null;
+  const train = doc.logs.filter(l => (l.sport === "run" || l.sport === "bike") && l.source !== "seed" || l.source === "csv" || l.source === "seed").filter(l => l.sport === "run" || l.sport === "bike");
 
-  const dayOff = (iso, from) => Math.round((E.parseISO(iso) - E.parseISO(from)) / 864e5);
-  const wPts = wi.map(w => ({ x: dayOff(w.date, wi[0].date), y: w.kg }));
-  const vPts = vo2.map(v => ({ x: dayOff(v.date, vo2[0].date), y: v.value }));
-
+  // ----- data series -----
+  const wPts = wi.map(w => ({ x: dnum(w.date), y: w.kg, date: w.date }));
+  const vPts = vo2.map(v => ({ x: dnum(v.date), y: v.value, date: v.date }));
   const easyRuns = doc.logs.filter(l => l.sport === "run" && (l.min || 0) >= 20 && l.km > 0 &&
-    l.avgHR != null && l.avgHR >= 105 && l.avgHR <= 155).sort((a, b) => (a.date < b.date ? -1 : 1));
-  const pPts = easyRuns.map(l => ({ x: dayOff(l.date, easyRuns[0]?.date || t), y: l.min * 60 / l.km }));
-  const hint = E.paceHint(doc.logs, bounds(), 2, doc.settings.easyPace);
+    l.avgHR != null && l.avgHR >= 105 && l.avgHR <= 155).sort(byDate);
+  const pPts = easyRuns.map(l => ({ x: dnum(l.date), y: l.min * 60 / l.km, date: l.date }));
+  const hint = E.paceHint(doc.logs, B, 2, doc.settings.easyPace);
 
+  const speedPts = (sport, types) => doc.logs.filter(l => l.sport === sport && l.km > 0 && l.min > 0 &&
+    (!types || types.includes(l.type || "easy"))).sort(byDate)
+    .map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date }));
+  const ascentPts = doc.logs.filter(l => l.sport === "bike" && l.ascent > 0).sort(byDate)
+    .map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date }));
+  const rpeLogs = doc.logs.filter(l => l.rpe != null && (l.sport === "run" || l.sport === "bike")).sort(byDate);
+
+  const vol = E.weeklyVolume({ logs: doc.logs, weeks: doc.weeks, todayISO: t, n: 12 });
+  const intensity = E.weeklyIntensity({ logs: doc.logs, bounds: B, todayISO: t, n: 8 });
+  const load = E.trainingLoad({ logs: doc.logs, bounds: B, todayISO: t, n: 10 });
   const cons = E.consistency({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
+  const bests = E.personalBests({ logs: doc.logs, manualBests: doc.manualBests });
 
-  page.innerHTML = `
-    <h1 class="page">Progress</h1>
-    <div class="card pc">
-      <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow" style="letter-spacing:.04em">${ridgeSel == null ? "LAST 12 WEEKS · TAP A WEEK" : "TAP AGAIN TO CLEAR"}</span></div>
-      ${C.ridgeChart(vol, { selected: ridgeSel })}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span><span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span><span><i style="background:#2a3744"></i>deload cols</span></div>
-      ${ridgeDetail(vol)}
-    </div>
-    <div class="card pc">
-      <div class="hd"><span class="eyebrow">Weight</span></div>
-      <div class="stat"><span class="midnum">${lastW ? lastW.kg.toFixed(1) : "—"}</span><span class="unit">kg · ${lastW ? fmtShort(lastW.date) : ""}</span><span style="flex:1"></span><span class="unit" style="color:var(--sand)">target ${doc.settings.targetWeightKg.toFixed(1)}</span></div>
-      ${wPts.length >= 2 ? C.lineChart(wPts, { emaAlpha: 0.25, target: doc.settings.targetWeightKg, targetLabel: `${doc.settings.targetWeightKg.toFixed(0)} kg`, xLabels: [fmtShort(wi[0].date), fmtShort(lastW.date)] }) : `<p class="row-sub">Two weigh-ins start the trend.</p>`}
-      ${vo2AtTarget ? `<div class="callout">Same fitness at ${doc.settings.targetWeightKg.toFixed(0)} kg → <b>VO₂ ≈ ${vo2AtTarget}</b> (${lastV.value} today). Lighter chassis, same engine.</div>` : ""}
-      <button class="btn ghost mini" id="pg-weigh">Add weigh-in</button>
-    </div>
-    <div class="card pc">
-      <div class="hd"><span class="eyebrow">Pace at easy HR</span><span class="chip zc2" style="font-size:11px">Z2 · ${E.zoneMid(bounds(), 2)} bpm</span></div>
+  // rolling efficiency (running speed ÷ RPE)
+  const effLogs = doc.logs.filter(l => l.sport === "run" && l.rpe && l.km > 0 && l.min > 0).sort(byDate);
+  const rollEff = (days) => effLogs.map(l => {
+    const win = effLogs.filter(x => x.date <= l.date && x.date >= E.addDays(l.date, -days));
+    const vals = win.map(x => (x.km * 60 / x.min) / x.rpe);
+    return { x: dnum(l.date), y: vals.reduce((a, b) => a + b, 0) / vals.length, date: l.date };
+  });
+
+  // ----- card renderers -----
+  const wrap = (id, inner) => `<div class="chartwrap" data-card="${id}">${inner}</div>`;
+  const tip = id => lineSel[id] ? "TAP AGAIN TO CLEAR" : "TAP A POINT";
+
+  const CARDS = {
+    volume: () => `
+      <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow tapx">${ridgeSel == null ? "LAST 12 · TAP A WEEK" : "TAP AGAIN TO CLEAR"}</span></div>
+      ${wrap("volume", C.ridgeChart(vol, { selected: ridgeSel }))}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span><span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
+      ${ridgeDetail(vol)}`,
+
+    trainingLoad: () => {
+      const ld = load.weeks.map(w => ({ x: dnum(w.start), y: w.load, date: w.start }));
+      const statusTxt = { undertraining: "Undertraining", optimal: "Optimal", overreaching: "Overreaching", "high-risk": "High risk", building: "Building base" }[load.status];
+      const statusCol = load.status === "high-risk" ? "var(--bad)" : load.status === "optimal" ? "var(--cy)" : "var(--sand)";
+      return `
+      <div class="hd"><span class="eyebrow">Training load</span>${load.acwr != null ? `<span class="chip" style="color:${statusCol};border-color:${statusCol}33">${statusTxt} · ${load.acwr.toFixed(2)}</span>` : `<span class="eyebrow tapx">build a baseline</span>`}</div>
+      ${ld.filter(p => p.y > 0).length >= 2
+        ? wrap("trainingLoad", C.lineChart(ld, { axis: true, taps: true, color: "#8e9df8", selected: lineSel.trainingLoad, xLabels: [fmtShort(load.weeks[0].start), fmtShort(load.weeks[load.weeks.length - 1].start)] }))
+        : `<p class="row-sub">Log a few sessions and your acute-vs-chronic load appears here, flagging over- and under-training.</p>`}
+      ${lineDetail("trainingLoad", [{ points: ld }], p => `load ${Math.round(p.y)}`)}
+      ${load.acwr != null ? `<div class="callout">7-day load <b>${load.acute}</b> vs 4-week baseline <b>${load.chronic}</b>. The sweet spot is 0.8–1.3.</div>` : ""}`;
+    },
+
+    weight: () => `
+      <div class="hd"><span class="eyebrow">Weight</span><button class="eyebrow tapx lk" id="pg-tw">target ${doc.settings.targetWeightKg.toFixed(1)} ✎</button></div>
+      <div class="stat"><span class="midnum">${lastW ? lastW.kg.toFixed(1) : "—"}</span><span class="unit">kg · ${lastW ? fmtShort(lastW.date) : ""}</span></div>
+      ${wPts.length >= 2 ? wrap("weight", C.lineChart(wPts, { axis: true, taps: true, emaAlpha: 0.25, fmtY: v => v.toFixed(0), target: doc.settings.targetWeightKg, targetLabel: `${doc.settings.targetWeightKg.toFixed(0)} kg`, selected: lineSel.weight, xLabels: [fmtShort(wi[0].date), fmtShort(lastW.date)] })) : `<p class="row-sub">Two weigh-ins start the trend.</p>`}
+      ${lineDetail("weight", [{ points: wPts }], p => `${p.y.toFixed(1)} kg`)}
+      ${vo2AtTarget ? `<div class="callout">Same fitness at ${doc.settings.targetWeightKg.toFixed(0)} kg → <b>VO₂ ≈ ${vo2AtTarget}</b>. Lighter chassis, same engine.</div>` : ""}
+      <button class="btn ghost mini" id="pg-weigh">Add weigh-in</button>`,
+
+    pace: () => `
+      <div class="hd"><span class="eyebrow">Pace at easy HR</span><span class="chip zc2" style="font-size:11px">Z2 · ${E.zoneMid(B, 2)} bpm</span></div>
       ${hint.learned
         ? `<div class="stat"><span class="midnum">${E.fmtPace((hint.lo + hint.hi) / 2)}</span><span class="unit">/km · learned from ${hint.n} easy runs</span></div>`
         : `<div class="stat"><span class="midnum" style="color:var(--sub)">${E.fmtPace(hint.lo)}–${E.fmtPace(hint.hi)}</span><span class="unit">/km · ${hint.manual ? "your pace setting" : "starting estimate"}</span></div>`}
       ${pPts.length >= 2
-        ? C.lineChart(pPts, { height: 110, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)], lastLabel: E.fmtPace(pPts[pPts.length - 1].y), invert: true })
-        : `<p class="row-sub">Run easy (Z2, ≤ ${bounds()[1].hi} bpm for 20+ min) and this chart wakes up — same heart rate getting faster is the clearest rebuild signal.</p>`}
-    </div>
-    <div class="card pc">
+        ? wrap("pace", C.lineChart(pPts, { height: 116, axis: true, taps: true, invert: true, fmtY: v => E.fmtPace(v), selected: lineSel.pace, xLabels: [fmtShort(easyRuns[0].date), fmtShort(easyRuns[easyRuns.length - 1].date)] }))
+        : `<p class="row-sub">Run easy (Z2, ≤ ${B[1].hi} bpm for 20+ min) and this chart wakes up.</p>`}
+      ${lineDetail("pace", [{ points: pPts }], p => `${E.fmtPace(p.y)} /km`)}`,
+
+    vo2: () => `
       <div class="hd"><span class="eyebrow">VO₂ max · Garmin</span></div>
       <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
-      ${vPts.length >= 2 ? C.lineChart(vPts, { height: 96, color: "#8e9df8", xLabels: [fmtShort(vo2[0].date), fmtShort(lastV.date)] }) : ""}
-      <button class="btn ghost mini" id="pg-vo2">Add reading</button>
-    </div>
-    <div class="card pc">
-      <div class="hd"><span class="eyebrow">Consistency</span><span class="eyebrow" style="letter-spacing:.04em;${cons.streak ? "color:var(--cy)" : ""}">${cons.streak ? `STREAK · ${cons.streak} WEEK${cons.streak > 1 ? "S" : ""} ≥ 80 %` : "LAST 12 PLAN WEEKS"}</span></div>
-      ${cons.cells.length ? `<div class="cells">${C.consistencyCells(cons.cells)}</div>` : `<p class="row-sub">Your first week is in progress — this strip fills as weeks complete.</p>`}
-    </div>`;
+      ${vPts.length >= 2 ? wrap("vo2", C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vo2[0].date), fmtShort(lastV.date)] })) : ""}
+      ${lineDetail("vo2", [{ points: vPts }], p => `${p.y} ml/kg/min`)}
+      <button class="btn ghost mini" id="pg-vo2">Add reading</button>`,
 
+    balance: () => {
+      const w = intensity[intensity.length - 1];
+      const pts = intensity.filter(x => x.total > 0).map(x => ({ x: dnum(x.start), y: x.hardPct * 100, date: x.start }));
+      return `
+      <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w && w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
+      ${pts.length >= 2 ? wrap("balance", C.lineChart(pts, { axis: true, taps: true, color: "var(--sand)", target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
+      ${lineDetail("balance", [{ points: pts }], p => `${Math.round(p.y)}% hard`)}
+      ${w && w.total ? `<div class="callout">${Math.round(w.easyPct * 100)}% easy / ${Math.round(w.hardPct * 100)}% hard this week. ${w.hardPct > 0.35 ? "Skewing hard — add easy volume." : w.hardPct < 0.1 ? "Mostly easy — one quality session would sharpen you." : "Near the 80/20 sweet spot."}</div>` : ""}`;
+    },
+
+    runSpeed: () => {
+      const easy = speedPts("run", ["easy", "long"]).map(p => ({ ...p, y: p.y }));
+      const tempo = speedPts("run", ["tempo", "intervals", "hills"]);
+      const ser = [];
+      if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
+      if (tempo.length) ser.push({ points: tempo, color: "var(--sand)" });
+      return `
+      <div class="hd"><span class="eyebrow">Running speed by type</span><span class="eyebrow tapx">km/h</span></div>
+      ${ser.some(s => s.points.length >= 2) ? wrap("runSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.runSpeed })) : `<p class="row-sub">Log runs with distance to compare your easy and hard-day speeds over time.</p>`}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>easy</span><span><i style="background:var(--sand)"></i>tempo/hard</span></div>
+      ${lineDetail("runSpeed", ser, (p) => `${p.y.toFixed(1)} km/h`)}`;
+    },
+
+    rideSpeed: () => {
+      const pts = speedPts("bike", ["easy", "long"]);
+      return `
+      <div class="hd"><span class="eyebrow">Ride speed</span><span class="eyebrow tapx">flat · km/h</span></div>
+      ${pts.length >= 2 ? wrap("rideSpeed", C.lineChart(pts, { axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.rideSpeed, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log easy rides with distance to track your flat-terrain speed.</p>`}
+      ${lineDetail("rideSpeed", [{ points: pts }], p => `${p.y.toFixed(1)} km/h`)}`;
+    },
+
+    ascent: () => `
+      <div class="hd"><span class="eyebrow">Climbing / ascent</span><span class="eyebrow tapx">m per ride</span></div>
+      ${ascentPts.length >= 2 ? wrap("ascent", C.lineChart(ascentPts, { axis: true, taps: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.ascent, xLabels: [fmtShort(ascentPts[0].date), fmtShort(ascentPts[ascentPts.length - 1].date)] })) : `<p class="row-sub">Log the ascent on your rides to watch your climbing capacity grow.</p>`}
+      ${lineDetail("ascent", [{ points: ascentPts }], p => `${Math.round(p.y)} m climbed`)}`,
+
+    paceVsRpe: () => {
+      const sp = doc.logs.filter(l => l.sport === "run" && l.km > 0 && l.min > 0 && l.rpe).sort(byDate);
+      const speed = sp.map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date }));
+      const rpe = sp.map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date }));
+      const ser = [{ points: speed, color: "var(--cy)" }, { points: rpe, color: "var(--sand)" }];
+      return `
+      <div class="hd"><span class="eyebrow">Pace vs RPE</span><span class="eyebrow tapx">efficiency</span></div>
+      ${speed.length >= 2 ? wrap("paceVsRpe", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.paceVsRpe })) : `<p class="row-sub">Log runs with distance and RPE — when speed climbs while RPE stays flat, you're getting more efficient.</p>`}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>speed km/h</span><span><i style="background:var(--sand)"></i>RPE</span></div>
+      ${lineDetail("paceVsRpe", ser, (p, si) => si === 0 ? `${p.y.toFixed(1)} km/h` : `RPE ${p.y}`)}`;
+    },
+
+    efficiency: () => {
+      const e7 = rollEff(7), e28 = rollEff(28);
+      const ser = [];
+      if (e28.length) ser.push({ points: e28, color: "#8e9df8" });
+      if (e7.length) ser.push({ points: e7, color: "var(--cy)" });
+      return `
+      <div class="hd"><span class="eyebrow">Running efficiency</span><span class="eyebrow tapx">speed ÷ RPE</span></div>
+      ${e7.length >= 2 ? wrap("efficiency", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(1), selected: lineSel.efficiency })) : `<p class="row-sub">Log runs with distance and RPE — a rising line means more speed for the same effort.</p>`}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>7-day</span><span><i style="background:#8e9df8"></i>28-day</span></div>
+      ${lineDetail("efficiency", ser, p => p.y.toFixed(2))}`;
+    },
+
+    rpeHeatmap: () => {
+      const cells = rpeLogs.slice(-56).map(l => ({
+        band: E.rpeDeviation(l, doc.logs).band,
+        title: `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`,
+      }));
+      return `
+      <div class="hd"><span class="eyebrow">RPE calendar</span><span class="eyebrow tapx">felt vs expected</span></div>
+      ${cells.length ? `<div class="heat">${C.heatmapCells(cells)}</div>
+        <div class="legend2"><span><i style="background:rgba(86,219,232,.55)"></i>easier</span><span><i style="background:rgba(143,161,179,.30)"></i>normal</span><span><i style="background:rgba(232,107,107,.6)"></i>harder</span></div>
+        <div class="callout" id="heat-detail" data-cells='${esc(JSON.stringify(rpeLogs.slice(-56).map(l => `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`)))}'>Tap a square to see the session.</div>`
+        : `<p class="row-sub">Add an RPE when you log — each workout becomes a square here, red when it felt harder than it should.</p>`}`;
+    },
+
+    rpeByType: () => {
+      const colors = { easy: "var(--cy)", long: "#7fd6c0", tempo: "var(--sand)", intervals: "#e89b5a", hills: "#e86b6b", climb: "#8e9df8" };
+      const ser = [];
+      for (const ty of ["easy", "long", "tempo", "intervals", "hills", "climb"]) {
+        const pts = rpeLogs.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty }));
+        if (pts.length) ser.push({ points: pts, color: colors[ty] });
+      }
+      return `
+      <div class="hd"><span class="eyebrow">RPE by type</span><span class="eyebrow tapx">1–10</span></div>
+      ${ser.some(s => s.points.length >= 2) ? wrap("rpeByType", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.rpeByType })) : `<p class="row-sub">Tag your logs with a type and RPE to see each kind's effort trend on its own.</p>`}
+      ${lineDetail("rpeByType", ser, p => `${p.ty} · RPE ${p.y}`)}`;
+    },
+
+    consistency: () => `
+      <div class="hd"><span class="eyebrow">Consistency</span><span class="eyebrow" style="letter-spacing:.04em;${cons.streak ? "color:var(--cy)" : ""}">${cons.streak ? `STREAK · ${cons.streak} WK${cons.streak > 1 ? "S" : ""} ≥ 80 %` : "LAST 12 PLAN WEEKS"}</span></div>
+      ${cons.cells.length ? `<div class="cells">${C.consistencyCells(cons.cells)}</div>` : `<p class="row-sub">This strip fills as plan weeks complete.</p>`}`,
+
+    bests: () => `
+      <div class="hd"><span class="eyebrow">Personal bests</span><button class="eyebrow tapx lk" id="pg-pb">add ＋</button></div>
+      ${bests.length ? `<div class="pbs">${bests.map(p => `<button class="pb" ${p.logId ? `data-pbid="${p.logId}"` : ""}>
+        <span class="pl">${p.label}</span><span class="pv">${fmtBest(p)}</span><span class="pd">${p.manual ? "manual" : fmtShort(p.date)}</span></button>`).join("")}</div>`
+        : `<p class="row-sub">Your records appear as you log — biggest climb, longest ride, fastest 5K/10K/half/marathon, 40K.</p>`}`,
+
+    coach: () => {
+      const ins = E.coachInsights({ doc, todayISO: t }).slice(0, 2);
+      return `
+      <div class="hd"><span class="eyebrow">Coach</span><button class="eyebrow tapx lk" id="pg-coach">open →</button></div>
+      ${ins.length ? ins.map(i => coachMini(i)).join("") : `<p class="row-sub">Your coach is gathering data — insights appear as you log workouts and weigh-ins.</p>`}`;
+    },
+  };
+
+  const order = doc.settings.progressCards.filter(c => c.on && CARDS[c.id]);
+  page.innerHTML = `
+    <div class="phead"><h1 class="page">Progress</h1><button class="iconbtn" id="pg-customize" aria-label="Customize">${ICONS_UI.sliders}</button></div>
+    ${order.map(c => `<div class="card pc">${CARDS[c.id]()}</div>`).join("") ||
+      `<p class="row-sub" style="padding:20px 4px">No cards selected. Tap the sliders icon to choose what to show.</p>`}`;
+
+  // ----- wiring -----
+  page.querySelector("#pg-customize").addEventListener("click", openProgressCustomize);
   page.querySelectorAll("[data-wi]").forEach(r => r.addEventListener("click", () => {
-    ridgeSel = ridgeSel === +r.dataset.wi ? null : +r.dataset.wi;
+    ridgeSel = ridgeSel === +r.dataset.wi ? null : +r.dataset.wi; renderProgress();
+  }));
+  page.querySelectorAll("[data-si]").forEach(r => r.addEventListener("click", () => {
+    const card = r.closest(".chartwrap")?.dataset.card; if (!card) return;
+    const si = +r.dataset.si, pi = +r.dataset.pi;
+    const cur = lineSel[card];
+    lineSel[card] = (cur && cur.si === si && cur.pi === pi) ? null : { si, pi };
     renderProgress();
   }));
-  $("#pg-weigh").addEventListener("click", () => openValueSheet({
+  const heatDetail = page.querySelector("#heat-detail");
+  page.querySelectorAll("[data-hi]").forEach(c => c.addEventListener("click", () => {
+    try { const arr = JSON.parse(heatDetail.dataset.cells); heatDetail.textContent = arr[+c.dataset.hi] || ""; } catch {}
+  }));
+  page.querySelector("#pg-weigh")?.addEventListener("click", () => openValueSheet({
     title: "Add weigh-in", label: "Weight", suffix: "kg", step: "0.1",
     value: lastW ? lastW.kg : "", withDate: true,
-    onSave: (v, date) => {
-      doc.weighIns = doc.weighIns.filter(w => w.date !== date);
-      doc.weighIns.push({ date, kg: v });
-      doc.weighIns.sort((a, b) => (a.date < b.date ? -1 : 1));
-    },
+    onSave: (v, date) => { doc.weighIns = doc.weighIns.filter(w => w.date !== date); doc.weighIns.push({ date, kg: v }); doc.weighIns.sort(byDate); },
   }));
-  $("#pg-vo2").addEventListener("click", () => openValueSheet({
+  page.querySelector("#pg-vo2")?.addEventListener("click", () => openValueSheet({
     title: "Add VO₂ reading", label: "VO₂ max", suffix: "ml/kg/min", step: "0.1",
     value: lastV ? lastV.value : "", withDate: true,
-    onSave: (v, date) => {
-      doc.vo2History = doc.vo2History.filter(x => x.date !== date);
-      doc.vo2History.push({ date, value: v });
-      doc.vo2History.sort((a, b) => (a.date < b.date ? -1 : 1));
-    },
+    onSave: (v, date) => { doc.vo2History = doc.vo2History.filter(x => x.date !== date); doc.vo2History.push({ date, value: v }); doc.vo2History.sort(byDate); },
+  }));
+  page.querySelector("#pg-tw")?.addEventListener("click", () => openValueSheet({
+    title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: doc.settings.targetWeightKg, min: 40, max: 150,
+    onSave: v => { doc.settings.targetWeightKg = v; },
+  }));
+  page.querySelector("#pg-pb")?.addEventListener("click", openAddBest);
+  page.querySelector("#pg-coach")?.addEventListener("click", () => setTab("coach"));
+  page.querySelectorAll("[data-pbid]").forEach(b => b.addEventListener("click", () => {
+    const log = doc.logs.find(l => l.id === b.dataset.pbid); if (!log) return;
+    openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
+  }));
+}
+
+/* Format a personal-best value for display. */
+function fmtBest(p) {
+  if (p.unit === "time") { const s = Math.round(p.value); const m = Math.floor(s / 60), ss = s % 60, h = Math.floor(m / 60);
+    return h ? `${h}:${String(m % 60).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`; }
+  if (p.unit === "min") return fmtDur(Math.round(p.value));
+  if (p.unit === "m") return `${Math.round(p.value)} m`;
+  return `${(+p.value).toFixed(1)} km`;
+}
+
+const PB_FIELDS = [
+  ["run5k", "5K time", "time"], ["run10k", "10K time", "time"], ["runHalf", "Half marathon", "time"],
+  ["runFull", "Marathon", "time"], ["bike40k", "40K ride", "time"], ["biggestAscent", "Biggest climb", "m"],
+  ["longestRide", "Longest ride", "km"], ["longestRun", "Longest run", "km"],
+];
+function openAddBest() {
+  let key = "run5k";
+  const sheet = openSheet(`
+    <div class="sh-title">Add a personal best</div>
+    <div class="sh-sub">Record one from before you started logging. Time as mm:ss or h:mm:ss.</div>
+    <div class="frow"><span class="l">Record</span>
+      <select id="pb-key" class="sel">${PB_FIELDS.map(([k, lab]) => `<option value="${k}">${lab}</option>`).join("")}</select></div>
+    <div class="frow"><span class="l">Value</span><input type="text" id="pb-val" placeholder="e.g. 22:30 or 1240"><span class="suffix" id="pb-unit">mm:ss</span></div>
+    <div class="frow"><span class="l">Date</span><input type="date" id="pb-date" value="${todayISO()}" max="${todayISO()}"></div>
+    <button class="btn" id="pb-save">Save record</button>
+  `);
+  const unitFor = k => (PB_FIELDS.find(f => f[0] === k)[2] === "time" ? "mm:ss" : PB_FIELDS.find(f => f[0] === k)[2]);
+  sheet.querySelector("#pb-key").addEventListener("change", e => { key = e.target.value; sheet.querySelector("#pb-unit").textContent = unitFor(key); });
+  sheet.querySelector("#pb-save").addEventListener("click", () => {
+    const field = PB_FIELDS.find(f => f[0] === key);
+    const raw = sheet.querySelector("#pb-val").value.trim();
+    let value = null;
+    if (field[2] === "time") {
+      const m = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/);
+      if (m) value = (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]);
+    } else value = num(raw);
+    if (value == null) { toast("Enter a value (time as mm:ss)"); return; }
+    const date = sheet.querySelector("#pb-date").value || todayISO();
+    closeOverlay();
+    persist(() => {
+      doc.manualBests = (doc.manualBests || []).filter(b => b.key !== key);
+      doc.manualBests.push({ key, value, date });
+    });
+    toast("Record saved ✓");
+  });
+}
+
+function openProgressCustomize() {
+  const cards = doc.settings.progressCards;
+  const sheet = openSheet(`
+    <div class="sh-title">Customize Progress</div>
+    <div class="sh-sub">Toggle cards on or off, drag the handle to reorder.</div>
+    <div id="cust-list" class="cust-list">
+      ${cards.map(c => `<div class="cust-row" data-id="${c.id}" draggable="false">
+        <span class="drag" data-drag>⋮⋮</span>
+        <span class="l">${CARD_LABEL[c.id] || c.id}</span>
+        <span class="switch ${c.on ? "on" : ""}" data-toggle></span>
+      </div>`).join("")}
+    </div>
+    <button class="btn" id="cust-done">Done</button>
+  `);
+  const list = sheet.querySelector("#cust-list");
+  list.querySelectorAll("[data-toggle]").forEach(sw => sw.addEventListener("click", () => {
+    const id = sw.closest(".cust-row").dataset.id;
+    const c = cards.find(x => x.id === id); c.on = !c.on;
+    sw.classList.toggle("on", c.on);
+  }));
+  wireReorder(list, () => {
+    const ids = [...list.querySelectorAll(".cust-row")].map(r => r.dataset.id);
+    doc.settings.progressCards = ids.map(id => cards.find(c => c.id === id));
+  });
+  sheet.querySelector("#cust-done").addEventListener("click", () => { closeOverlay(); persist(); });
+}
+
+/* Pointer-based drag reordering of a vertical list via the .drag handle. */
+function wireReorder(list, onChange) {
+  let drag = null, startY = 0, rows = [];
+  list.querySelectorAll("[data-drag]").forEach(h => h.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    drag = h.closest(".cust-row"); startY = e.clientY; rows = [...list.querySelectorAll(".cust-row")];
+    drag.classList.add("dragging"); h.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const y = ev.clientY;
+      const after = rows.find(r => r !== drag && y < r.getBoundingClientRect().top + r.offsetHeight / 2);
+      if (after && after !== drag.nextSibling) list.insertBefore(drag, after);
+      else if (!after && rows[rows.length - 1] !== drag) list.appendChild(drag);
+    };
+    const up = ev => {
+      h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up);
+      drag.classList.remove("dragging"); drag = null; onChange();
+    };
+    h.addEventListener("pointermove", move); h.addEventListener("pointerup", up);
   }));
 }
 
@@ -1049,7 +1538,7 @@ function openValueSheet({ title, label, suffix, step = "1", value = "", withDate
   const sheet = openSheet(`
     <div class="sh-title">${title}</div>
     ${withDate ? `<div class="frow"><span class="l">Date</span><input type="date" id="vs-date" value="${todayISO()}" max="${todayISO()}"></div>` : ""}
-    <div class="frow"><span class="l">${label}</span><input type="number" step="${step}" inputmode="decimal" id="vs-val" value="${value}" placeholder="—">${suffix ? `<span class="suffix">${suffix}</span>` : ""}</div>
+    <div class="frow"><span class="l">${label}</span><input type="text" step="${step}" inputmode="decimal" id="vs-val" value="${value}" placeholder="—">${suffix ? `<span class="suffix">${suffix}</span>` : ""}</div>
     <button class="btn" id="vs-save">Save</button>
     ${allowClear ? `<button class="btn ghost" id="vs-clear">Clear value</button>` : ""}
   `);
@@ -1096,10 +1585,17 @@ function renderSettings() {
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
       <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
       <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
+      <button class="srow" id="st-rest"><span class="l">Rest day<span>the week reflows around your day off</span></span><span class="v">${DAY_LABEL[st.restDay] || "Sunday"}</span><span class="chev">›</span></button>
+      <button class="srow" id="st-climb"><span class="l">Climb target<span>base ascent for climbing rides</span></span><span class="v">${st.climbBaseAscent} m</span><span class="chev">›</span></button>
       <button class="srow" id="st-pace"><span class="l">Easy pace<span>your run pace hint until the app has learned</span></span><span class="v ${st.easyPace ? "" : "add"}">${st.easyPace ? `${E.fmtPace(st.easyPace.lo)}–${E.fmtPace(st.easyPace.hi)}` : "Auto"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
         <span class="laychips">${E.DAYS.map(d => `<i class="${lay[d] === "run" ? "lr" : lay[d] === "rest" ? "lx" : "lb"}">${d[0].toUpperCase()}</i>`).join("")}</span><span class="chev">›</span></button>
+    </div></div>
+    <div class="group"><div class="gh">Workouts allowed</div><div class="scard">
+      ${WORKOUT_TOGGLES.map(([key, label, sub]) => `
+        <button class="srow tog" data-fam="${key}"><span class="l">${label}<span>${sub}</span></span>
+          <span class="switch ${st.allowedFamilies[key] !== false ? "on" : ""}"></span></button>`).join("")}
     </div></div>
     <div class="group"><div class="gh">Data — yours, on this phone</div><div class="scard">
       <button class="srow" id="st-export"><span class="l">Export JSON<span>${exportDays == null ? "never exported yet" : exportDays === 0 ? "exported today" : `last export · ${exportDays} day${exportDays > 1 ? "s" : ""} ago`}</span></span><span class="v add">Export</span></button>
@@ -1142,7 +1638,20 @@ function renderSettings() {
     title: "Deload cadence", label: "Every Nth week", value: st.deloadEvery, min: 2, max: 8,
     onSave: v => { st.deloadEvery = Math.round(v); },
   }));
+  $("#st-rest").addEventListener("click", openRestDaySheet);
+  $("#st-climb").addEventListener("click", () => openValueSheet({
+    title: "Climb target", label: "Base ascent", suffix: "m", step: "50", value: st.climbBaseAscent, min: 100, max: 3000,
+    onSave: v => { st.climbBaseAscent = Math.round(v / 10) * 10; toast("Climb target updated"); },
+  }));
   $("#st-pace").addEventListener("click", openPaceSheet);
+  page.querySelectorAll("[data-fam]").forEach(b => b.addEventListener("click", () => {
+    const key = b.dataset.fam;
+    const turningOff = st.allowedFamilies[key] !== false;
+    persist(() => {
+      st.allowedFamilies = { ...st.allowedFamilies, [key]: !turningOff };
+      applyAllowedToCurrentWeek();
+    });
+  }));
   $("#st-quality").addEventListener("click", () => {
     const qs = qstate();
     if (st.qualityOverride) {
@@ -1203,9 +1712,9 @@ function openCustomZones() {
     <div class="sh-title">Customize zones</div>
     <div class="sh-sub">Your bpm bounds — overrides the formula everywhere</div>
     ${b.map((z, i) => `<div class="frow"><span class="chip zc${z.z}" style="flex:none">Z${z.z}</span>
-      <input type="number" inputmode="numeric" data-lo="${i}" value="${z.lo}" style="text-align:center">
+      <input type="text" inputmode="numeric" data-lo="${i}" value="${z.lo}" style="text-align:center">
       <span class="suffix">–</span>
-      <input type="number" inputmode="numeric" data-hi="${i}" value="${z.hi}" style="text-align:center"></div>`).join("")}
+      <input type="text" inputmode="numeric" data-hi="${i}" value="${z.hi}" style="text-align:center"></div>`).join("")}
     <button class="btn" id="cz-save">Use these zones</button>
   `);
   sheet.querySelector("#cz-save").addEventListener("click", () => {
@@ -1350,32 +1859,61 @@ function importJSON(file) {
   $("#st-file-json").value = "";
 }
 
+const csvLog = r => ({ id: S.uid(), date: r.date, time: r.time, sport: r.sport, min: r.min,
+                       km: r.km ?? undefined, avgHR: r.avgHR ?? undefined,
+                       ascent: r.ascent ?? undefined, note: r.note || undefined, source: "csv" });
+
 function importCSV(file) {
   if (!file) return;
   file.text().then(text => {
     const parsed = E.parseGarminCSV(text);
     if (parsed.error) { openModal("Can't import", esc(parsed.error), [{ label: "OK", cls: "ghost" }]); return; }
-    const { fresh, dupes } = E.dedupeImports(parsed.rows, doc.logs);
+    const matched = E.importMatches(parsed.rows, doc.logs);
+    const clean = matched.filter(m => !m.matches.length).map(m => m.row);
+    const conflicts = matched.filter(m => m.matches.length);
     const c = parsed.counts;
-    const freshC = { run: fresh.filter(r => r.sport === "run").length, bike: fresh.filter(r => r.sport === "bike").length, other: fresh.filter(r => r.sport === "other").length };
-    openModal("Garmin CSV",
-      `Add <b>${fresh.length}</b> activities (${freshC.run} runs · ${freshC.bike} rides · ${freshC.other} other)?<br>` +
-      `Skipping ${dupes.length} duplicate${dupes.length === 1 ? "" : "s"}${c.bad ? ` · ${c.bad} unreadable row${c.bad === 1 ? "" : "s"}` : ""}. Runs and rides count toward plan weeks.`, [
-      {
-        label: `Add ${fresh.length} ${fresh.length === 1 ? "activity" : "activities"}`, fn: () => {
-          persist(() => {
-            for (const r of fresh) {
-              doc.logs.push({ id: S.uid(), date: r.date, time: r.time, sport: r.sport, min: r.min,
-                              km: r.km ?? undefined, avgHR: r.avgHR ?? undefined,
-                              note: r.note || undefined, source: "csv" });
-            }
-            doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
-          });
-          toast(`Added ${fresh.length} · skipped ${dupes.length}`);
-        },
-      },
-      { label: "Cancel", cls: "ghost" },
-    ]);
+    // each conflict gets a per-row choice; default = skip (keep what you have)
+    const choice = {}; // index in `conflicts` → "skip" | "merge" | "both"
+    conflicts.forEach((_, i) => { choice[i] = "skip"; });
+
+    const fmtRow = r => `${r.sport === "bike" ? "Ride" : "Run"} · ${r.min} min${r.km ? ` · ${r.km} km` : ""}${r.ascent ? ` · ${r.ascent} m↑` : ""}`;
+    const body = `
+      <div class="sh-title">Import Garmin CSV</div>
+      <div class="sh-sub">${clean.length} new${conflicts.length ? ` · ${conflicts.length} look like duplicates of what you logged` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.</div>
+      ${conflicts.length ? `<div class="sh-sub" style="margin-top:12px;text-transform:uppercase;letter-spacing:.07em;font-size:11px">Possible duplicates</div>` : ""}
+      ${conflicts.map((m, i) => `
+        <div class="imp-row">
+          <div class="imp-info"><b>${esc(fmtRow(m.row))}</b><span>${fmtShort(m.row.date)} · matches your ${esc(fmtRow(m.matches[0]))}</span></div>
+          <div class="seg imp-seg" data-ci="${i}">
+            <button data-ch="skip" class="on">Skip</button><button data-ch="merge">Merge</button><button data-ch="both">Keep both</button>
+          </div>
+        </div>`).join("")}
+      <button class="btn" id="imp-go">${clean.length + conflicts.length ? "Import" : "Nothing to import"}</button>
+      <button class="btn ghost" id="imp-cancel">Cancel</button>`;
+    const sheet = openSheet(body);
+    sheet.querySelectorAll(".imp-seg").forEach(seg => seg.querySelectorAll("[data-ch]").forEach(b =>
+      b.addEventListener("click", () => {
+        choice[+seg.dataset.ci] = b.dataset.ch;
+        seg.querySelectorAll("[data-ch]").forEach(x => x.classList.toggle("on", x === b));
+      })));
+    sheet.querySelector("#imp-cancel").addEventListener("click", closeOverlay);
+    sheet.querySelector("#imp-go").addEventListener("click", () => {
+      let added = 0, merged = 0, skipped = 0;
+      closeOverlay();
+      persist(() => {
+        for (const r of clean) { doc.logs.push(csvLog(r)); added++; }
+        conflicts.forEach((m, i) => {
+          if (choice[i] === "both") { doc.logs.push(csvLog(m.row)); added++; }
+          else if (choice[i] === "merge") {
+            const t = m.matches[0]; const r = m.row;
+            t.avgHR = t.avgHR ?? r.avgHR; t.km = t.km ?? r.km; t.ascent = t.ascent ?? r.ascent;
+            t.time = t.time ?? r.time; merged++;
+          } else skipped++;
+        });
+        doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
+      });
+      toast(`Added ${added}${merged ? ` · merged ${merged}` : ""}${skipped ? ` · skipped ${skipped}` : ""}`);
+    });
   });
   $("#st-file-csv").value = "";
 }

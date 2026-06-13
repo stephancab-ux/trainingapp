@@ -401,7 +401,7 @@ export function qualityTemplateFor(weeks, sport, allowed = null) {
 /* v1.1 — read-only look-ahead for the "Coming weeks" card: simulate the next
    n weeks at the default growth rate. The Sunday check-in stays the real
    control; this only shows where the dial is pointing. */
-export function projectWeeks({ weeks, settings, quality = { run: false, bike: false }, n = 3 }) {
+export function projectWeeks({ weeks, settings, quality = { run: false, bike: false }, n = 3, ...opts }) {
   if (!weeks.length) return [];
   const sim = [...weeks];
   const out = [];
@@ -413,9 +413,9 @@ export function projectWeeks({ weeks, settings, quality = { run: false, bike: fa
       ? deloadWeek({ prevLoadWeek: lastLoadWeek(sim), startDate, weekNum })
       : planNextWeek({
           prevLoadWeek: lastLoadWeek(sim), chosenRate: settings.growthRate, settings,
-          startDate, weekNum, quality,
-          runQTemplate: qualityTemplateFor(sim, "run"),
-          bikeQTemplate: qualityTemplateFor(sim, "bike"),
+          startDate, weekNum, quality, logs: opts.logs || [],
+          runQTemplate: qualityTemplateFor(sim, "run", settings.allowedFamilies),
+          bikeQTemplate: qualityTemplateFor(sim, "bike", settings.allowedFamilies),
         });
     sim.push(w);
     out.push({

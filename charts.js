@@ -50,15 +50,20 @@ export function ridgeChart(vol, { width = 352, height = 158, selected = null } =
   return svg(W, H, s);
 }
 
-/* Generic dotted line chart with optional EMA overlay and a dashed target
-   line. points: [{x, y}] with x already linearized (e.g. day offsets). */
+/* Generic dotted line chart. Supports multiple series, optional EMA overlay,
+   a dashed target line, min/max y-axis labels, tap targets per point
+   (data-pi/data-si), and a highlighted selection. points: [{x, y}] with x
+   already linearized; or pass `series: [{points, color, emaAlpha}]`. */
 export function lineChart(points, opts = {}) {
   const { width = 352, height = 140, target = null, targetLabel = "",
           emaAlpha = null, xLabels = null, lastLabel = null, invert = false,
-          color = CY, padTop = 10, padBottom = 20 } = opts;
-  if (points.length < 2) return "";
-  const W = width, H = height, L = 8, R = target != null ? 46 : 10;
-  const xs = points.map(p => p.x), ys = points.map(p => p.y);
+          color = CY, padTop = 12, padBottom = 20, axis = false, fmtY = null,
+          selected = null, taps = false } = opts;
+  const series = opts.series || (points && points.length ? [{ points, color, emaAlpha }] : []);
+  const all = series.flatMap(se => se.points);
+  if (all.length < 2) return "";
+  const W = width, H = height, L = axis ? 30 : 8, R = target != null ? 46 : 12;
+  const xs = all.map(p => p.x), ys = all.map(p => p.y);
   let lo = Math.min(...ys, ...(target != null ? [target] : []));
   let hi = Math.max(...ys, ...(target != null ? [target] : []));
   const pad = Math.max((hi - lo) * 0.12, 0.5);
@@ -69,31 +74,60 @@ export function lineChart(points, opts = {}) {
     ? padTop + ((v - lo) / (hi - lo)) * (H - padTop - padBottom)
     : padTop + ((hi - v) / (hi - lo)) * (H - padTop - padBottom);
   let s = "";
+  if (axis) {
+    const yf = fmtY || (v => Math.round(v));
+    s += `<line x1="${L}" y1="${Y(hi)}" x2="${L}" y2="${Y(lo)}" stroke="${LINE}"/>`;
+    s += `<text x="${L - 4}" y="${Y(hi) + 8}" fill="${MUT}" font-size="9" text-anchor="end">${yf(invert ? lo : hi)}</text>`;
+    s += `<text x="${L - 4}" y="${Y(lo)}" fill="${MUT}" font-size="9" text-anchor="end">${yf(invert ? hi : lo)}</text>`;
+  }
   if (target != null) {
     s += `<line x1="${L}" y1="${Y(target)}" x2="${W - 14}" y2="${Y(target)}" stroke="${SAND}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
     s += `<text x="${W}" y="${Y(target) + 3.5}" fill="${SAND}" font-size="10" text-anchor="end" font-weight="700">${targetLabel}</text>`;
   }
-  const raw = points.map(p => `${X(p.x)},${Y(p.y)}`).join(" ");
-  if (emaAlpha) {
-    s += `<polyline points="${raw}" fill="none" stroke="rgba(143,161,179,.4)" stroke-width="1.3"/>`;
-    points.forEach(p => { s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="2.4" fill="${SUB}"/>`; });
-    const sm = ema(ys, emaAlpha);
-    s += `<polyline points="${points.map((p, i) => `${X(p.x)},${Y(sm[i])}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2.2"/>`;
-  } else {
-    s += `<polyline points="${raw}" fill="none" stroke="${color}" stroke-width="2.2"/>`;
-    points.forEach((p, i) => {
-      s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="2.5" fill="${i === points.length - 1 ? color : "#365562"}"/>`;
+  series.forEach((se, si) => {
+    const pts = se.points, col = se.color || color;
+    if (pts.length < 2) {
+      pts.forEach(p => { s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="3" fill="${col}"/>`; });
+      return;
+    }
+    const raw = pts.map(p => `${X(p.x)},${Y(p.y)}`).join(" ");
+    if (se.emaAlpha) {
+      s += `<polyline points="${raw}" fill="none" stroke="rgba(143,161,179,.35)" stroke-width="1.2"/>`;
+      const sm = ema(pts.map(p => p.y), se.emaAlpha);
+      s += `<polyline points="${pts.map((p, i) => `${X(p.x)},${Y(sm[i])}`).join(" ")}" fill="none" stroke="${col}" stroke-width="2.2"/>`;
+    } else {
+      s += `<polyline points="${raw}" fill="none" stroke="${col}" stroke-width="2.2"/>`;
+    }
+    pts.forEach((p, i) => {
+      const sel = selected && selected.si === si && selected.pi === i;
+      s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${sel ? 4.5 : 2.5}" fill="${sel ? "#fff" : (i === pts.length - 1 ? col : "#365562")}" ${sel ? `stroke="${col}" stroke-width="2"` : ""}/>`;
     });
-  }
+  });
   if (xLabels) {
     s += `<text x="${L}" y="${H - 4}" fill="${MUT}" font-size="9.5" font-weight="650">${xLabels[0]}</text>`;
-    s += `<text x="${W - R + 36}" y="${H - 4}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${xLabels[1]}</text>`;
+    s += `<text x="${W - 4}" y="${H - 4}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${xLabels[1]}</text>`;
   }
   if (lastLabel) {
-    const last = points[points.length - 1];
+    const lastSe = series[series.length - 1].points;
+    const last = lastSe[lastSe.length - 1];
     s += `<text x="${Math.min(X(last.x), W - 8)}" y="${Y(last.y) - 7}" fill="#9be8f0" font-size="10" text-anchor="end" font-weight="750">${lastLabel}</text>`;
   }
+  if (taps) {
+    series.forEach((se, si) => se.points.forEach((p, i) => {
+      s += `<rect data-si="${si}" data-pi="${i}" x="${X(p.x) - 9}" y="0" width="18" height="${H}" fill="transparent" style="cursor:pointer"/>`;
+    }));
+  }
   return svg(W, H, s);
+}
+
+/* RPE heatmap calendar cells — one per workout, coloured by how it felt vs
+   expected. cells: [{id, band, title}]. Returns inner HTML for a wrap grid. */
+const BAND_BG = { green: "rgba(86,219,232,.55)", yellow: "rgba(143,161,179,.30)",
+                  red: "rgba(232,107,107,.6)", none: "#1a242f" };
+export function heatmapCells(cells) {
+  if (!cells.length) return "";
+  return cells.map((c, i) =>
+    `<i data-hi="${i}" style="background:${BAND_BG[c.band] || BAND_BG.none};cursor:pointer" title="${c.title || ""}"></i>`).join("");
 }
 
 /* Consistency strip cells — returns inner HTML for a 12-col grid. */

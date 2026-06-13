@@ -3,7 +3,28 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/* The Progress cards in their default order; `on` = shown out of the box. */
+export const PROGRESS_CARDS = [
+  { id: "volume",      on: true },
+  { id: "trainingLoad", on: true },
+  { id: "weight",      on: true },
+  { id: "pace",        on: true },
+  { id: "coach",       on: true },
+  { id: "bests",       on: true },
+  { id: "vo2",         on: false },
+  { id: "balance",     on: false },
+  { id: "runSpeed",    on: false },
+  { id: "rideSpeed",   on: false },
+  { id: "ascent",      on: false },
+  { id: "paceVsRpe",   on: false },
+  { id: "efficiency",  on: false },
+  { id: "rpeHeatmap",  on: false },
+  { id: "rpeByType",   on: false },
+  { id: "consistency", on: false },
+];
+const CARD_IDS = PROGRESS_CARDS.map(c => c.id);
 
 export function uid() {
   return (crypto.randomUUID && crypto.randomUUID()) ||
@@ -22,9 +43,13 @@ export function defaultSettings() {
     deloadEvery: 4,
     hrvBaselineLow: 42,
     layout: { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" },
+    restDay: "sun",
     qualityUnlocked: false,
     qualityOverride: false,
     easyPace: null,
+    climbBaseAscent: 500,
+    allowedFamilies: { runIntervals: true, runTempo: true, runHills: true, bikeIntervals: true, bikeClimb: true },
+    progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     lastExportAt: null,
   };
 }
@@ -71,7 +96,22 @@ export function initDoc(startDate, todayISO) {
     checkins: [],
     weighIns: SEED_WEIGHINS.map(w => ({ ...w })),
     vo2History: SEED_VO2.map(v => ({ ...v })),
+    manualBests: [],
+    coachDismissed: {},
   };
+}
+
+/* Union the stored progress-card order with any cards added in a later
+   release (appended, off), dropping ids that no longer exist. */
+export function normalizeProgressCards(stored) {
+  const known = new Set(CARD_IDS);
+  const seen = new Set();
+  const out = [];
+  for (const c of Array.isArray(stored) ? stored : []) {
+    if (known.has(c.id) && !seen.has(c.id)) { out.push({ id: c.id, on: !!c.on }); seen.add(c.id); }
+  }
+  for (const c of PROGRESS_CARDS) if (!seen.has(c.id)) out.push({ ...c });
+  return out;
 }
 
 /* ---- load / save ---- */
@@ -103,9 +143,12 @@ export function wipe() {
 /* ---- migrations: add a step per schema bump; each takes vN → vN+1 ---- */
 
 const MIGRATIONS = {
-  // v2: settings gain easyPace + qualityOverride (values land via the defaults
-  // merge below); logs may carry an optional `type` tag.
+  // v2: settings gain easyPace + qualityOverride (via the defaults merge);
+  // logs may carry an optional `type` tag.
   1: d => ({ ...d, schemaVersion: 2 }),
+  // v3: settings gain restDay, climbBaseAscent, allowedFamilies, progressCards
+  // (via the defaults merge); doc gains manualBests + coachDismissed.
+  2: d => ({ ...d, schemaVersion: 3 }),
 };
 
 export function migrate(doc) {
@@ -117,7 +160,10 @@ export function migrate(doc) {
   }
   // settings keys added after first release get safe defaults
   d.settings = { ...defaultSettings(), ...d.settings };
+  d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
+  d.manualBests ||= [];
+  d.coachDismissed ||= {};
   return d;
 }
 
