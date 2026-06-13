@@ -1988,8 +1988,8 @@ const CARD_LABEL = {
   volume: "Training volume", load: "Load & training load",
   calories: "Calories", weight: "Weight",
   pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
-  vo2: "VO₂ max", balance: "Aerobic / anaerobic", speedByType: "Speed by type",
-  distance: "Distance", ascent: "Climbing", paceVsRpe: "RPE & efficiency",
+  vo2: "VO₂ max", balance: "Aerobic / anaerobic", perf: "Speed · climbing · distance",
+  paceVsRpe: "RPE & efficiency",
   consistency: "Consistency",
 };
 
@@ -2204,6 +2204,8 @@ function renderProgress() {
 
     vo2: () => {
       const SEGS = ["#e8554e", "#e6a13c", "#5fbf6a", "#4a90e2", "#8e6ff0"];
+      // colour the line by each reading's fitness category (matches the badge)
+      const vSeg = vo2Cat ? vPts.map(p => (E.vo2Category(p.y, doc.settings.age, doc.settings.sex) || {}).color || "#8e9df8") : null;
       const cat = vo2Cat
         ? `<div class="vo2cat">${C.vo2Gauge({ pos: vo2Cat.pos, color: vo2Cat.color, segs: SEGS })}
              <div class="vo2cat-lab" style="color:${vo2Cat.color}">${vo2Cat.label}<small>${doc.settings.sex === "female" ? "women" : "men"} ${vo2Cat.bracketLabel}</small></div></div>`
@@ -2214,17 +2216,79 @@ function renderProgress() {
         <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
         ${cat}
       </div>
-      ${vPts.length >= 2 ? wrap("vo2", C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })) : (vo2.length >= 2 ? `<p class="row-sub">No readings in this range — widen it or check All time.</p>` : "")}
+      ${vPts.length >= 2 ? wrap("vo2", vSeg
+        ? C.lineChart(null, { series: [{ points: vPts, color: "#8e9df8", segColors: vSeg }], height: 104, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })
+        : C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })) : (vo2.length >= 2 ? `<p class="row-sub">No readings in this range — widen it or check All time.</p>` : "")}
       ${lineDetail("vo2", [{ points: vPts }], p => `${p.y} ml/kg/min`)}
       <button class="btn ghost mini" id="pg-vo2">Add reading</button>`;
     },
 
-    distance: () => {
-      const sport = cardToggle.distance || "run";
-      const tabs = cardTabs("distance", [["run", "Run"], ["bike", "Ride"]], sport);
+    perf: () => {
+      const type = cardToggle.perfType || "speed";   // speed | climb | dist
+      const sport = cardToggle.perfSport || "run";     // run | bike
+      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["bike", "Ride"]], sport);
+      const typeRow = `<div class="perftypes">${cardTabs("perfType", [["speed", "Speed"], ["climb", "Climbing"], ["dist", "Distance"]], type)}</div>`;
+      const sportLab = sport === "run" ? "Run" : "Ride";
+
+      if (type === "speed") {
+        const pace = sport === "run"; // run → min/km, ride → km/h
+        const mk = (filter) => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
+          .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
+        const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
+        const uLabel = pace ? "/km" : "km/h";
+        let ser = [], avgParts, legend, empty;
+        if (sport === "run") {
+          const longIds = new Set(E.distanceSplit(doc.logs, "run", win.from, win.to).long.map(x => x.id));
+          const hardT = l => ["tempo", "intervals", "hills"].includes(l.type);
+          const easy = mk(l => l.sport === "run" && !longIds.has(l.id) && !hardT(l));
+          const long = mk(l => l.sport === "run" && longIds.has(l.id));
+          const hard = mk(l => l.sport === "run" && !longIds.has(l.id) && hardT(l));
+          const trail = mk(l => l.sport === "trail");
+          if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
+          if (long.length) ser.push({ points: long, color: "#a78bfa" });
+          if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
+          if (trail.length) ser.push({ points: trail, color: SPORT_COLOR.trail });
+          avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", trail.length ? `trail ${avgVal(trail)}` : "", uLabel];
+          legend = `<span><i style="background:var(--cy)"></i>easy</span><span><i style="background:#a78bfa"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span><span><i style="background:${SPORT_COLOR.trail}"></i>trail</span>`;
+          empty = "Log runs with distance to compare easy, long, hard and trail pace over time.";
+        } else {
+          const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
+          const easy = mk(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
+          const climb = mk(l => l.sport === "bike" && l.type === "climb");
+          const longRide = mk(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
+          if (easy.length) ser.push({ points: easy, color: "#8e9df8" });
+          if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
+          if (longRide.length) ser.push({ points: longRide, color: "#7fd6c0" });
+          avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", climb.length ? `climb ${avgVal(climb)}` : "", longRide.length ? `long ${avgVal(longRide)}` : "", uLabel];
+          legend = `<span><i style="background:#8e9df8"></i>easy/int</span><span><i style="background:var(--sand)"></i>climb</span><span><i style="background:#7fd6c0"></i>long</span>`;
+          empty = "Log rides with distance — easy/interval, climbing and long-ride speeds are tracked separately.";
+        }
+        return `
+        <div class="hd"><span class="eyebrow">${sportLab} speed</span>${sportTabs}</div>
+        ${typeRow}
+        ${avgLine(avgParts)}
+        ${ser.some(s => s.points.length >= 2) ? wrap("perf", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: pace ? (v => E.fmtPace(-v)) : (v => v.toFixed(0)), selected: lineSel.perf, xTicks: xTicksFor(ser.flatMap(s => s.points)) })) : `<p class="row-sub">${empty}</p>`}
+        <div class="legend2">${legend}</div>
+        ${lineDetail("perf", ser, p => pace ? `${E.fmtPace(-p.y)} /km` : `${p.y.toFixed(1)} km/h`)}`;
+      }
+
+      if (type === "climb") {
+        const pts = sport === "run"
+          ? R(doc.logs.filter(l => l.ascent > 0 && (l.sport === "trail" || l.sport === "hike")).sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })))
+          : R(doc.logs.filter(l => l.ascent > 0 && l.sport === "bike" && l.type === "climb").sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })));
+        const am = seriesAvg(pts);
+        return `
+        <div class="hd"><span class="eyebrow">${sportLab} climbing</span>${sportTabs}</div>
+        ${typeRow}
+        ${am != null ? avgLine([`${Math.round(am).toLocaleString()} m per outing`, `${pts.length} outing${pts.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
+        ${pts.length >= 2 ? wrap("perf", C.lineChart(pts, { axis: true, taps: true, avg: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.perf, xTicks: xTicksFor(pts) })) : `<p class="row-sub">${sport === "run" ? "Trail runs and hikes" : "Climbing rides"} with ascent logged appear here.</p>`}
+        ${lineDetail("perf", [{ points: pts }], p => `${Math.round(p.y)} m climbed`)}`;
+      }
+
+      // distance
       const label = sport === "run" ? "run" : "ride";
       const regCol = sport === "run" ? "var(--cy)" : "#8e9df8";
-      const d = E.distanceSplit(doc.logs, sport, win.from, win.to);
+      const d = E.distanceSplit(doc.logs, sport === "run" ? "run" : "bike", win.from, win.to);
       const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
       const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
       const ser = [];
@@ -2232,16 +2296,19 @@ function renderProgress() {
       if (long.length) ser.push({ points: long, color: "var(--sand)" });
       const al = seriesAvg(long), ar = seriesAvg(reg);
       return `
-      <div class="hd"><span class="eyebrow">Distance · long vs regular</span>${tabs}</div>
+      <div class="hd"><span class="eyebrow">${sportLab} distance</span>${sportTabs}</div>
+      ${typeRow}
       ${avgLine([al != null ? `long ${al.toFixed(1)}` : "", ar != null ? `regular ${ar.toFixed(1)}` : "", "km"])}
-      ${ser.some(s => s.points.length >= 2) ? wrap("distance", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.distance, xTicks: xTicksFor([...reg, ...long]) })) : `<p class="row-sub">Log ${label}s with distance — long ones are tracked apart from regular, so you can watch the long ${label} grow.</p>`}
+      ${ser.some(s => s.points.length >= 2) ? wrap("perf", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.perf, xTicks: xTicksFor([...reg, ...long]) })) : `<p class="row-sub">Log ${label}s with distance — long ones are tracked apart from regular, so you can watch the long ${label} grow.</p>`}
       <div class="legend2"><span><i style="background:var(--sand)"></i>long ${label}</span><span><i style="background:${regCol}"></i>regular</span></div>
-      ${lineDetail("distance", ser, p => `${p.y.toFixed(1)} km`)}`;
+      ${lineDetail("perf", ser, p => `${p.y.toFixed(1)} km`)}`;
     },
 
     balance: () => {
       const w = E.intensityInRange(doc.logs, B, win.from, win.to);
       const pts = intB.filter(x => x.total > 0).map(x => ({ x: dnum(x.start), y: x.hardPct * 100, date: x.start }));
+      // colour each week by its hard-share vs the 20% target (symmetric)
+      const balCol = h => (h >= 12 && h <= 28) ? "#5fbf6a" : (h >= 6 && h <= 40) ? "#e6a13c" : "#e8554e";
       const tPct = w.total ? w.threshold / w.total : 0, aPct = w.total ? w.anaerobic / w.total : 0;
       let advice = "";
       if (w.total) {
@@ -2252,69 +2319,10 @@ function renderProgress() {
       }
       return `
       <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
-      ${pts.length >= 2 ? wrap("balance", C.lineChart(pts, { axis: true, taps: true, color: "var(--sand)", target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
+      ${pts.length >= 2 ? wrap("balance", C.lineChart(null, { series: [{ points: pts, color: "var(--sand)", segColors: pts.map(p => balCol(p.y)) }], axis: true, taps: true, target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
+      ${pts.length >= 2 ? `<div class="legend2"><span><i style="background:#5fbf6a"></i>on target</span><span><i style="background:#e6a13c"></i>drifting</span><span><i style="background:#e8554e"></i>off</span></div>` : ""}
       ${lineDetail("balance", [{ points: pts }], p => `${Math.round(p.y)}% hard`)}
       ${w.total ? `<div class="callout">Over ${win.label.toLowerCase()}: <b>${Math.round(w.easyPct * 100)}%</b> easy · <b>${Math.round(tPct * 100)}%</b> threshold · <b>${Math.round(aPct * 100)}%</b> anaerobic.<br>${advice}</div>` : ""}`;
-    },
-
-    speedByType: () => {
-      const sport = cardToggle.speedByType || "run";
-      const pace = (cardToggle.speedUnit || "kmh") === "pace";
-      const unitTabs = cardTabs("speedUnit", [["kmh", "km/h"], ["pace", "min/km"]], pace ? "pace" : "kmh");
-      const tabs = cardTabs("speedByType", [["run", "Run"], ["bike", "Ride"]], sport);
-      // negative seconds/km in pace mode keeps faster = higher on the chart
-      const mk = (filter) => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
-        .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
-      const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
-      const uLabel = pace ? "/km" : "km/h";
-      let ser, avg, legend, empty;
-      if (sport === "run") {
-        const longIds = new Set(E.distanceSplit(doc.logs, "run", win.from, win.to).long.map(x => x.id));
-        const hardT = l => ["tempo", "intervals", "hills"].includes(l.type);
-        const long = mk(l => E.isRunType(l) && longIds.has(l.id));
-        const easy = mk(l => E.isRunType(l) && !longIds.has(l.id) && !hardT(l));
-        const hard = mk(l => E.isRunType(l) && !longIds.has(l.id) && hardT(l));
-        ser = [];
-        if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
-        if (long.length) ser.push({ points: long, color: "#7fd6c0" });
-        if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
-        avg = avgLine([easy.length ? `easy ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", uLabel]);
-        legend = `<span><i style="background:var(--cy)"></i>easy</span><span><i style="background:#7fd6c0"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span>`;
-        empty = "Log runs with distance to compare easy, long and hard-day speeds over time.";
-      } else {
-        const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
-        const climb = mk(l => l.sport === "bike" && l.type === "climb");
-        const longRide = mk(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
-        const easy = mk(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
-        ser = [];
-        if (easy.length) ser.push({ points: easy, color: "#8e9df8" });
-        if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
-        if (longRide.length) ser.push({ points: longRide, color: "#7fd6c0" });
-        avg = avgLine([easy.length ? `easy ${avgVal(easy)}` : "", climb.length ? `climb ${avgVal(climb)}` : "", longRide.length ? `long ${avgVal(longRide)}` : "", uLabel]);
-        legend = `<span><i style="background:#8e9df8"></i>easy/int</span><span><i style="background:var(--sand)"></i>climb</span><span><i style="background:#7fd6c0"></i>long</span>`;
-        empty = "Log rides with distance — easy/interval, climbing and long-ride speeds are tracked separately.";
-      }
-      return `
-      <div class="hd"><span class="eyebrow">Speed by type</span><span class="ctabwrap">${unitTabs}${tabs}</span></div>
-      ${avg}
-      ${ser.some(s => s.points.length >= 2) ? wrap("speedByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: pace ? (v => E.fmtPace(-v)) : (v => v.toFixed(0)), selected: lineSel.speedByType, xTicks: xTicksFor(ser.flatMap(s => s.points)) })) : `<p class="row-sub">${empty}</p>`}
-      <div class="legend2">${legend}</div>
-      ${lineDetail("speedByType", ser, p => pace ? `${E.fmtPace(-p.y)} /km` : `${p.y.toFixed(1)} km/h`)}`;
-    },
-
-    ascent: () => {
-      const view = cardToggle.ascent || "ride";
-      const tabs = cardTabs("ascent", [["ride", "Ride"], ["hike", "Hike"]], view);
-      const pts = view === "hike"
-        ? R(doc.logs.filter(l => l.sport === "hike" && l.ascent > 0).sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })))
-        : R(doc.logs.filter(l => l.ascent > 0 && ((l.sport === "bike" && l.type === "climb") || l.sport === "trail")).sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })));
-      const am = seriesAvg(pts);
-      const what = view === "hike" ? "hike" : "ride/trail";
-      return `
-      <div class="hd"><span class="eyebrow">Climbing</span>${tabs}</div>
-      ${am != null ? avgLine([`${Math.round(am).toLocaleString()} m per outing`, `${pts.length} ${view === "hike" ? "hike" : "climb"}${pts.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
-      ${pts.length >= 2 ? wrap("ascent", C.lineChart(pts, { axis: true, taps: true, avg: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.ascent, xTicks: xTicksFor(pts) })) : `<p class="row-sub">${view === "hike" ? "Hikes" : "Climbing rides and trail runs"} with ascent logged appear here — your ${what} climbing over time.</p>`}
-      ${lineDetail("ascent", [{ points: pts }], p => `${Math.round(p.y)} m climbed`)}`;
     },
 
     paceVsRpe: () => {
@@ -2476,7 +2484,9 @@ function renderProgress() {
     ridgeSel = ridgeSel === +r.dataset.wi ? null : +r.dataset.wi; renderProgress();
   }));
   page.querySelectorAll("[data-ctab]").forEach(b => b.addEventListener("click", () => {
-    cardToggle[b.dataset.ctab] = b.dataset.ctv; lineSel[b.dataset.ctab] = null; renderProgress();
+    cardToggle[b.dataset.ctab] = b.dataset.ctv; lineSel[b.dataset.ctab] = null;
+    if (b.dataset.ctab === "perfType" || b.dataset.ctab === "perfSport") lineSel.perf = null;
+    renderProgress();
   }));
   page.querySelectorAll("[data-si]").forEach(r => r.addEventListener("click", () => {
     const card = r.closest(".chartwrap")?.dataset.card; if (!card) return;
