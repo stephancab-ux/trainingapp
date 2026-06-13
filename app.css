@@ -97,6 +97,7 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
 .ic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .hikec{color:#7fd6c0;background:rgba(127,214,192,.14)}
+.gymc{color:#c98bdb;background:rgba(201,139,219,.15)}
 .day .tx{flex:1;min-width:0}
 .day .tx b{display:block;font-size:15px;font-weight:700}
 .day .tx span{display:block;font-size:12.5px;color:var(--mut);font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -234,6 +235,7 @@ svg text{font-family:inherit}
 .lr{background:rgba(86,219,232,.16);color:var(--cy)}
 .lb{background:rgba(142,157,248,.16);color:var(--bike)}
 .lx{background:#1a242f;color:var(--mut)}
+.lg{background:rgba(201,139,219,.18);color:#c98bdb}
 
 /* ---------- first run & recovery ---------- */
 .firstrun{position:fixed;inset:0;z-index:55;background:var(--bg);overflow-y:auto}
@@ -352,6 +354,50 @@ svg text{font-family:inherit}
 .catbar .bar{flex:1;height:9px;background:#16202b;border-radius:5px;overflow:hidden}
 .catbar .bar i{display:block;height:100%;border-radius:5px}
 .catbar .cv{flex:none;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+
+/* v1.5 — gym: weekly-mix sheet, workout page, live timer */
+.mixrow{display:flex;align-items:center;justify-content:space-between;padding:13px 2px;border-bottom:1px solid var(--line)}
+.mixrow .l{font-size:14px;font-weight:600}
+.mixrow .ud{display:inline-flex;align-items:center;gap:14px}
+.mixrow .ud b{min-width:18px;text-align:center;font-size:17px;font-variant-numeric:tabular-nums}
+.mixrow .ud button{width:38px;height:38px;border-radius:11px;background:#1b2734;color:var(--ink);font-size:20px;line-height:1}
+
+.seeact{margin-left:6px;color:var(--cy)!important;white-space:nowrap}
+
+.wpg-head{display:flex;flex-direction:column;gap:2px;position:relative}
+.wpg-head .iconbtn{position:absolute;right:-4px;top:-2px;font-size:18px}
+.wpg-meta{display:flex;gap:7px;flex-wrap:wrap}
+.wpg-venue{display:flex;align-items:center;gap:10px;margin-top:2px}
+.wpg-blocks{display:flex;flex-direction:column;gap:11px}
+.wblock{background:#121b24;border:1px solid var(--line);border-radius:13px;padding:11px 13px}
+.wblock-hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+.wblock-hd b{font-size:14px}
+.wblock-hd span{font-size:11px;color:var(--mut);font-weight:600}
+.wex{display:grid;grid-template-columns:1fr auto;gap:1px 8px;padding:7px 0;border-top:1px solid rgba(148,178,204,.08)}
+.wex:first-of-type{border-top:none}
+.wex-n{font-size:13.5px;font-weight:650}
+.wex-n .uni{font-style:normal;font-size:10px;color:var(--sand);font-weight:600;margin-left:4px}
+.wex-i{grid-column:1;font-size:11.5px;color:var(--sub);line-height:1.35}
+.wex-act{grid-row:1 / span 2;grid-column:2;display:flex;flex-direction:column;gap:4px;align-items:flex-end;justify-content:center}
+.wex-act .lk{font-size:11px}
+.wex-act .bad{color:var(--bad)}
+
+.wtimer{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;flex:1;justify-content:center;min-height:70vh;border-radius:18px;padding:22px 16px;position:relative}
+.wtimer.work{background:radial-gradient(120% 80% at 50% 0%,rgba(86,219,232,.12),transparent)}
+.wtimer.rest{background:radial-gradient(120% 80% at 50% 0%,rgba(201,139,219,.12),transparent)}
+.wtimer-x{position:absolute;right:6px;top:2px;font-size:18px}
+.wt-stage{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:700}
+.wt-name{font-size:26px;font-weight:800;line-height:1.1}
+.wt-name .uni{font-style:normal;font-size:13px;color:var(--sand)}
+.wt-count{font-size:88px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.wtimer.work .wt-count{color:var(--cy)}
+.wtimer.rest .wt-count{color:#c98bdb}
+.wt-instr{font-size:13px;color:var(--sub);max-width:320px;line-height:1.4}
+.wt-next{font-size:12.5px;color:var(--mut);font-weight:600}
+.wt-ctrls{display:flex;gap:10px;width:100%;max-width:320px;margin-top:6px}
+.wt-ctrls .btn{flex:1}
+.wt-prog{width:100%;max-width:320px;height:5px;border-radius:3px;background:#1a242f;overflow:hidden}
+.wt-prog i{display:block;height:100%;background:var(--cy);transition:width .3s linear}
 
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{animation:none!important;transition:none!important}

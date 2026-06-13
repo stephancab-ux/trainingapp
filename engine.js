@@ -114,7 +114,7 @@ export function estMaxHRFromAge(age) {
 export function observedMaxHR(logs) {
   let m = 0;
   for (const l of logs) {
-    if ((l.sport === "run" || l.sport === "bike") && l.maxHR > m) m = l.maxHR;
+    if ((l.sport === "run" || l.sport === "bike" || l.sport === "gym") && l.maxHR > m) m = l.maxHR;
   }
   return m || null;
 }
@@ -183,6 +183,23 @@ export function splitMinutes(total, weights) {
   return base.map(u => u * 5);
 }
 
+/* Gym sessions come in fixed template lengths; snap an arbitrary minute value
+   to the nearest. A gym session is at least 30 min. */
+export const GYM_DURATIONS = [30, 45, 60, 75, 90];
+export function snapGymMinutes(v) {
+  if (!(v > 0)) return 0;
+  const c = Math.max(30, Math.min(90, v));
+  return GYM_DURATIONS.reduce((best, d) => Math.abs(d - c) < Math.abs(best - c) ? d : best, GYM_DURATIONS[0]);
+}
+
+/* Deterministic 32-bit seed from a string, so a planned gym session yields a
+   stable workout across reloads without persisting the structure. */
+export function hashSeed(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
 /* ---------------- week construction ---------------- */
 
 const WEEK1_TABLE = [
@@ -203,7 +220,7 @@ export function generateWeek1(startDate) {
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum: 1, isDeload: false,
-    sessions, targetMin: { run: 105, bike: 255 },
+    sessions, targetMin: { run: 105, bike: 255, gym: 0 },
   };
 }
 
@@ -211,10 +228,12 @@ export function generateWeek1(startDate) {
    A layout value may be a single sport string or an array (two-a-days). Long
    ride gets a double share; every session rounds to 5 min. Each session keeps
    its `slot` (0/1) so a day can carry two sessions. */
-export function buildSessions(runMin, bikeMin, layout, opts = {}) {
-  const { deload = false, quality = { run: false, bike: false }, climbTarget = null } = opts;
+export function buildSessions(runMin, bikeMin, gymMin, layout, opts = {}) {
+  const { deload = false, quality = { run: false, bike: false, gym: false }, climbTarget = null } = opts;
   const runQTemplate = opts.runQTemplate || "runQ1";
   const bikeQTemplate = opts.bikeQTemplate || "bikeQ1";
+  const gymVenue = opts.gymVenue || "home";
+  const weekSalt = String(opts.weekSalt ?? "");
   const longCap = opts.longCap ?? (deload ? 90 : 210);
 
   const entries = [];
@@ -225,8 +244,10 @@ export function buildSessions(runMin, bikeMin, layout, opts = {}) {
   }
   const runEntries = entries.filter(e => e.what === "run");
   const bikeEntries = entries.filter(e => e.what === "bike" || e.what === "bike-long");
+  const gymEntries = entries.filter(e => e.what === "gym");
   const runSplit = splitMinutes(runMin, runEntries.map(() => 1));
   let bikeSplit = splitMinutes(bikeMin, bikeEntries.map(e => e.what === "bike-long" ? 2 : 1));
+  const gymSplit = splitMinutes(gymMin, gymEntries.map(() => 1)).map(snapGymMinutes);
 
   const longIdx = bikeEntries.findIndex(e => e.what === "bike-long");
   if (longIdx >= 0 && bikeSplit[longIdx] > longCap) {
@@ -245,8 +266,13 @@ export function buildSessions(runMin, bikeMin, layout, opts = {}) {
   const nonLong = bikeEntries.filter(e => e.what !== "bike-long");
   const qBikeDay = quality.bike && !deload && nonLong.length
     ? (nonLong.some(e => e.day === "thu") ? "thu" : nonLong[0].day) : null;
+  // a "hard" gym day, but never adjacent to the long ride or a quality run/ride
+  const hardDays = new Set([qRunDay, qBikeDay, ...bikeEntries.filter(e => e.what === "bike-long").map(e => e.day)].filter(Boolean));
+  const adjacent = day => { const i = DAYS.indexOf(day); return [DAYS[i - 1], DAYS[i + 1]].some(d => d && hardDays.has(d)); };
+  const qGymDay = quality.gym && !deload && gymEntries.length
+    ? (gymEntries.map(e => e.day).find(d => !hardDays.has(d) && !adjacent(d)) || null) : null;
 
-  let ri = 0, bi = 0, qRunUsed = false, qBikeUsed = false;
+  let ri = 0, bi = 0, gi = 0, qRunUsed = false, qBikeUsed = false, qGymUsed = false;
   const out = [];
   for (const e of entries) {
     if (e.what === "rest") { out.push({ day: e.day, slot: e.slot, sport: "rest", kind: "rest", targetMin: 0, zone: 0 }); continue; }
@@ -257,6 +283,14 @@ export function buildSessions(runMin, bikeMin, layout, opts = {}) {
         out.push({ day: e.day, slot: e.slot, sport: "run", kind: "quality", targetMin: min,
                    zone: QUALITY_TEMPLATES[runQTemplate].zone, qualityTemplate: runQTemplate });
       } else out.push({ day: e.day, slot: e.slot, sport: "run", kind: "easy", targetMin: min, zone: 2 });
+      continue;
+    }
+    if (e.what === "gym") {
+      const min = gymSplit[gi++];
+      const hard = e.day === qGymDay && !qGymUsed && min > 0;
+      if (hard) qGymUsed = true;
+      out.push({ day: e.day, slot: e.slot, sport: "gym", kind: hard ? "quality" : "easy", targetMin: min,
+                 venue: gymVenue, gym: { seed: hashSeed(`${weekSalt}-${e.day}-${e.slot}`), avoidIds: [], swaps: {} } });
       continue;
     }
     const min = bikeSplit[bi++];
@@ -283,18 +317,23 @@ export function planNextWeek({ prevLoadWeek, chosenRate, settings, startDate, we
                                runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", logs = [] }) {
   const prevRun = prevLoadWeek.targetMin.run;
   const prevBike = prevLoadWeek.targetMin.bike;
-  const prevTotal = prevRun + prevBike;
+  const prevGym = prevLoadWeek.targetMin.gym || 0;
+  const prevTotal = prevRun + prevBike + prevGym;
   const total = prevTotal * (1 + chosenRate);
+  // run and gym are load-sensitive → capped at +10 %/wk; the bike absorbs the rest
   const runT = Math.min(prevRun * 1.10, (prevRun / prevTotal) * total);
-  const bikeT = total - runT;
-  const q = noQuality ? { run: false, bike: false }
-    : { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate };
+  const gymT = prevGym === 0 ? 0 : Math.min(prevGym * 1.10, (prevGym / prevTotal) * total);
+  const bikeT = total - runT - gymT;
+  const gymHard = settings.allowedTypes ? settings.allowedTypes.gymStrength !== false : true;
+  const q = noQuality ? { run: false, bike: false, gym: false }
+    : { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate, gym: gymHard };
   const climbTarget = climbTargetAscent({ logs, weekNum, settings });
-  const sessions = buildSessions(runT, bikeT, settings.layout,
-    { quality: q, runQTemplate, bikeQTemplate, longCap: 210, climbTarget });
+  const sessions = buildSessions(runT, bikeT, gymT, settings.layout,
+    { quality: q, runQTemplate, bikeQTemplate, longCap: 210, climbTarget,
+      gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: false, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike") },
+    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
     rate: chosenRate,
   };
 }
@@ -304,6 +343,11 @@ export function planNextWeek({ prevLoadWeek, chosenRate, settings, startDate, we
 export function deloadWeek({ prevLoadWeek, startDate, weekNum }) {
   const sessions = prevLoadWeek.sessions.map(s => {
     if (s.sport === "rest") return { ...s };
+    if (s.sport === "gym") {
+      return { day: s.day, slot: s.slot, sport: "gym", kind: "easy",
+               targetMin: snapGymMinutes(round5(s.targetMin * 0.6)), venue: s.venue || "home",
+               gym: { seed: hashSeed(`${startDate}-${s.day}-${s.slot ?? 0}`), avoidIds: [], swaps: {} } };
+    }
     let min = round5(s.targetMin * 0.6);
     if (s.kind === "long") min = Math.min(min, 90);
     return { day: s.day, sport: s.sport, kind: s.kind === "long" ? "long" : "easy",
@@ -311,7 +355,7 @@ export function deloadWeek({ prevLoadWeek, startDate, weekNum }) {
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: true, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike") },
+    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
     rate: 0,
   };
 }
@@ -328,14 +372,14 @@ export function lastLoadWeek(weeks) {
 /* ---------------- completion (§7.4) ---------------- */
 
 export function plannedMinutes(week) {
-  return week.targetMin.run + week.targetMin.bike;
+  return week.targetMin.run + week.targetMin.bike + (week.targetMin.gym || 0);
 }
 
 export function loggedMinutes(week, logs) {
   const end = addDays(week.startDate, 6);
   return logs
     .filter(l => l.date >= week.startDate && l.date <= end &&
-                 (isRunType(l) || l.sport === "bike") && l.source !== "seed")
+                 (isRunType(l) || l.sport === "bike" || l.sport === "gym") && l.source !== "seed")
     .reduce((a, l) => a + (l.min || 0), 0);
 }
 
@@ -466,30 +510,35 @@ function spreadPick(arr, k) {
 /* Fatigue-aware day assignment around a configurable rest day. Returns
    day → [sports]. ≤ 6 sessions = one per day; a 7th/8th lands as a second
    session on the freshest day (farthest from the long/hard day). */
-export function placeLayout(runCount, bikeCount, restDay = "sun") {
+export function placeLayout({ run, bike, gym = 0, restDay = "sun" }) {
   const layout = {}; DAYS.forEach(d => { layout[d] = []; });
   const active = DAYS.filter(d => d !== restDay);
-  const total = runCount + bikeCount;
+  const total = run + bike + gym;
   const used = spreadPick(active, Math.min(total, active.length));
-  const longDay = bikeCount > 0 ? (used.includes("sat") ? "sat" : used[used.length - 1]) : null;
+  const longDay = bike > 0 ? (used.includes("sat") ? "sat" : used[used.length - 1]) : null;
   const runnable = used.filter(d => d !== longDay);
   const order = runnable.filter((_, i) => i % 2 === 0).concat(runnable.filter((_, i) => i % 2 === 1));
-  const runDays = order.slice(0, runCount);
+  const runDays = order.slice(0, run);
+  // gym lands on the freshest non-run days (spread among the bike days)
+  const gymPool = runnable.filter(d => !runDays.includes(d));
+  const gymDays = spreadPick(gymPool, Math.min(gym, gymPool.length));
+  const assigned = { run: 0, bike: 0, gym: 0 };
   for (const d of used) {
-    if (d === longDay) layout[d].push("bike-long");
-    else if (runDays.includes(d)) layout[d].push("run");
-    else layout[d].push("bike");
+    if (d === longDay) { layout[d].push("bike-long"); assigned.bike++; }
+    else if (runDays.includes(d)) { layout[d].push("run"); assigned.run++; }
+    else if (gymDays.includes(d)) { layout[d].push("gym"); assigned.gym++; }
+    else { layout[d].push("bike"); assigned.bike++; }
   }
-  // extras beyond one-per-day → freshest days (farthest from the long day)
-  let extraRuns = runCount - runDays.length;
-  let extraBikes = bikeCount - (used.length - runDays.length);
+  // extras beyond one-per-day → freshest days (farthest from the long day),
+  // filling each stream's remaining demand explicitly
   const li = longDay ? DAYS.indexOf(longDay) : -1;
   const fresh = active.filter(d => layout[d].length === 1)
     .sort((a, b) => (li < 0 ? 0 : Math.abs(DAYS.indexOf(b) - li) - Math.abs(DAYS.indexOf(a) - li)));
   for (const d of fresh) {
-    if (extraBikes <= 0 && extraRuns <= 0) break;
-    if (extraBikes > 0) { layout[d].push("bike"); extraBikes--; }
-    else if (extraRuns > 0) { layout[d].push("run"); extraRuns--; }
+    if (assigned.bike < bike) { layout[d].push("bike"); assigned.bike++; }
+    else if (assigned.gym < gym) { layout[d].push("gym"); assigned.gym++; }
+    else if (assigned.run < run) { layout[d].push("run"); assigned.run++; }
+    else break;
   }
   for (const d of DAYS) if (!layout[d].length) layout[d] = ["rest"];
   return layout;
@@ -498,32 +547,36 @@ export function placeLayout(runCount, bikeCount, restDay = "sun") {
 /* True if a layout value (string or array) contains a run. */
 function hasRun(v) { return Array.isArray(v) ? v.includes("run") : v === "run"; }
 
-export function relayoutWeek({ week, runCount, bikeCount, prevRunMin = null, restDay = null,
+export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunMin = null, restDay = null,
                                quality = { run: false, bike: false },
-                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", climbTarget = null }) {
+                               runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", climbTarget = null,
+                               gymVenue = "home", gymHard = true }) {
   const warnings = [];
   const oldRuns = week.sessions.filter(s => s.sport === "run").length;
   const oldBikes = week.sessions.filter(s => s.sport === "bike").length;
+  const oldGyms = week.sessions.filter(s => s.sport === "gym").length;
   const restDays = week.sessions.filter(s => s.sport === "rest").map(s => s.day);
   const rest = restDay || (restDays.includes("sun") || !restDays.length ? "sun" : restDays[0]);
 
   let runMin = oldRuns > 0 ? week.targetMin.run * (runCount / oldRuns) : 35 * runCount;
   if (prevRunMin != null) runMin = Math.min(runMin, prevRunMin * 1.10);
   const bikeMin = oldBikes > 0 ? week.targetMin.bike * (bikeCount / oldBikes) : 60 * bikeCount;
+  // introducing gym mid-program bootstraps from a 45-min base per session
+  const gymMin = oldGyms > 0 ? (week.targetMin.gym || 0) * (gymCount / oldGyms) : 45 * gymCount;
 
-  const layout = placeLayout(runCount, bikeCount, rest);
+  const layout = placeLayout({ run: runCount, bike: bikeCount, gym: gymCount, restDay: rest });
 
   for (let i = 0; i < DAYS.length - 1; i++) {
     if (hasRun(layout[DAYS[i]]) && hasRun(layout[DAYS[i + 1]])) { warnings.push("consecutive-runs"); break; }
   }
 
-  const q = { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate };
-  const sessions = buildSessions(runMin, bikeMin, layout,
+  const q = { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate, gym: gymHard && !week.isDeload };
+  const sessions = buildSessions(runMin, bikeMin, gymMin, layout,
     { deload: week.isDeload, quality: q, runQTemplate, bikeQTemplate,
-      longCap: week.isDeload ? 90 : 210, climbTarget });
+      longCap: week.isDeload ? 90 : 210, climbTarget, gymVenue, weekSalt: week.startDate });
   return {
     week: { ...week, sessions,
-            targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike") } },
+            targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") } },
     warnings,
   };
 }
@@ -699,9 +752,10 @@ export function weeklyVolume({ logs, weeks, todayISO, n = 12 }) {
     const inWeek = logs.filter(l => l.date >= start && l.date <= end);
     const run = inWeek.filter(l => isRunType(l)).reduce((a, l) => a + (l.min || 0), 0);
     const bike = inWeek.filter(l => l.sport === "bike").reduce((a, l) => a + (l.min || 0), 0);
+    const gym = inWeek.filter(l => l.sport === "gym").reduce((a, l) => a + (l.min || 0), 0);
     const plan = weeks.find(w => w.startDate === start);
     out.push({
-      start, run, bike,
+      start, run, bike, gym,
       target: plan ? plannedMinutes(plan) : null,
       isDeload: plan ? plan.isDeload : false,
       current: start === thisMonday,
@@ -731,6 +785,10 @@ const ENDURANCE = new Set(["run", "trail", "bike", "hike"]);
    endurance history, including the bootstrapped/imported seed — consistent with
    weeklyVolume. (Plan completion/adherence still exclude seed separately.) */
 const TRAIN = l => l && ENDURANCE.has(l.sport);
+/* Gym joins load + intensity analytics ONLY when it carries an effort signal
+   (heart rate or RPE); otherwise it counts toward time/volume/adherence only. */
+const hasEffortSignal = l => l.avgHR != null || l.rpe != null;
+const LOADBEARING = l => l && (ENDURANCE.has(l.sport) || (l.sport === "gym" && hasEffortSignal(l)));
 const speedKmh = l => (l.km > 0 && l.min > 0) ? (l.km * 60) / l.min : null;
 const vam = l => (l.ascent > 0 && l.min > 0) ? (l.ascent * 60) / l.min : null; // m/h climbed
 
@@ -760,7 +818,7 @@ export function weeklyIntensity({ logs, bounds, todayISO, n = 12 }) {
   for (let k = n - 1; k >= 0; k--) {
     const start = addDays(thisMonday, -7 * k), end = addDays(start, 6);
     const band = { aerobic: 0, threshold: 0, anaerobic: 0 };
-    logs.filter(l => TRAIN(l) && l.date >= start && l.date <= end)
+    logs.filter(l => LOADBEARING(l) && l.date >= start && l.date <= end)
         .forEach(l => { band[intensityOfLog(l, bounds)] += l.min || 0; });
     const tot = band.aerobic + band.threshold + band.anaerobic;
     out.push({ start, ...band, total: tot, current: start === thisMonday,
@@ -781,10 +839,12 @@ export function sessionEffort(log, bounds) {
 }
 export function sessionLoad(log, bounds) {
   if (!log.min) return 0;
+  // a gym session with no effort signal contributes time/volume only, not load
+  if (log.sport === "gym" && log.avgHR == null && log.rpe == null) return 0;
   return Math.round(log.min * sessionEffort(log, bounds));
 }
 export function trainingLoad({ logs, bounds, todayISO, n = 12 }) {
-  const train = logs.filter(TRAIN);
+  const train = logs.filter(LOADBEARING);
   const loadOn = (a, b) => train.filter(l => l.date >= a && l.date <= b)
                                 .reduce((s, l) => s + sessionLoad(l, bounds), 0);
   const acute = loadOn(addDays(todayISO, -6), todayISO);
@@ -940,7 +1000,7 @@ export function fmtBestValue(rec) {
 }
 
 /* ---- calories ---- */
-const SPORT_LABEL = { run: "running", trail: "trail running", bike: "cycling", hike: "hiking", other: "other" };
+const SPORT_LABEL = { run: "running", trail: "trail running", bike: "cycling", hike: "hiking", gym: "gym", other: "other" };
 export function caloriesInRange(logs, from, to) {
   return logs.filter(l => l.date >= from && l.date <= to && l.calories > 0)
              .reduce((a, l) => a + l.calories, 0);
@@ -974,7 +1034,7 @@ export function caloriesByType({ logs, todayISO, n = 4 }) {
 export function plannedVsUnplannedCalories({ weeks = [], logs = [], from, to }) {
   const isPlanned = l => weeks.some(w => (w.sessions || []).some(s =>
     s.sport !== "rest" && dateOfDay(w, s.day) === l.date &&
-    ((isRunType(l) && isRunType(s)) || (l.sport === "bike" && s.sport === "bike"))));
+    ((isRunType(l) && isRunType(s)) || (l.sport === "bike" && s.sport === "bike") || (l.sport === "gym" && s.sport === "gym"))));
   let planned = 0, unplanned = 0;
   for (const l of logs) {
     if (!(l.calories > 0) || l.date < from || l.date > to) continue;
@@ -1020,8 +1080,10 @@ export function programAdherence({ weeks = [], logs = [], todayISO }) {
     (planByDate[d] = planByDate[d] || []).push(s);
   }
   const logsByDate = {};
-  for (const l of logs) if (l.source !== "seed" && (isRunType(l) || l.sport === "bike"))
+  for (const l of logs) if (l.source !== "seed" && (isRunType(l) || l.sport === "bike" || l.sport === "gym"))
     (logsByDate[l.date] = logsByDate[l.date] || []).push(l);
+  // match a planned session to a logged activity of the same sport family
+  const sameSport = (s, l) => isRunType(s) ? isRunType(l) : s.sport === "gym" ? l.sport === "gym" : l.sport === "bike";
 
   const statusOf = d => {
     const plan = planByDate[d];
@@ -1034,7 +1096,7 @@ export function programAdherence({ weeks = [], logs = [], todayISO }) {
     const dayLogs = (logsByDate[d] || []).slice();
     let kept = 0, mod = 0;
     for (const s of nonRest) {
-      const i = dayLogs.findIndex(l => isRunType(s) ? isRunType(l) : l.sport === "bike");
+      const i = dayLogs.findIndex(l => sameSport(s, l));
       if (i < 0) continue;
       const l = dayLogs.splice(i, 1)[0];
       if ((l.min || 0) >= 0.8 * (s.targetMin || 1)) kept++; else mod++;
@@ -1145,14 +1207,15 @@ export function volumeInRange(logs, from, to) {
     run: r.filter(isRunType).reduce((a, l) => a + (l.min || 0), 0),
     bike: r.filter(l => l.sport === "bike").reduce((a, l) => a + (l.min || 0), 0),
     hike: r.filter(l => l.sport === "hike").reduce((a, l) => a + (l.min || 0), 0),
+    gym: r.filter(l => l.sport === "gym").reduce((a, l) => a + (l.min || 0), 0),
   };
 }
 export function loadInRange(logs, bounds, from, to) {
-  return logs.filter(l => TRAIN(l) && l.date >= from && l.date <= to).reduce((s, l) => s + sessionLoad(l, bounds), 0);
+  return logs.filter(l => LOADBEARING(l) && l.date >= from && l.date <= to).reduce((s, l) => s + sessionLoad(l, bounds), 0);
 }
 export function intensityInRange(logs, bounds, from, to) {
   const band = { aerobic: 0, threshold: 0, anaerobic: 0 };
-  logs.filter(l => TRAIN(l) && l.date >= from && l.date <= to).forEach(l => { band[intensityOfLog(l, bounds)] += l.min || 0; });
+  logs.filter(l => LOADBEARING(l) && l.date >= from && l.date <= to).forEach(l => { band[intensityOfLog(l, bounds)] += l.min || 0; });
   const total = band.aerobic + band.threshold + band.anaerobic;
   return { ...band, total, easyPct: total ? band.aerobic / total : null, hardPct: total ? (band.threshold + band.anaerobic) / total : null };
 }
@@ -1169,7 +1232,7 @@ function loadBucketOf(l, bounds) {
 }
 export function loadFocus(logs, bounds, from, to) {
   const b = { low: 0, high: 0, anaerobic: 0 };
-  for (const l of logs) { if (!TRAIN(l) || l.date < from || l.date > to) continue; b[loadBucketOf(l, bounds)] += sessionLoad(l, bounds); }
+  for (const l of logs) { if (!LOADBEARING(l) || l.date < from || l.date > to) continue; b[loadBucketOf(l, bounds)] += sessionLoad(l, bounds); }
   const total = b.low + b.high + b.anaerobic;
   const opt = { low: [total * 0.55, total * 0.80], high: [total * 0.15, total * 0.35], anaerobic: [total * 0.03, total * 0.12] };
   let focus = "Well balanced";
@@ -1182,7 +1245,7 @@ export function loadFocus(logs, bounds, from, to) {
 export function dailyLoad(logs, bounds, from, to) {
   const days = {};
   for (const l of logs) {
-    if (!TRAIN(l) || l.date < from || l.date > to) continue;
+    if (!LOADBEARING(l) || l.date < from || l.date > to) continue;
     const d = (days[l.date] = days[l.date] || { low: 0, high: 0, anaerobic: 0, total: 0 });
     const load = sessionLoad(l, bounds);
     d[loadBucketOf(l, bounds)] += load; d.total += load;
@@ -1228,7 +1291,7 @@ export function distanceSplit(logs, sport, from, to) {
   const isLong = l => l.type === "long" || (l.type == null && ds.length >= 4 && l.km >= threshold);
   const pick = pred => all.filter(l => l.date >= from && l.date <= to && pred(l))
     .sort((a, b) => (a.date < b.date ? -1 : 1))
-    .map(l => ({ date: l.date, km: l.km }));
+    .map(l => ({ date: l.date, km: l.km, id: l.id }));
   return { long: pick(isLong), regular: pick(l => !isLong(l)), threshold, median };
 }
 
@@ -1328,6 +1391,20 @@ export function coachInsights({ doc, todayISO }) {
     add({ id: "pace", category: "improvement", title: "Easy pace improving",
           body: "You're running faster at the same easy heart rate — the clearest sign of aerobic fitness.",
           why: `Learned from your last ${hint.n} easy runs.`, impact: 0.6, confidence: 0.6 });
+
+  // gym: planned but not happening, or logged without an effort signal
+  const gymPlanned = (doc.settings.weeklyCounts && doc.settings.weeklyCounts.gym > 0) ||
+    (doc.weeks || []).some(w => (w.sessions || []).some(s => s.sport === "gym"));
+  const recentGym = logs.filter(l => l.sport === "gym" && l.date >= addDays(todayISO, -14));
+  if (gymPlanned && recentGym.length === 0)
+    add({ id: "gym-gap", category: "recommendation", title: "No gym sessions logged",
+          body: "Your plan includes gym work but none is logged in the last two weeks. Open today's workout and run the timer.",
+          why: "Strength + mobility protect you as run and ride volume climbs.", impact: 0.5, confidence: 0.6 });
+  const gymNoHR = recentGym.filter(l => l.avgHR == null && l.rpe == null);
+  if (recentGym.length && gymNoHR.length >= Math.ceil(recentGym.length / 2))
+    add({ id: "gym-hr", category: "recommendation", title: "Add heart rate to gym sessions",
+          body: "Most recent gym sessions have no HR or RPE, so they count toward time only — not your aerobic/anaerobic balance or training load.",
+          why: `${gymNoHR.length} of ${recentGym.length} recent gym logs had no effort signal.`, impact: 0.4, confidence: 0.7 });
 
   const dismissed = doc.coachDismissed || {};
   return out.filter(i => !dismissed[i.id])

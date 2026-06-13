@@ -3,7 +3,7 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 /* The Progress cards in their default order; `on` = shown out of the box. */
 export const PROGRESS_CARDS = [
@@ -61,7 +61,18 @@ export function defaultSettings() {
     allowedTypes: {
       easyRun: true, runTempo: true, runIntervals: true, runHills: true, longRun: true, trailRun: true,
       easyRide: true, bikeIntervals: true, bikeClimb: true, longRide: true,
+      gymStrength: true, gymCardio: true, gymMobility: true,
     },
+    // weekly mix — the source of truth that auto-schedules the plan; the
+    // per-day layout above is derived from these (and hand-editable).
+    weeklyCounts: { run: 3, bike: 3, gym: 0 },
+    gymVenueDefault: "home",
+    // home equipment the user owns — gates which home exercises can be picked
+    equipment: {
+      mat: true, bands: false, dumbbells: false, kettlebell: false, pullupBar: false,
+      foamRoller: false, jumpRope: false, bench: false, wallBall: false, trx: false,
+    },
+    bannedExercises: [],
     progressRange: { preset: "12w", offset: 0, compare: false, unit: "week" },
     progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     lastExportAt: null,
@@ -176,7 +187,34 @@ const MIGRATIONS = {
     delete settings.allowedFamilies;
     return { ...d, settings, schemaVersion: 4 };
   },
+  // v5: gym activity — weeklyCounts (derived from the existing layout), gym
+  // allowed-types, home-equipment map, banned list. Rest via defaults merge.
+  4: d => {
+    const s = d.settings || {};
+    const settings = {
+      ...s,
+      weeklyCounts: s.weeklyCounts || deriveCountsFromLayout(s.layout),
+      allowedTypes: { ...s.allowedTypes, gymStrength: true, gymCardio: true, gymMobility: true },
+    };
+    return { ...d, settings, schemaVersion: 5 };
+  },
 };
+
+/* Count run / bike / gym sessions in a day→sport layout map (handles arrays
+   and the bike-long token) so an upgrading user keeps their current mix. */
+function deriveCountsFromLayout(layout) {
+  const counts = { run: 0, bike: 0, gym: 0 };
+  for (const day of Object.keys(layout || {})) {
+    const v = layout[day];
+    for (const tok of Array.isArray(v) ? v : [v]) {
+      if (tok === "run") counts.run++;
+      else if (tok === "bike" || tok === "bike-long") counts.bike++;
+      else if (tok === "gym") counts.gym++;
+    }
+  }
+  if (!counts.run && !counts.bike) return { run: 3, bike: 3, gym: 0 };
+  return counts;
+}
 
 export function migrate(doc) {
   let d = doc;
@@ -189,8 +227,13 @@ export function migrate(doc) {
   d.settings = { ...defaultSettings(), ...d.settings };
   d.settings.allowedTypes = { ...defaultSettings().allowedTypes, ...(d.settings.allowedTypes || {}) };
   d.settings.progressRange = { ...defaultSettings().progressRange, ...(d.settings.progressRange || {}) };
+  d.settings.weeklyCounts = { ...defaultSettings().weeklyCounts, ...(d.settings.weeklyCounts || {}) };
+  d.settings.equipment = { ...defaultSettings().equipment, ...(d.settings.equipment || {}) };
+  d.settings.bannedExercises ||= [];
   d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
+  // weeks built before gym had no `gym` stream — backfill so the math is safe
+  for (const w of d.weeks) if (w.targetMin && w.targetMin.gym == null) w.targetMin.gym = 0;
   d.manualBests ||= [];
   d.coachDismissed ||= {};
   return d;

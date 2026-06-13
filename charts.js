@@ -16,8 +16,8 @@ const svg = (w, h, inner) =>
    data-wi for tap-to-inspect. */
 export function ridgeChart(vol, { width = 352, height = 158, selected = null } = {}) {
   if (!vol.length) return "";
-  const HIKE = "#7fd6c0";
-  const T = p => p.run + p.bike + (p.hike || 0);
+  const HIKE = "#7fd6c0", GYM = "#c98bdb";
+  const T = p => p.run + p.bike + (p.hike || 0) + (p.gym || 0);
   const W = width, H = height, base = H - 16;
   const max = Math.max(60, ...vol.map(v => Math.max(T(v), v.target || 0))) * 1.07;
   const n = vol.length, gap = 3, bw = (W - gap * (n - 1)) / n;
@@ -27,13 +27,14 @@ export function ridgeChart(vol, { width = 352, height = 158, selected = null } =
   vol.forEach((p, i) => { far += ` L${(i + 0.5) * (bw + gap)} ${y(T(p) * 0.62 + max * 0.12)}`; });
   s += `<path d="${far} L${W} ${base} Z" fill="rgba(86,219,232,.05)"/>`;
   vol.forEach((p, i) => {
-    const x = i * (bw + gap), runTop = p.bike + p.run, tot = T(p);
+    const x = i * (bw + gap), runTop = p.bike + p.run, hikeTop = runTop + (p.hike || 0), tot = T(p);
     const dim = selected != null && selected !== i;
     const op = (p.isDeload ? 0.45 : 1) * (dim ? 0.45 : 1);
     s += `<g opacity="${op}">`;
     s += `<rect x="${x}" y="${y(p.bike)}" width="${bw}" height="${Math.max(0, base - y(p.bike))}" fill="${BIKE}"/>`;
-    s += `<rect x="${x}" y="${y(runTop)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(runTop))}" ${p.hike ? "" : "rx=\"2.5\""} fill="${CY}"/>`;
-    if (p.hike) s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(runTop) - y(tot))}" rx="2.5" fill="${HIKE}"/>`;
+    s += `<rect x="${x}" y="${y(runTop)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(runTop))}" ${p.hike || p.gym ? "" : "rx=\"2.5\""} fill="${CY}"/>`;
+    if (p.hike) s += `<rect x="${x}" y="${y(hikeTop)}" width="${bw}" height="${Math.max(0, y(runTop) - y(hikeTop))}" ${p.gym ? "" : "rx=\"2.5\""} fill="${HIKE}"/>`;
+    if (p.gym) s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(hikeTop) - y(tot))}" rx="2.5" fill="${GYM}"/>`;
     s += `</g>`;
     if (p.target) s += `<line x1="${x - 1}" y1="${y(p.target)}" x2="${x + bw + 1}" y2="${y(p.target)}" stroke="${SAND}" stroke-width="1.6" stroke-dasharray="4 3" opacity="${dim ? 0.4 : 1}"/>`;
     if (p.isDeload) s += `<text x="${x + bw / 2}" y="${H - 3}" fill="${MUT}" font-size="9" text-anchor="middle" font-weight="700">col</text>`;

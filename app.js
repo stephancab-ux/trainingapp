@@ -4,6 +4,7 @@ import * as E from "./engine.js";
 import * as S from "./store.js";
 import * as C from "./charts.js";
 import * as F from "./fit.js";
+import * as W from "./workouts.js";
 import { makeZip } from "./zip.js";
 
 let doc = null;
@@ -46,9 +47,10 @@ const ICONS = {
   other: `<svg viewBox="0 0 24 24"><path d="M3 18.5l5.5-8 3.5 4.5 4-6.5 5 10z"/></svg>`,
   trail: `<svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/><path d="M2 22l4-4 3 2 4-5"/></svg>`,
   hike: `<svg viewBox="0 0 24 24"><path d="M4 22l5-9 3 3 3-7 5 13M11 7a2 2 0 1 0 0-.01"/></svg>`,
+  gym: `<svg viewBox="0 0 24 24"><path d="M4 9v6M7 7v10M20 9v6M17 7v10M7 12h10"/></svg>`,
 };
-const sportClass = sp => sp === "run" || sp === "trail" ? "runc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : "restc";
-const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", other: "Other" };
+const sportClass = sp => sp === "run" || sp === "trail" ? "runc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : "restc";
+const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", other: "Other" };
 
 const ICONS_UI = {
   sliders: `<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></svg>`,
@@ -79,9 +81,13 @@ const WORKOUT_TOGGLES = [
   ["bikeIntervals", "Sweet spot", "Z3–Z4 ride intervals"],
   ["bikeClimb", "Climbing ride", "long sustained climbs"],
   ["longRide", "Long ride", "the weekend distance"],
+  ["gymStrength", "Gym strength", "resistance + circuits"],
+  ["gymCardio", "Gym cardio", "conditioning finishers"],
+  ["gymMobility", "Mobility", "warm-ups + cooldowns"],
 ];
 const RUN_BASE = ["easyRun", "runTempo", "runIntervals", "runHills", "longRun", "trailRun"];
 const RIDE_BASE = ["easyRide", "bikeIntervals", "bikeClimb", "longRide"];
+const GYM_BASE = ["gymStrength", "gymCardio", "gymMobility"];
 
 /* Workout-type tags on logs (v1.1). Purely descriptive — no plan math. */
 const LOG_TYPES = {
@@ -114,6 +120,7 @@ function evalChip(log, plannedSession = null) {
 
 function kindLabel(s) {
   if (s.sport === "rest") return "Rest";
+  if (s.sport === "gym") return s.venue === "gym" ? "Gym workout" : "Home workout";
   if (s.kind === "long") return "Long ride";
   if (s.kind === "quality") {
     const t = E.QUALITY_TEMPLATES[s.qualityTemplate];
@@ -543,6 +550,18 @@ function renderToday() {
       ${evalChip(l, s)}
       <div class="t-actions"><button class="btn ghost" id="td-edit">Edit this log</button></div>
     </div>`;
+  } else if (s.sport === "gym") {
+    const venue = s.venue || "home";
+    card = `<div class="card">
+      <div class="t-chips"><span class="chip gymc">${s.kind === "quality" ? "GYM · QUALITY" : "GYM"}</span><span class="chip zc2">${venue === "gym" ? "AT THE GYM" : "AT HOME"}</span>${st.kind === "skipped" ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
+      <div class="bignum">${s.targetMin}<small>min</small></div>
+      <div class="t-block"><div class="lab">Workout</div>
+        <div class="t-pace-v">A full-body ${venue === "gym" ? "gym" : "home"} session. Open it to see today's exercises, run the timer, swap moves, or switch home ↔ gym.</div></div>
+      ${second.length ? `<p class="row-sub" style="margin-top:10px">＋ also today: ${esc(second.map(x => kindLabel(x) + " · " + x.targetMin + " min").join(" · "))}</p>` : ""}
+      <div class="t-actions">
+        <button class="btn" id="td-workout">Open workout</button>
+        ${st.kind !== "skipped" ? `<button class="btn ghost" id="td-skip">Skip today</button>` : ""}
+      </div></div>`;
   } else {
     const z = zoneInfo(s);
     const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
@@ -597,6 +616,7 @@ function renderToday() {
   $("#td-edit")?.addEventListener("click", () =>
     openLogSheet({ date: t, sport: s.sport, log: st.log, title: kindLabel(s) }));
   $("#td-edit-s")?.addEventListener("click", () => openSessionEditor(week, s, st));
+  $("#td-workout")?.addEventListener("click", () => openWorkoutPage(week, s, t));
   $("#td-skip")?.addEventListener("click", () => openSkip(week, s));
   $("#td-checkin")?.addEventListener("click", () => openCheckin(due || week));
   $("#td-yest")?.addEventListener("click", () => {
@@ -615,6 +635,11 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
   const typeRow = LOG_TYPES[sport] ? `
     <div class="type-row"><span class="l">Type</span><span class="opts">${LOG_TYPES[sport].map(([k, lab]) =>
       `<button data-ty="${k}" class="${typ === k ? "on" : ""}">${lab}</button>`).join("")}</span></div>` : "";
+  const isGym = sport === "gym";
+  let venue = isEdit ? (log.venue || "home") : "home";
+  const venueRow = isGym ? `
+    <div class="frow"><span class="l">Where</span>
+      <span class="unitseg" style="margin-left:auto"><button class="useg ${venue === "home" ? "on" : ""}" data-venue="home">Home</button><button class="useg ${venue === "gym" ? "on" : ""}" data-venue="gym">Gym</button></span></div>` : "";
   const elev = sport === "bike" || sport === "trail" || sport === "hike";
   const elevRows = elev ? `
     <div class="frow"><span class="l">Ascent</span><input type="text" inputmode="numeric" id="lg-asc" placeholder="—" value="${isEdit && log.ascent != null ? log.ascent : ""}"><span class="suffix">m ↑</span></div>
@@ -625,7 +650,8 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="frow"><span class="l">Duration</span>
       <span class="stepper"><button data-d="-1">−</button><input type="text" inputmode="numeric" class="v dur" id="lg-min" value="${min}"><span class="suffix">min</span><button data-d="1">+</button></span></div>
     ${typeRow}
-    <div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>
+    ${venueRow}
+    ${isGym ? "" : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>`}
     ${elevRows}
     <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
@@ -645,13 +671,18 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     typ = b.dataset.ty;
     sheet.querySelectorAll("[data-ty]").forEach(x => x.classList.toggle("on", x.dataset.ty === typ));
   }));
+  sheet.querySelectorAll("[data-venue]").forEach(b => b.addEventListener("click", () => {
+    venue = b.dataset.venue;
+    sheet.querySelectorAll("[data-venue]").forEach(x => x.classList.toggle("on", x.dataset.venue === venue));
+  }));
   sheet.querySelectorAll("[data-rpe]").forEach(b => b.addEventListener("click", () => {
     rpe = rpe === +b.dataset.rpe ? null : +b.dataset.rpe;
     sheet.querySelectorAll("[data-rpe]").forEach(x => x.classList.toggle("on", +x.dataset.rpe === rpe));
   }));
   sheet.querySelector("#lg-save").addEventListener("click", () => {
     min = readMin();
-    const km = num(sheet.querySelector("#lg-km").value);
+    const kmEl = sheet.querySelector("#lg-km");
+    const km = kmEl ? num(kmEl.value) : null;
     const hr = num(sheet.querySelector("#lg-hr").value);
     const mhr = num(sheet.querySelector("#lg-maxhr").value);
     const asc = sheet.querySelector("#lg-asc") ? num(sheet.querySelector("#lg-asc").value) : null;
@@ -663,12 +694,14 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
       if (isEdit) {
         Object.assign(log, { min, km: km ?? undefined, avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
                              ascent: asc ?? undefined, descent: desc ?? undefined, calories: cal ?? undefined,
-                             rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined });
+                             rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined,
+                             venue: isGym ? venue : undefined });
       } else {
         doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
                         avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined,
                         descent: desc ?? undefined, calories: cal ?? undefined, rpe: rpe ?? undefined,
-                        note: note || undefined, type: typ ?? undefined, source: "manual" });
+                        note: note || undefined, type: typ ?? undefined,
+                        venue: isGym ? venue : undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
     });
@@ -689,7 +722,7 @@ function openUnplannedLog() {
     <div class="sh-title">Log an activity</div>
     <div class="sh-sub">Unplanned sessions count too — "other" stays out of the plan math</div>
     <div class="seg" id="ul-sport" style="flex-wrap:wrap">
-      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button><button data-sp="hike">Hike</button><button data-sp="other">Other</button></div>
+      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button><button data-sp="hike">Hike</button><button data-sp="gym">Gym</button><button data-sp="other">Other</button></div>
     <div class="frow"><span class="l">Date</span><input type="date" id="ul-date" value="${todayISO()}" max="${todayISO()}"></div>
     <button class="btn" id="ul-next">Continue</button>
   `);
@@ -772,6 +805,7 @@ function renderWeek() {
   const bikeDone = Math.min(week.targetMin.bike, sportLogged(week, "bike"));
   const runs = week.sessions.filter(x => x.sport === "run").length;
   const bikes = week.sessions.filter(x => x.sport === "bike").length;
+  const gyms = week.sessions.filter(x => x.sport === "gym").length;
 
   const dayRows = week.sessions.map((s, i) => {
     const st = sessionStatus(week, s);
@@ -787,8 +821,8 @@ function renderWeek() {
       sub = "skipped — gone, no debt";
       stIcon = `<span class="st skip"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></span>`;
     } else if (st.kind === "today") {
-      const z = zoneInfo(s);
-      sub = `today · ${z.label} · ${z.lo}–${z.hi} bpm`;
+      if (s.sport === "gym") sub = `today · ${s.venue === "gym" ? "gym" : "home"} workout — tap to open`;
+      else { const z = zoneInfo(s); sub = `today · ${z.label} · ${z.lo}–${z.hi} bpm`; }
       stIcon = `<span class="st now"></span>`;
     } else if (st.kind === "pending") {
       sub = "not logged yet";
@@ -796,6 +830,9 @@ function renderWeek() {
     } else if (st.kind === "rest") {
       sub = due && s.day === "sun" ? "check-in is open" : week.isDeload ? "deload — recover on purpose" : "check-in opens here Sunday";
       stIcon = `<span class="st" style="background:none"></span>`;
+    } else if (s.sport === "gym") {
+      sub = `${s.venue === "gym" ? "Gym" : "Home"} · full-body${s.kind === "quality" ? " · harder day" : ""}`;
+      stIcon = `<span class="st plan"></span>`;
     } else {
       const z = zoneInfo(s);
       sub = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate].label : `${z.label} · ${z.lo}–${z.hi} bpm`;
@@ -818,17 +855,10 @@ function renderWeek() {
     <div class="card" style="padding:13px 16px"><div class="tot">
       <div class="row"><span class="nm">Run</span><span class="bar"><i style="width:${pct(runDone, week.targetMin.run)}%;background:var(--cy)"></i></span><span class="qty">${sportLogged(week, "run")} / ${week.targetMin.run} min</span></div>
       <div class="row"><span class="nm">Ride</span><span class="bar"><i style="width:${pct(bikeDone, week.targetMin.bike)}%;background:var(--bike)"></i></span><span class="qty">${sportLogged(week, "bike")} / ${week.targetMin.bike} min</span></div>
+      ${week.targetMin.gym > 0 ? `<div class="row"><span class="nm">Gym</span><span class="bar"><i style="width:${pct(sportLogged(week, "gym"), week.targetMin.gym)}%;background:#c98bdb"></i></span><span class="qty">${sportLogged(week, "gym")} / ${week.targetMin.gym} min</span></div>` : ""}
     </div></div>
     <div class="card days">${dayRows}</div>
-    <div class="mix">
-      <div class="half"><span class="mlab">Runs<b>${runs}</b></span><span class="ud">
-        <button id="run-up" ${runs >= 5 || runs + bikes >= 8 ? "disabled" : ""}>+</button>
-        <button id="run-dn" ${runs <= 0 ? "disabled" : ""}>−</button></span></div>
-      <div class="half"><span class="mlab">Rides<b>${bikes}</b></span><span class="ud">
-        <button id="bike-up" ${bikes >= 5 || runs + bikes >= 8 ? "disabled" : ""}>+</button>
-        <button id="bike-dn" ${bikes <= 0 ? "disabled" : ""}>−</button></span></div>
-    </div>
-    ${runs + bikes > 6 ? `<p class="row-sub" style="margin-top:-4px">${runs + bikes} sessions — the extra one is placed as a second session on your freshest day.</p>` : ""}
+    <button class="linkrow" id="wk-mix">Weekly mix · ${runs} run · ${bikes} ride${gyms ? ` · ${gyms} gym` : ""} — change in Settings →</button>
     ${unlockCard()}
     ${comingWeeksCard()}
     <button class="btn ghost mini" id="wk-watch">Export this week to watch (.FIT)</button>
@@ -838,16 +868,13 @@ function renderWeek() {
     const s = week.sessions[+b.dataset.di];
     const st = sessionStatus(week, s);
     if (st.kind === "done") openLogSheet({ date: st.date, sport: s.sport, log: st.log, title: kindLabel(s), type: typeOfSession(s) });
+    else if (s.sport === "gym") openWorkoutPage(week, s, st.date || E.dateOfDay(week, s.day));
     else openSessionEditor(week, s, st);
   }));
   $("#wk-checkin")?.addEventListener("click", () => openCheckin(due));
   $("#wk-history").addEventListener("click", openHistory);
   $("#wk-watch")?.addEventListener("click", () => exportWeekToWatch(week));
-  const remix = (dr, db) => () => changeMix(week, runs + dr, bikes + db);
-  $("#run-up")?.addEventListener("click", remix(1, 0));
-  $("#run-dn")?.addEventListener("click", remix(-1, 0));
-  $("#bike-up")?.addEventListener("click", remix(0, 1));
-  $("#bike-dn")?.addEventListener("click", remix(0, -1));
+  $("#wk-mix")?.addEventListener("click", () => openWeeklyMix(week));
 }
 
 const pct = (a, b) => b > 0 ? Math.min(100, Math.round(a / b * 100)) : 0;
@@ -858,24 +885,32 @@ function sportLogged(week, sport) {
     l.date >= week.startDate && l.date <= end).reduce((a, l) => a + (l.min || 0), 0);
 }
 
-function changeMix(week, runCount, bikeCount) {
+function changeMix(week, runCount, bikeCount, gymCount = null) {
   const idx = weekIndex(week);
   const prev = idx > 0 ? doc.weeks[idx - 1] : null;
   const qs = qstate();
   const ci = doc.checkins.find(c => c.weekId === week.id);
   const allow = doc.settings.allowedTypes;
+  const gym = gymCount == null ? week.sessions.filter(s => s.sport === "gym").length : gymCount;
   const { week: newWeek, warnings } = E.relayoutWeek({
-    week, runCount, bikeCount,
+    week, runCount, bikeCount, gymCount: gym,
     prevRunMin: prev ? prev.targetMin.run : null,
     restDay: doc.settings.restDay,
     quality: ci?.noQuality ? { run: false, bike: false } : { run: qs.run, bike: qs.bike },
     runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow),
     bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
     climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: week.weekNum, settings: doc.settings }),
+    gymVenue: doc.settings.gymVenueDefault || "home",
+    gymHard: allow.gymStrength !== false,
   });
   const apply = () => {
-    persist(() => { doc.weeks[idx] = newWeek; });
-    toast(`${runCount} runs · ${bikeCount} rides`);
+    persist(() => {
+      doc.weeks[idx] = newWeek;
+      // counts become the source of truth; keep the derived layout in sync
+      doc.settings.weeklyCounts = { run: runCount, bike: bikeCount, gym };
+      doc.settings.layout = E.placeLayout({ run: runCount, bike: bikeCount, gym, restDay: doc.settings.restDay });
+    });
+    toast(`${runCount} run · ${bikeCount} ride${gym ? ` · ${gym} gym` : ""}`);
   };
   if (warnings.includes("consecutive-runs") && !doc.settings.warnedRunAdjacency) {
     openModal("Back-to-back runs", "This mix forces runs on consecutive days — the main injury risk at current load. Keep it anyway?", [
@@ -883,6 +918,44 @@ function changeMix(week, runCount, bikeCount) {
       { label: "Undo", cls: "ghost" },
     ]);
   } else apply();
+}
+
+/* The weekly-mix control (moved here from the Week tab): run / ride / gym
+   counts. Applies via changeMix, which reschedules and stores the counts. */
+function openWeeklyMix(week) {
+  week = week || currentWeek();
+  if (!week) { toast("No active week yet"); return; }
+  const cur = doc.settings.weeklyCounts || { run: 3, bike: 3, gym: 0 };
+  let r = week.sessions.filter(s => s.sport === "run").length || cur.run;
+  let b = week.sessions.filter(s => s.sport === "bike").length || cur.bike;
+  let g = week.sessions.filter(s => s.sport === "gym").length;
+  const gymOn = doc.settings.allowedTypes.gymStrength !== false || doc.settings.allowedTypes.gymCardio !== false || doc.settings.allowedTypes.gymMobility !== false;
+  const sheet = openSheet(`
+    <div class="sh-title">Weekly mix</div>
+    <div class="sh-sub">How many of each, per week. They're scheduled around your rest day automatically — fine-tune individual days in the layout editor.</div>
+    <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="mx-run">${r}</b><button data-d="1">+</button></span></div>
+    <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="mx-bike">${b}</b><button data-d="1">+</button></span></div>
+    <div class="mixrow" data-k="gym"><span class="l">Gym workouts${gymOn ? "" : " <i class='row-sub'>· enable in Workouts allowed</i>"}</span><span class="ud"><button data-d="-1">−</button><b id="mx-gym">${g}</b><button data-d="1">+</button></span></div>
+    <p class="row-sub" id="mx-note"></p>
+    <button class="btn" id="mx-save">Apply to this week</button>
+  `);
+  const clamp = v => Math.max(0, Math.min(6, v));
+  const refresh = () => {
+    sheet.querySelector("#mx-run").textContent = r;
+    sheet.querySelector("#mx-bike").textContent = b;
+    sheet.querySelector("#mx-gym").textContent = g;
+    const tot = r + b + g;
+    sheet.querySelector("#mx-note").textContent = tot === 0 ? "Add at least one session." :
+      tot > 6 ? `${tot} sessions — the extras stack as a second session on your freshest day.` : "";
+    sheet.querySelector("#mx-save").disabled = tot === 0;
+  };
+  sheet.querySelectorAll(".mixrow").forEach(row => row.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
+    const d = +btn.dataset.d, k = row.dataset.k;
+    if (k === "run") r = clamp(r + d); else if (k === "bike") b = clamp(b + d); else g = clamp(g + d);
+    refresh();
+  })));
+  refresh();
+  sheet.querySelector("#mx-save").addEventListener("click", () => { closeOverlay(); changeMix(week, r, b, g); });
 }
 
 /* Re-lay a week around the current rest day / counts (used after moving the
@@ -1310,6 +1383,196 @@ function openCheckin(week) {
 
 const ordinal = n => n + ({ 1: "st", 2: "nd", 3: "rd" }[n % 10 > 3 || [11, 12, 13].includes(n % 100) ? 0 : n % 10] || "th");
 
+/* ---------------- GYM WORKOUT PAGE ---------------- */
+
+/* Expand a planned gym session into its (deterministic, seed-driven) workout. */
+function workoutForSession(s) {
+  const st = doc.settings;
+  return W.generateGymWorkout({
+    minutes: s.targetMin, venue: s.venue || "home",
+    equipment: st.equipment || {}, banned: st.bannedExercises || [],
+    avoidIds: (s.gym && s.gym.avoidIds) || [], swaps: (s.gym && s.gym.swaps) || {},
+    hard: s.kind === "quality", seed: (s.gym && s.gym.seed) || 1,
+  });
+}
+
+/* Short beep + a vibrate buzz on each work/rest transition. */
+let _audio = null;
+function beep(freq = 880, ms = 120) {
+  try {
+    _audio = _audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = _audio.createOscillator(), g = _audio.createGain();
+    o.type = "sine"; o.frequency.value = freq; o.connect(g); g.connect(_audio.destination);
+    g.gain.setValueAtTime(0.0008, _audio.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.28, _audio.currentTime + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0008, _audio.currentTime + ms / 1000);
+    o.start(); o.stop(_audio.currentTime + ms / 1000 + 0.02);
+  } catch {}
+  if (navigator.vibrate) try { navigator.vibrate(55); } catch {}
+}
+
+/* Flatten a workout into a step list: work + rest for every exercise/round. */
+function workoutSteps(workout) {
+  const steps = [];
+  for (const b of workout.blocks) {
+    const label = W.CATEGORY_LABELS[b.category] || b.category;
+    for (let r = 0; r < b.rounds; r++) {
+      for (const ex of b.exercises) {
+        steps.push({ kind: "work", name: ex.name, instr: ex.instr, sec: b.work, label, round: r + 1, rounds: b.rounds, uni: ex.unilateral });
+        if (b.rest > 0) steps.push({ kind: "rest", name: "Rest", sec: b.rest, label });
+      }
+    }
+  }
+  while (steps.length && steps[steps.length - 1].kind === "rest") steps.pop();
+  return steps;
+}
+
+/* Fullscreen workout page: overview → live timer → completion log. `session`
+   is a live reference inside doc.weeks, so refresh/swap/ban/venue persist. */
+function openWorkoutPage(week, session, dateISO) {
+  document.body.insertAdjacentHTML("beforeend", `<div class="checkin workoutpg" id="workoutpg"><div class="wrap"></div></div>`);
+  const el = $("#workoutpg");
+  requestAnimationFrame(() => el.classList.add("show"));
+  let tick = null;
+  const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
+  const close = () => { stop(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); persist(); };
+  const wrap = el.querySelector(".wrap");
+  let workout = workoutForSession(session);
+
+  function paintOverview() {
+    stop();
+    const venue = session.venue || "home";
+    const eq = workout.equipmentNeeded.length
+      ? workout.equipmentNeeded.map(k => W.EQUIPMENT_LABELS[k] || k).join(", ") : "Bodyweight only";
+    wrap.innerHTML = `
+      <div class="wpg-head"><button class="iconbtn" id="wp-close" aria-label="Close">✕</button>
+        <div class="eyebrow">${week ? "Week " + week.weekNum + " · " : ""}${fmtShort(dateISO)}</div>
+        <h1 class="page">${venue === "gym" ? "Gym workout" : "Home workout"}</h1></div>
+      <div class="wpg-meta">
+        <span class="chip">${workout.minutes} min</span>
+        <span class="chip ${workout.estIntensity === "high" ? "zc4" : "zc2"}">${workout.estIntensity === "high" ? "Harder day" : "Steady"}</span>
+        <span class="chip">${session.kind === "quality" ? "Quality" : "Full body"}</span>
+      </div>
+      <div class="wpg-venue">
+        <span class="unitseg"><button class="useg ${venue === "home" ? "on" : ""}" data-venue="home">Home</button><button class="useg ${venue === "gym" ? "on" : ""}" data-venue="gym">Gym</button></span>
+        <button class="chip" id="wp-refresh" style="margin-left:auto">↻ Refresh</button>
+      </div>
+      <p class="row-sub">Equipment · ${esc(eq)}</p>
+      <div class="wpg-blocks">${workout.blocks.map(b => `
+        <div class="wblock"><div class="wblock-hd"><b>${W.CATEGORY_LABELS[b.category] || b.category}</b>
+          <span>${b.rounds}×${b.rounds > 1 ? " rounds" : " round"} · ${b.work}s${b.rest ? " / " + b.rest + "s" : ""}</span></div>
+          ${b.exercises.map(ex => `<div class="wex">
+            <span class="wex-n">${esc(ex.name)}${ex.uni || ex.unilateral ? " <i class='uni'>each side</i>" : ""}</span>
+            <span class="wex-i">${esc(ex.instr)}</span>
+            <span class="wex-act"><button class="lk" data-swap="${b.bi}">swap</button><button class="lk bad" data-ban="${ex.id}">ban</button></span>
+          </div>`).join("")}</div>`).join("")}</div>
+      <button class="btn" id="wp-start">Do workout now</button>
+      <button class="btn ghost" id="wp-log">Log it as done</button>`;
+    wrap.querySelector("#wp-close").addEventListener("click", close);
+    wrap.querySelectorAll("[data-venue]").forEach(b => b.addEventListener("click", () => {
+      if (session.venue === b.dataset.venue) return;
+      session.venue = b.dataset.venue; session.gym = session.gym || { avoidIds: [], swaps: {} };
+      S.save(doc); workout = workoutForSession(session); paintOverview();
+    }));
+    wrap.querySelector("#wp-refresh").addEventListener("click", () => {
+      session.gym = session.gym || { avoidIds: [], swaps: {} };
+      session.gym.avoidIds = [...new Set([...(session.gym.avoidIds || []), ...W.workoutExerciseIds(workout)])].slice(-80);
+      session.gym.swaps = {};
+      session.gym.seed = (Math.random() * 4294967296) >>> 0;
+      S.save(doc); workout = workoutForSession(session); paintOverview(); toast("New workout ✓");
+    });
+    wrap.querySelectorAll("[data-swap]").forEach(b => b.addEventListener("click", () => {
+      const bi = +b.dataset.swap, blk = workout.blocks.find(x => x.bi === bi); if (!blk) return;
+      const shown = new Set(W.workoutExerciseIds(workout));
+      const pool = W.filterEligible({ venue: session.venue || "home", equipment: doc.settings.equipment || {}, banned: doc.settings.bannedExercises || [] })
+        .filter(e => e.category === blk.category && !shown.has(e.id));
+      if (!pool.length) { toast("No alternative available"); return; }
+      session.gym = session.gym || { avoidIds: [], swaps: {} };
+      session.gym.swaps = { ...(session.gym.swaps || {}), [bi]: pool[Math.floor(Math.random() * pool.length)].id };
+      S.save(doc); workout = workoutForSession(session); paintOverview();
+    }));
+    wrap.querySelectorAll("[data-ban]").forEach(b => b.addEventListener("click", () => {
+      doc.settings.bannedExercises = [...new Set([...(doc.settings.bannedExercises || []), b.dataset.ban])];
+      S.save(doc); workout = workoutForSession(session); paintOverview(); toast("Won't show that again");
+    }));
+    wrap.querySelector("#wp-start").addEventListener("click", paintTimer);
+    wrap.querySelector("#wp-log").addEventListener("click", paintDone);
+  }
+
+  let steps = [], idx = 0, remaining = 0, paused = false;
+  function paintTimer() {
+    stop();
+    steps = workoutSteps(workout);
+    if (!steps.length) { toast("Nothing to run"); return; }
+    idx = 0; remaining = steps[0].sec; paused = false; renderStep();
+    tick = setInterval(() => {
+      if (paused) return;
+      remaining--;
+      if (remaining <= 2 && remaining >= 0) beep(remaining === 0 ? 1320 : 720, 90);
+      if (remaining < 0) {
+        idx++; if (idx >= steps.length) { stop(); paintDone(); return; }
+        remaining = steps[idx].sec; renderStep(); return;
+      }
+      const c = wrap.querySelector(".wt-count"); if (c) c.textContent = remaining;
+      const p = wrap.querySelector(".wt-prog i"); if (p) p.style.width = Math.round((idx / steps.length) * 100) + "%";
+    }, 1000);
+  }
+  function renderStep() {
+    const s = steps[idx], nx = steps[idx + 1], isWork = s.kind === "work";
+    wrap.innerHTML = `<div class="wtimer ${isWork ? "work" : "rest"}">
+      <button class="iconbtn wtimer-x" id="wt-quit" aria-label="Close">✕</button>
+      <div class="wt-stage">${isWork ? esc(s.label) + " · round " + s.round + "/" + s.rounds : "Recover"}</div>
+      <div class="wt-name">${esc(s.name)}${s.uni ? " <i class='uni'>each side</i>" : ""}</div>
+      <div class="wt-count">${remaining}</div>
+      ${isWork && s.instr ? `<div class="wt-instr">${esc(s.instr)}</div>` : ""}
+      <div class="wt-next">${nx ? "Next · " + esc(nx.name) : "Final effort!"}</div>
+      <div class="wt-ctrls">
+        <button class="btn ghost" id="wt-back">‹</button>
+        <button class="btn" id="wt-pause">${paused ? "Resume" : "Pause"}</button>
+        <button class="btn ghost" id="wt-skip">›</button></div>
+      <div class="wt-prog"><i style="width:${Math.round((idx / steps.length) * 100)}%"></i></div></div>`;
+    wrap.querySelector("#wt-quit").addEventListener("click", paintOverview);
+    wrap.querySelector("#wt-pause").addEventListener("click", () => { paused = !paused; renderStep(); });
+    wrap.querySelector("#wt-skip").addEventListener("click", () => { idx = Math.min(steps.length - 1, idx + 1); remaining = steps[idx].sec; renderStep(); });
+    wrap.querySelector("#wt-back").addEventListener("click", () => { idx = Math.max(0, idx - 1); remaining = steps[idx].sec; renderStep(); });
+  }
+
+  function paintDone() {
+    stop();
+    wrap.innerHTML = `
+      <div class="wpg-head"><button class="iconbtn" id="wd-close" aria-label="Close">✕</button>
+        <h1 class="page">Nice work</h1><p class="row-sub">Log it so it counts toward your load and streak.</p></div>
+      <div class="card">
+        <div class="frow"><span class="l">Time</span><input type="text" inputmode="numeric" id="wd-min" value="${session.targetMin}"><span class="suffix">min</span></div>
+        <div class="frow"><span class="l">Avg HR</span><input type="text" inputmode="numeric" id="wd-hr" placeholder="—"><span class="suffix">bpm</span></div>
+        <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="wd-maxhr" placeholder="—"><span class="suffix">bpm</span></div>
+        <div class="frow"><span class="l">Calories</span><input type="text" inputmode="numeric" id="wd-cal" placeholder="—"><span class="suffix">kcal</span></div>
+        <div class="frow" style="border:none"><span class="l">Effort</span>
+          <span class="seg rpe" style="border:none;padding:0;flex:1;justify-content:flex-end;flex-wrap:wrap">${[1,2,3,4,5,6,7,8,9,10].map(n => `<button data-rpe="${n}" style="flex:0 0 30px;min-height:38px">${n}</button>`).join("")}</span></div>
+      </div>
+      <p class="row-sub">No heart rate? It still counts toward your time and streak — just not the aerobic/anaerobic split.</p>
+      <button class="btn" id="wd-save">Save workout</button>
+      <button class="btn ghost" id="wd-skip">Not now</button>`;
+    let rpe = null;
+    wrap.querySelectorAll("[data-rpe]").forEach(b => b.addEventListener("click", () => {
+      rpe = rpe === +b.dataset.rpe ? null : +b.dataset.rpe;
+      wrap.querySelectorAll("[data-rpe]").forEach(x => x.classList.toggle("on", +x.dataset.rpe === rpe));
+    }));
+    wrap.querySelector("#wd-close").addEventListener("click", close);
+    wrap.querySelector("#wd-skip").addEventListener("click", close);
+    wrap.querySelector("#wd-save").addEventListener("click", () => {
+      const min = num(wrap.querySelector("#wd-min").value) || session.targetMin;
+      doc.logs.push({ id: S.uid(), date: dateISO, sport: "gym", min, venue: session.venue || "home",
+        avgHR: num(wrap.querySelector("#wd-hr").value) ?? undefined, maxHR: num(wrap.querySelector("#wd-maxhr").value) ?? undefined,
+        calories: num(wrap.querySelector("#wd-cal").value) ?? undefined, rpe: rpe ?? undefined, source: "manual" });
+      doc.logs.sort(byDate);
+      close(); toast("Workout logged ✓");
+    });
+  }
+
+  paintOverview();
+}
+
 /* ---------------- PROGRESS ---------------- */
 
 let ridgeSel = null;
@@ -1317,9 +1580,9 @@ let ridgeSel = null;
 function ridgeDetail(vol) {
   if (ridgeSel == null || !vol[ridgeSel]) return "";
   const p = vol[ridgeSel];
-  const tot = p.run + p.bike + (p.hike || 0);
+  const tot = p.run + p.bike + (p.hike || 0) + (p.gym || 0);
   const parts = [];
-  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}${p.hike ? ` · hike ${fmtDur(p.hike)}` : ""}` : "no activity logged");
+  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}${p.hike ? ` · hike ${fmtDur(p.hike)}` : ""}${p.gym ? ` · gym ${fmtDur(p.gym)}` : ""}` : "no activity logged");
   if (p.target) parts.push(`${Math.round(((p.run + p.bike) / p.target) * 100)} % of the ${fmtDur(p.target)} plan`);
   if (p.isDeload) parts.push(`<span style="color:var(--sand)">deload</span>`);
   const end = p.end || E.addDays(p.start, 6);
@@ -1354,7 +1617,8 @@ function lineDetail(id, series, fmtVal) {
   const sel = lineSel[id];
   const p = sel && series[sel.si] && series[sel.si].points[sel.pi];
   if (!p) return "";
-  return `<div class="callout">${fmtShort(p.date)} · ${fmtVal(p, sel.si)}</div>`;
+  const link = p.id ? ` <button class="lk seeact" data-openlog="${p.id}">see this activity →</button>` : "";
+  return `<div class="callout">${fmtShort(p.date)} · ${fmtVal(p, sel.si)}${link}</div>`;
 }
 
 function renderProgress() {
@@ -1378,16 +1642,16 @@ function renderProgress() {
   const vPts = vo2.map(v => ({ x: dnum(v.date), y: v.value, date: v.date }));
   const easyRuns = doc.logs.filter(l => E.isRunType(l) && (l.min || 0) >= 20 && l.km > 0 &&
     l.avgHR != null && l.avgHR >= 105 && l.avgHR <= 155).sort(byDate);
-  const pPts = R(easyRuns.map(l => ({ x: dnum(l.date), y: l.min * 60 / l.km, date: l.date })));
+  const pPts = R(easyRuns.map(l => ({ x: dnum(l.date), y: l.min * 60 / l.km, date: l.date, id: l.id })));
   const hint = E.paceHint(doc.logs, B, 2, doc.settings.easyPace);
 
   const speedPts = (filter) => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
-    .map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date })));
+    .map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date, id: l.id })));
   // climbing only: climb-type rides, trail runs, hikes — where ascent is the point
   const ascentPts = R(doc.logs.filter(l => l.ascent > 0 &&
     ((l.sport === "bike" && l.type === "climb") || l.sport === "trail" || l.sport === "hike")).sort(byDate)
-    .map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date })));
-  const rpeList = doc.logs.filter(l => l.rpe != null && ["run", "trail", "bike", "hike"].includes(l.sport) && inRange(l.date)).sort(byDate);
+    .map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })));
+  const rpeList = doc.logs.filter(l => l.rpe != null && ["run", "trail", "bike", "hike", "gym"].includes(l.sport) && inRange(l.date)).sort(byDate);
 
   // bucketed series honour the week/month toggle
   const unit = doc.settings.progressRange.unit || "week";
@@ -1429,13 +1693,14 @@ function renderProgress() {
   const tip = id => lineSel[id] ? "TAP AGAIN TO CLEAR" : "TAP A POINT";
 
   const anyHike = vol.some(v => v.hike > 0);
+  const anyGym = vol.some(v => v.gym > 0);
   const CARDS = {
     volume: () => `
       <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span><span class="eyebrow tapx">${ridgeSel == null ? "TAP A BAR" : "TAP AGAIN TO CLEAR"}</span></div>
       ${unit === "month"
-        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike"], colors: ["#5d6ccc", "var(--cy)", "#7fd6c0"], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
+        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym"], colors: ["#5d6ccc", "var(--cy)", "#7fd6c0", "#c98bdb"], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
         : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel }))}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span>${anyHike ? `<span><i style="background:#7fd6c0"></i>hike</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
+      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span>${anyHike ? `<span><i style="background:#7fd6c0"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:#c98bdb"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
       ${ridgeDetail(vol)}`,
 
     trainingLoad: () => {
@@ -1526,8 +1791,8 @@ function renderProgress() {
 
     runDistance: () => {
       const d = E.distanceSplit(doc.logs, "run", win.from, win.to);
-      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
-      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
+      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
       const ser = [];
       if (reg.length) ser.push({ points: reg, color: "var(--cy)" });
       if (long.length) ser.push({ points: long, color: "var(--sand)" });
@@ -1542,8 +1807,8 @@ function renderProgress() {
 
     rideDistance: () => {
       const d = E.distanceSplit(doc.logs, "bike", win.from, win.to);
-      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
-      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
+      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
       const ser = [];
       if (reg.length) ser.push({ points: reg, color: "#8e9df8" });
       if (long.length) ser.push({ points: long, color: "var(--sand)" });
@@ -1559,40 +1824,55 @@ function renderProgress() {
     balance: () => {
       const w = E.intensityInRange(doc.logs, B, win.from, win.to);
       const pts = intB.filter(x => x.total > 0).map(x => ({ x: dnum(x.start), y: x.hardPct * 100, date: x.start }));
+      const tPct = w.total ? w.threshold / w.total : 0, aPct = w.total ? w.anaerobic / w.total : 0;
+      let advice = "";
+      if (w.total) {
+        if (w.hardPct > 0.35) advice = "You're skewing <b>hard</b> — most training should be easy. Add easy aerobic volume to protect recovery and let the hard days land.";
+        else if (w.hardPct < 0.10) advice = "Almost all easy — you're <b>light on intensity</b>. One weekly tempo or interval session would sharpen your top end.";
+        else if (aPct < 0.03) advice = "Solid aerobic base with some threshold, but <b>little anaerobic</b> — add short, sharp Z4–Z5 intervals to build speed.";
+        else advice = "Nicely polarized — you're close to the <b>80/20 sweet spot</b>. Keep it here.";
+      }
       return `
       <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
       ${pts.length >= 2 ? wrap("balance", C.lineChart(pts, { axis: true, taps: true, color: "var(--sand)", target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
       ${lineDetail("balance", [{ points: pts }], p => `${Math.round(p.y)}% hard`)}
-      ${w.total ? `<div class="callout">${Math.round(w.easyPct * 100)}% easy / ${Math.round(w.hardPct * 100)}% hard over ${win.label.toLowerCase()}. ${w.hardPct > 0.35 ? "Skewing hard — add easy volume." : w.hardPct < 0.1 ? "Mostly easy — one quality session would sharpen you." : "Near the 80/20 sweet spot."}</div>` : ""}`;
+      ${w.total ? `<div class="callout">Over ${win.label.toLowerCase()}: <b>${Math.round(w.easyPct * 100)}%</b> easy · <b>${Math.round(tPct * 100)}%</b> threshold · <b>${Math.round(aPct * 100)}%</b> anaerobic.<br>${advice}</div>` : ""}`;
     },
 
     runSpeed: () => {
-      const easy = speedPts(l => E.isRunType(l) && ["easy", "long", undefined].includes(l.type));
-      const hard = speedPts(l => E.isRunType(l) && ["tempo", "intervals", "hills"].includes(l.type));
+      const longIds = new Set(E.distanceSplit(doc.logs, "run", win.from, win.to).long.map(x => x.id));
+      const hardT = l => ["tempo", "intervals", "hills"].includes(l.type);
+      const long = speedPts(l => E.isRunType(l) && longIds.has(l.id));
+      const easy = speedPts(l => E.isRunType(l) && !longIds.has(l.id) && !hardT(l));
+      const hard = speedPts(l => E.isRunType(l) && !longIds.has(l.id) && hardT(l));
       const ser = [];
       if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
+      if (long.length) ser.push({ points: long, color: "#7fd6c0" });
       if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
-      const ae = seriesAvg(easy), ah = seriesAvg(hard);
+      const ae = seriesAvg(easy), al = seriesAvg(long), ah = seriesAvg(hard);
       return `
       <div class="hd"><span class="eyebrow">Running speed by type</span><span class="eyebrow tapx">km/h</span></div>
-      ${avgLine([ae != null ? `easy ${ae.toFixed(1)}` : "", ah != null ? `hard ${ah.toFixed(1)}` : "", "km/h"])}
-      ${ser.some(s => s.points.length >= 2) ? wrap("runSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.runSpeed })) : `<p class="row-sub">Log runs with distance to compare your easy and hard-day speeds over time.</p>`}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>easy</span><span><i style="background:var(--sand)"></i>tempo/hard</span></div>
+      ${avgLine([ae != null ? `easy ${ae.toFixed(1)}` : "", al != null ? `long ${al.toFixed(1)}` : "", ah != null ? `hard ${ah.toFixed(1)}` : "", "km/h"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("runSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.runSpeed })) : `<p class="row-sub">Log runs with distance to compare your easy, long and hard-day speeds over time.</p>`}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>easy</span><span><i style="background:#7fd6c0"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span></div>
       ${lineDetail("runSpeed", ser, (p) => `${p.y.toFixed(1)} km/h`)}`;
     },
 
     rideSpeed: () => {
-      const flat = speedPts(l => l.sport === "bike" && l.type !== "climb");
+      const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
       const climb = speedPts(l => l.sport === "bike" && l.type === "climb");
+      const longRide = speedPts(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
+      const easy = speedPts(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
       const ser = [];
-      if (flat.length) ser.push({ points: flat, color: "#8e9df8" });
+      if (easy.length) ser.push({ points: easy, color: "#8e9df8" });
       if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
-      const af = seriesAvg(flat), ac = seriesAvg(climb);
+      if (longRide.length) ser.push({ points: longRide, color: "#7fd6c0" });
+      const ae = seriesAvg(easy), ac = seriesAvg(climb), al = seriesAvg(longRide);
       return `
       <div class="hd"><span class="eyebrow">Ride speed by type</span><span class="eyebrow tapx">km/h</span></div>
-      ${avgLine([af != null ? `flat ${af.toFixed(1)}` : "", ac != null ? `climb ${ac.toFixed(1)}` : "", "km/h"])}
-      ${ser.some(s => s.points.length >= 2) ? wrap("rideSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rideSpeed })) : `<p class="row-sub">Log rides with distance — flat and climbing speeds are tracked separately.</p>`}
-      <div class="legend2"><span><i style="background:#8e9df8"></i>flat</span><span><i style="background:var(--sand)"></i>climb</span></div>
+      ${avgLine([ae != null ? `easy ${ae.toFixed(1)}` : "", ac != null ? `climb ${ac.toFixed(1)}` : "", al != null ? `long ${al.toFixed(1)}` : "", "km/h"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("rideSpeed", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rideSpeed })) : `<p class="row-sub">Log rides with distance — easy/interval, climbing and long-ride speeds are tracked separately.</p>`}
+      <div class="legend2"><span><i style="background:#8e9df8"></i>easy/int</span><span><i style="background:var(--sand)"></i>climb</span><span><i style="background:#7fd6c0"></i>long</span></div>
       ${lineDetail("rideSpeed", ser, p => `${p.y.toFixed(1)} km/h`)}`;
     },
 
@@ -1607,8 +1887,8 @@ function renderProgress() {
 
     paceVsRpe: () => {
       const sp = doc.logs.filter(l => E.isRunType(l) && l.km > 0 && l.min > 0 && l.rpe && inRange(l.date)).sort(byDate);
-      const speed = sp.map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date }));
-      const rpe = sp.map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date }));
+      const speed = sp.map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date, id: l.id }));
+      const rpe = sp.map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, id: l.id }));
       const ser = [{ points: speed, color: "var(--cy)" }, { points: rpe, color: "var(--sand)" }];
       return `
       <div class="hd"><span class="eyebrow">Pace vs RPE</span><span class="eyebrow tapx">efficiency</span></div>
@@ -1648,7 +1928,7 @@ function renderProgress() {
       const ser = [];
       const avgParts = [];
       for (const ty of ["easy", "long", "tempo", "intervals", "hills", "climb"]) {
-        const pts = rpeList.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty }));
+        const pts = rpeList.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty, id: l.id }));
         if (pts.length) { ser.push({ points: pts, color: colors[ty] }); avgParts.push(`${ty} ${seriesAvg(pts).toFixed(1)}`); }
       }
       return `
@@ -1772,6 +2052,10 @@ function renderProgress() {
   page.querySelector("#pg-coach")?.addEventListener("click", () => setTab("coach"));
   page.querySelectorAll("[data-pbid]").forEach(b => b.addEventListener("click", () => {
     const log = doc.logs.find(l => l.id === b.dataset.pbid); if (!log) return;
+    openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
+  }));
+  page.querySelectorAll("[data-openlog]").forEach(b => b.addEventListener("click", () => {
+    const log = doc.logs.find(l => l.id === b.dataset.openlog); if (!log) return;
     openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
   }));
 }
@@ -1947,6 +2231,7 @@ function renderSettings() {
       <button class="srow" id="st-custom" style="border-top:1px solid var(--line)"><span class="l" style="color:var(--cy)">Customize zones<span>your own bpm bounds — every plan and chart updates</span></span><span class="chev">›</span></button>
     </div></div>
     <div class="group"><div class="gh">Plan</div><div class="scard">
+      <button class="srow" id="st-mix"><span class="l">Weekly mix<span>runs · rides · gym per week</span></span><span class="v">${st.weeklyCounts.run} · ${st.weeklyCounts.bike} · ${st.weeklyCounts.gym}</span><span class="chev">›</span></button>
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
       <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
       <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
@@ -1955,12 +2240,18 @@ function renderSettings() {
       <button class="srow" id="st-pace"><span class="l">Easy pace<span>your run pace hint until the app has learned</span></span><span class="v ${st.easyPace ? "" : "add"}">${st.easyPace ? `${E.fmtPace(st.easyPace.lo)}–${E.fmtPace(st.easyPace.hi)}` : "Auto"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
-        <span class="laychips">${E.DAYS.map(d => `<i class="${lay[d] === "run" ? "lr" : lay[d] === "rest" ? "lx" : "lb"}">${d[0].toUpperCase()}</i>`).join("")}</span><span class="chev">›</span></button>
+        <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
     </div></div>
     <div class="group"><div class="gh">Workouts allowed</div><div class="scard">
       ${WORKOUT_TOGGLES.map(([key, label, sub]) => `
         <button class="srow tog" data-fam="${key}"><span class="l">${label}<span>${sub}</span></span>
           <span class="switch ${st.allowedTypes[key] !== false ? "on" : ""}"></span></button>`).join("")}
+    </div></div>
+    <div class="group"><div class="gh">Home equipment</div><div class="scard">
+      <p class="row-sub" style="padding:6px 14px 2px">Switch on what you own — home workouts only pick exercises you can actually do.</p>
+      ${Object.entries(W.EQUIPMENT_LABELS).filter(([k]) => W.HOME_EQUIPMENT.includes(k)).map(([key, label]) => `
+        <button class="srow tog" data-equip="${key}"><span class="l">${label}</span>
+          <span class="switch ${st.equipment[key] ? "on" : ""}"></span></button>`).join("")}
     </div></div>
     <div class="group"><div class="gh">Data — yours, on this phone</div><div class="scard">
       <button class="srow" id="st-export"><span class="l">Export JSON<span>${exportDays == null ? "never exported yet" : exportDays === 0 ? "exported today" : `last export · ${exportDays} day${exportDays > 1 ? "s" : ""} ago`}</span></span><span class="v add">Export</span></button>
@@ -2017,7 +2308,7 @@ function renderSettings() {
   page.querySelectorAll("[data-fam]").forEach(b => b.addEventListener("click", () => {
     const key = b.dataset.fam;
     const turningOff = st.allowedTypes[key] !== false;
-    if (turningOff) {
+    if (turningOff && (RUN_BASE.includes(key) || RIDE_BASE.includes(key))) {
       const group = RUN_BASE.includes(key) ? RUN_BASE : RIDE_BASE;
       const stillOn = group.filter(k => k !== key && st.allowedTypes[k] !== false);
       if (!stillOn.length) { toast("Keep at least one " + (group === RUN_BASE ? "run" : "ride") + " type"); return; }
@@ -2027,6 +2318,11 @@ function renderSettings() {
       applyAllowedToCurrentWeek();
     });
   }));
+  page.querySelectorAll("[data-equip]").forEach(b => b.addEventListener("click", () => {
+    const key = b.dataset.equip;
+    persist(() => { st.equipment = { ...st.equipment, [key]: !st.equipment[key] }; });
+  }));
+  $("#st-mix")?.addEventListener("click", () => openWeeklyMix(currentWeek()));
   $("#st-quality").addEventListener("click", () => {
     const qs = qstate();
     if (st.qualityOverride) {
@@ -2224,8 +2520,8 @@ function openGrowthSheet() {
 }
 
 function openLayoutEditor() {
-  const lay = { ...doc.settings.layout };
-  const OPTS = [["run", "Run"], ["bike", "Ride"], ["bike-long", "Long"], ["rest", "Rest"]];
+  const lay = {}; for (const d of E.DAYS) { const v = doc.settings.layout[d]; lay[d] = Array.isArray(v) ? (v[0] || "rest") : (v || "rest"); }
+  const OPTS = [["run", "Run"], ["bike", "Ride"], ["bike-long", "Long"], ["gym", "Gym"], ["rest", "Rest"]];
   const sheet = openSheet(`
     <div class="sh-title">Weekly layout</div>
     <div class="sh-sub">Applies when the next week is generated</div>
@@ -2258,11 +2554,12 @@ function openLayoutEditor() {
         const sdi = E.DAYS.indexOf(s.day);
         if (sdi <= di) continue; // protect past + today
         const want = mapForFuture[s.day] || "rest";
-        if (want === "rest") { Object.assign(s, { sport: "rest", kind: "rest", targetMin: 0, zone: 0 }); delete s.qualityTemplate; }
-        else if (want === "run" || want === "bike") { Object.assign(s, { sport: want, kind: "easy", targetMin: s.targetMin || (want === "run" ? 35 : 60), zone: 2 }); delete s.qualityTemplate; }
-        else if (want === "bike-long") { Object.assign(s, { sport: "bike", kind: "long", targetMin: Math.max(s.targetMin, 90), zone: 2 }); delete s.qualityTemplate; }
+        if (want === "rest") { Object.assign(s, { sport: "rest", kind: "rest", targetMin: 0, zone: 0 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
+        else if (want === "run" || want === "bike") { Object.assign(s, { sport: want, kind: "easy", targetMin: s.targetMin || (want === "run" ? 35 : 60), zone: 2 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
+        else if (want === "bike-long") { Object.assign(s, { sport: "bike", kind: "long", targetMin: Math.max(s.targetMin, 90), zone: 2 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
+        else if (want === "gym") { Object.assign(s, { sport: "gym", kind: "easy", targetMin: E.snapGymMinutes(s.targetMin || 45), venue: doc.settings.gymVenueDefault || "home", gym: { seed: E.hashSeed(`${w.id}-${s.day}-${s.slot ?? 0}`), avoidIds: [], swaps: {} } }); delete s.qualityTemplate; delete s.zone; }
       }
-      w.targetMin = { run: E.sumSessions(w.sessions, "run"), bike: E.sumSessions(w.sessions, "bike") };
+      w.targetMin = { run: E.sumSessions(w.sessions, "run"), bike: E.sumSessions(w.sessions, "bike"), gym: E.sumSessions(w.sessions, "gym") };
     });
   };
   sheet.querySelector("#ly-now").addEventListener("click", () => {

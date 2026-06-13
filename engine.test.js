@@ -41,7 +41,7 @@ test("acceptance 1: week 1 plan matches the spec table", () => {
     const [day, sport, kind, min, zone] = expect[i];
     assert.deepEqual([s.day, s.sport, s.kind, s.targetMin, s.zone], [day, sport, kind, min, zone]);
   });
-  assert.deepEqual(w.targetMin, { run: 105, bike: 255 });
+  assert.deepEqual(w.targetMin, { run: 105, bike: 255, gym: 0 });
 });
 
 /* ---------- 2. +7 % recommendation, +10 % override, run cap ---------- */
@@ -86,7 +86,7 @@ test("acceptance 3: week 4 deloads at 60 % (long ride ≤ 90); week 5 = week 3 �
 });
 
 test("long ride hard cap at 210 redistributes to other rides", () => {
-  const s = E.buildSessions(0, 500, LAYOUT);
+  const s = E.buildSessions(0, 500, 0, LAYOUT);
   const long = s.find(x => x.kind === "long");
   assert.equal(long.targetMin, 210);
   assert.equal(E.sumSessions(s, "bike"), 500);
@@ -445,7 +445,7 @@ test("rotation respects allowed families; null when none allowed", () => {
 });
 
 test("placeLayout honours a non-Sunday rest day with no back-to-back runs", () => {
-  const lay = E.placeLayout(3, 3, "wed"); // Wednesday off; returns day→[sports]
+  const lay = E.placeLayout({ run: 3, bike: 3, restDay: "wed" }); // Wednesday off; returns day→[sports]
   assert.deepEqual(lay.wed, ["rest"]);
   const flat = Object.values(lay).flat();
   assert.equal(flat.filter(v => v === "run").length, 3);
@@ -456,7 +456,7 @@ test("placeLayout honours a non-Sunday rest day with no back-to-back runs", () =
 });
 
 test("placeLayout puts a 7th/8th session as a two-a-day on a fresh day, not by the long ride", () => {
-  const lay = E.placeLayout(4, 4, "sun"); // 8 sessions over 6 active days → 2 doubles
+  const lay = E.placeLayout({ run: 4, bike: 4, restDay: "sun" }); // 8 sessions over 6 active days → 2 doubles
   const trainingSlots = Object.values(lay).flat().filter(v => v !== "rest").length;
   assert.equal(trainingSlots, 8, "4 runs + 4 rides placed");
   const doubleDays = E.DAYS.filter(d => lay[d].length === 2 && !lay[d].includes("rest"));
@@ -756,4 +756,124 @@ test("distanceSplit: long vs regular by distance, untyped imports included", () 
      { date: "2026-06-04", sport: "run", km: 6, min: 40 }],
     "run", "2026-06-01", "2026-06-30");
   assert.ok(tagged.long.some(l => l.km === 6));
+});
+
+/* ================= gym activity (v1.5) ================= */
+
+// settings.layout is kept in sync with weeklyCounts (incl. gym) by the app
+const GYM_LAYOUT = E.placeLayout({ run: 3, bike: 2, gym: 2, restDay: "sun" });
+const GYM_SETTINGS = { ...SETTINGS, layout: GYM_LAYOUT, gymVenueDefault: "home", allowedTypes: { gymStrength: true } };
+
+test("placeLayout schedules 3 streams and realizes the requested counts", () => {
+  const lay = E.placeLayout({ run: 2, bike: 3, gym: 2, restDay: "sun" });
+  const flat = Object.values(lay).flat();
+  assert.equal(flat.filter(v => v === "run").length, 2, "2 runs");
+  assert.equal(flat.filter(v => v === "bike" || v === "bike-long").length, 3, "3 rides");
+  assert.equal(flat.filter(v => v === "gym").length, 2, "2 gyms");
+  assert.deepEqual(lay.sun, ["rest"]);
+  const oneADay = {}; E.DAYS.forEach(d => { oneADay[d] = lay[d][0]; });
+  assert.equal(E.consecutiveRunDays(oneADay).length, 0, "no back-to-back runs");
+});
+
+test("placeLayout extras realize counts when total exceeds active days (bugfix)", () => {
+  const lay = E.placeLayout({ run: 3, bike: 3, gym: 2, restDay: "sun" }); // 8 over 6 days
+  const flat = Object.values(lay).flat();
+  assert.equal(flat.filter(v => v === "run").length, 3);
+  assert.equal(flat.filter(v => v === "bike" || v === "bike-long").length, 3);
+  assert.equal(flat.filter(v => v === "gym").length, 2);
+  assert.equal(flat.filter(v => v !== "rest").length, 8, "all 8 sessions placed");
+});
+
+test("buildSessions emits gym sessions snapped to template durations", () => {
+  const lay = { mon: "run", tue: "gym", wed: "bike", thu: "gym", fri: "run", sat: "bike-long", sun: "rest" };
+  const s = E.buildSessions(70, 200, 95, lay, { gymVenue: "home", weekSalt: "2026-06-15" });
+  const gyms = s.filter(x => x.sport === "gym");
+  assert.equal(gyms.length, 2);
+  for (const g of gyms) {
+    assert.ok(E.GYM_DURATIONS.includes(g.targetMin), `gym ${g.targetMin} snapped`);
+    assert.equal(g.venue, "home");
+    assert.ok(g.gym && typeof g.gym.seed === "number");
+    assert.equal(g.zone, undefined, "gym has no zone");
+  }
+});
+
+test("snapGymMinutes clamps to the template set", () => {
+  assert.equal(E.snapGymMinutes(33), 30);
+  assert.equal(E.snapGymMinutes(50), 45);
+  assert.equal(E.snapGymMinutes(200), 90);
+  assert.equal(E.snapGymMinutes(10), 30);
+  assert.equal(E.snapGymMinutes(0), 0);
+});
+
+test("planNextWeek grows gym capped at +10%, bike absorbs remainder; no-gym unchanged", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week: wg } = E.relayoutWeek({ week: w1, runCount: 3, bikeCount: 2, gymCount: 2, gymVenue: "home" });
+  assert.ok(wg.targetMin.gym > 0, "gym introduced");
+  const w2 = E.planNextWeek({ prevLoadWeek: wg, chosenRate: 0.07, settings: GYM_SETTINGS, startDate: "2026-06-22", weekNum: 2 });
+  assert.ok(w2.targetMin.gym <= wg.targetMin.gym * 1.10 + 7.5, "gym capped at +10%");
+  assert.ok(w2.targetMin.run <= wg.targetMin.run * 1.10 + 2.5, "run capped at +10%");
+  const t = w => w.targetMin.run + w.targetMin.bike + w.targetMin.gym;
+  assert.ok(Math.abs(t(w2) - t(wg) * 1.07) <= 12, "total grows ~7%");
+  const noGym = E.planNextWeek({ prevLoadWeek: w1, chosenRate: 0.07, settings: SETTINGS, startDate: "2026-06-22", weekNum: 2 });
+  assert.equal(noGym.targetMin.gym, 0, "no-gym week stays gym-free");
+});
+
+test("deloadWeek scales gym to 60% (snapped, no zone), keeps it easy and preserves venue", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week: wg } = E.relayoutWeek({ week: w1, runCount: 3, bikeCount: 2, gymCount: 2, gymVenue: "gym" });
+  const d = E.deloadWeek({ prevLoadWeek: wg, startDate: "2026-07-06", weekNum: 4 });
+  const gyms = d.sessions.filter(s => s.sport === "gym");
+  assert.ok(gyms.length >= 1);
+  for (const g of gyms) {
+    assert.equal(g.kind, "easy");
+    assert.ok(E.GYM_DURATIONS.includes(g.targetMin));
+    assert.equal(g.venue, "gym", "venue preserved");
+    assert.equal(g.zone, undefined);
+  }
+});
+
+test("plannedMinutes & loggedMinutes count gym; a no-HR gym still counts as volume", () => {
+  const w1 = E.generateWeek1("2026-06-15");
+  const { week: wg } = E.relayoutWeek({ week: w1, runCount: 2, bikeCount: 2, gymCount: 2, gymVenue: "home" });
+  assert.ok(E.plannedMinutes(wg) >= wg.targetMin.run + wg.targetMin.bike, "gym included in planned");
+  const logs = [{ date: "2026-06-16", sport: "gym", min: 45, source: "manual" }];
+  assert.ok(E.loggedMinutes(wg, logs) >= 45, "no-HR gym counts as logged time");
+});
+
+test("sessionLoad: gym contributes 0 without HR/RPE, nonzero with either", () => {
+  assert.equal(E.sessionLoad({ sport: "gym", min: 45 }, BOUNDS), 0);
+  assert.ok(E.sessionLoad({ sport: "gym", min: 45, avgHR: 150 }, BOUNDS) > 0);
+  assert.ok(E.sessionLoad({ sport: "gym", min: 45, rpe: 7 }, BOUNDS) > 0);
+  assert.equal(E.sessionLoad({ sport: "gym", min: 30, rpe: 6 }, BOUNDS), 180);
+});
+
+test("training load / intensity exclude a no-HR gym but include an HR gym", () => {
+  const base = [{ date: "2026-06-15", sport: "run", min: 40, avgHR: 150 }];
+  const noHR = base.concat([{ date: "2026-06-16", sport: "gym", min: 60 }]);
+  const withHR = base.concat([{ date: "2026-06-16", sport: "gym", min: 60, avgHR: 140 }]);
+  const ld0 = E.loadInRange(noHR, BOUNDS, "2026-06-15", "2026-06-21");
+  const ld1 = E.loadInRange(withHR, BOUNDS, "2026-06-15", "2026-06-21");
+  assert.ok(ld1 > ld0, "HR gym adds load, no-HR gym does not");
+  const in0 = E.intensityInRange(noHR, BOUNDS, "2026-06-15", "2026-06-21");
+  const in1 = E.intensityInRange(withHR, BOUNDS, "2026-06-15", "2026-06-21");
+  assert.equal(in0.total, 40, "no-HR gym excluded from the intensity split");
+  assert.equal(in1.total, 100, "HR gym counted in the split");
+});
+
+test("volumeInRange exposes a gym key unconditionally", () => {
+  const logs = [{ date: "2026-06-16", sport: "gym", min: 50 }, { date: "2026-06-17", sport: "gym", min: 40, avgHR: 130 }];
+  const v = E.volumeInRange(logs, "2026-06-15", "2026-06-21");
+  assert.equal(v.gym, 90, "both gym sessions count as volume regardless of HR");
+});
+
+test("programAdherence matches a planned gym to a logged gym", () => {
+  const w = E.generateWeek1("2026-06-15");
+  const week = { ...w, sessions: w.sessions.map(s => s.day === "tue" ? { day: "tue", sport: "gym", kind: "easy", targetMin: 45 } : s) };
+  const logs = [{ date: "2026-06-16", sport: "gym", min: 45, source: "manual" }];
+  const adh = E.programAdherence({ weeks: [week], logs, todayISO: "2026-06-16" });
+  assert.ok(adh.current >= 1, "logged gym keeps the streak");
+});
+
+test("observedMaxHR rises from a gym log", () => {
+  assert.equal(E.observedMaxHR([{ sport: "run", maxHR: 175 }, { sport: "gym", maxHR: 181 }]), 181);
 });
