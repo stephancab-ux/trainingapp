@@ -613,20 +613,27 @@ test("CSV captures calories + descent and maps trail/hike", () => {
   assert.equal(p.rows.find(r => r.sport === "hike").sport, "hike");
 });
 
-test("classifyImport auto-skips already-imported csv rows, reviews manual matches", () => {
+test("classifyImport adds new rows, gap-fills matches, leaves complete ones", () => {
   const rows = [
-    { date: "2026-07-01", sport: "bike", min: 60, km: 22, time: "08:00" }, // matches a csv log → autoSkip
-    { date: "2026-07-02", sport: "run", min: 35, km: 5, time: "09:00" },   // matches a manual log → review
-    { date: "2026-07-03", sport: "bike", min: 90, km: 40, time: "10:00" }, // new → fresh
+    { date: "2026-07-01", sport: "bike", min: 60, km: 22, time: "08:00", calories: 800, maxHR: 171 }, // fills c1
+    { date: "2026-07-02", sport: "run", min: 35, km: 5, time: "09:00", calories: 400 },               // c2 complete
+    { date: "2026-07-03", sport: "bike", min: 90, km: 40 },                                            // new
   ];
   const logs = [
-    { id: "c1", date: "2026-07-01", sport: "bike", min: 60, km: 22, source: "csv" },
-    { id: "m1", date: "2026-07-02", sport: "run", min: 35, km: 5, source: "manual" },
+    { id: "c1", date: "2026-07-01", sport: "bike", min: 60, km: 22, source: "csv" }, // missing calories + maxHR
+    { id: "c2", date: "2026-07-02", sport: "run", min: 35, km: 5, calories: 400, maxHR: 160, time: "09:00", source: "csv" },
   ];
   const c = E.classifyImport(rows, logs);
   assert.equal(c.fresh.length, 1);
-  assert.equal(c.autoSkip.length, 1);
-  assert.equal(c.review.length, 1);
+  assert.equal(c.enrich.length, 1);
+  assert.equal(c.enrich[0].fill.calories, 800, "fills missing calories");
+  assert.equal(c.enrich[0].fill.maxHR, 171, "fills missing max HR");
+  assert.equal(c.unchanged.length, 1);
+  // a manual log's own data (note/RPE/type) is never overwritten
+  const manual = E.classifyImport([{ date: "2026-07-04", sport: "run", min: 30, km: 5, calories: 300 }],
+    [{ id: "m1", date: "2026-07-04", sport: "run", min: 30, km: 5, note: "mine", rpe: 6, source: "manual" }]);
+  assert.equal(manual.enrich[0].fill.calories, 300);
+  assert.equal(manual.enrich[0].fill.note, undefined, "keeps the manual note");
 });
 
 test("calorie aggregations: weekly total and dominant sport", () => {

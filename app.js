@@ -2177,56 +2177,29 @@ function importCSV(file) {
   file.text().then(text => {
     const parsed = E.parseGarminCSV(text);
     if (parsed.error) { openModal("Can't import", esc(parsed.error), [{ label: "OK", cls: "ghost" }]); return; }
-    const { fresh, autoSkip, review } = E.classifyImport(parsed.rows, doc.logs);
+    const { fresh, enrich, unchanged } = E.classifyImport(parsed.rows, doc.logs);
     const c = parsed.counts;
-    const choice = {}; review.forEach((_, i) => { choice[i] = "skip"; });
-    const fmtRow = r => `${SPORT_NAME[r.sport] || r.sport} · ${r.min} min${r.km ? ` · ${r.km} km` : ""}${r.ascent ? ` · ${r.ascent} m↑` : ""}`;
 
     const finish = () => {
-      let added = 0, merged = 0, skipped = autoSkip.length;
       closeOverlay();
       persist(() => {
-        for (const r of fresh) { doc.logs.push(csvLog(r)); added++; }
-        review.forEach((m, i) => {
-          if (choice[i] === "both") { doc.logs.push(csvLog(m.row)); added++; }
-          else if (choice[i] === "merge") {
-            const t = m.matches[0], r = m.row;
-            t.avgHR ??= r.avgHR; t.maxHR ??= r.maxHR; t.km ??= r.km; t.ascent ??= r.ascent;
-            t.descent ??= r.descent; t.calories ??= r.calories; t.time ??= r.time; merged++;
-          } else skipped++;
-        });
+        for (const r of fresh) doc.logs.push(csvLog(r));
+        for (const { log, fill } of enrich) Object.assign(log, fill); // gap-fill missing fields only
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
       });
-      toast(`Added ${added}${merged ? ` · merged ${merged}` : ""}${skipped ? ` · skipped ${skipped}` : ""}`);
+      toast(`Added ${fresh.length}${enrich.length ? ` · updated ${enrich.length}` : ""}`);
     };
 
-    if (!review.length) {
-      if (!fresh.length) { toast(autoSkip.length ? `Already up to date (${autoSkip.length} known)` : "Nothing to import"); $("#st-file-csv").value = ""; return; }
-      openModal("Import Garmin CSV",
-        `Add <b>${fresh.length}</b> new ${fresh.length === 1 ? "activity" : "activities"}${autoSkip.length ? `, skipping ${autoSkip.length} already imported` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.`,
-        [{ label: `Add ${fresh.length}`, fn: finish }, { label: "Cancel", cls: "ghost" }]);
+    if (!fresh.length && !enrich.length) {
+      toast(unchanged.length ? `Already up to date (${unchanged.length} known)` : "Nothing to import");
       $("#st-file-csv").value = ""; return;
     }
-    const sheet = openSheet(`
-      <div class="sh-title">Import Garmin CSV</div>
-      <div class="sh-sub">${fresh.length} new${autoSkip.length ? ` · ${autoSkip.length} already imported (skipped)` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.</div>
-      <div class="sh-sub" style="margin-top:12px;text-transform:uppercase;letter-spacing:.07em;font-size:11px">Match your manual logs</div>
-      ${review.map((m, i) => `
-        <div class="imp-row">
-          <div class="imp-info"><b>${esc(fmtRow(m.row))}</b><span>${fmtShort(m.row.date)} · matches a manual entry</span></div>
-          <div class="seg imp-seg" data-ci="${i}">
-            <button data-ch="skip" class="on">Skip</button><button data-ch="merge">Merge</button><button data-ch="both">Keep both</button>
-          </div>
-        </div>`).join("")}
-      <button class="btn" id="imp-go">Import</button>
-      <button class="btn ghost" id="imp-cancel">Cancel</button>`);
-    sheet.querySelectorAll(".imp-seg").forEach(seg => seg.querySelectorAll("[data-ch]").forEach(b =>
-      b.addEventListener("click", () => {
-        choice[+seg.dataset.ci] = b.dataset.ch;
-        seg.querySelectorAll("[data-ch]").forEach(x => x.classList.toggle("on", x === b));
-      })));
-    sheet.querySelector("#imp-cancel").addEventListener("click", closeOverlay);
-    sheet.querySelector("#imp-go").addEventListener("click", finish);
+    const parts = [];
+    if (fresh.length) parts.push(`add <b>${fresh.length}</b> new ${fresh.length === 1 ? "activity" : "activities"}`);
+    if (enrich.length) parts.push(`fill in missing data (calories, HR, ascent…) on <b>${enrich.length}</b> existing`);
+    openModal("Import Garmin CSV",
+      `This will ${parts.join(" and ")}${unchanged.length ? `. ${unchanged.length} are already complete` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.`,
+      [{ label: "Import", fn: finish }, { label: "Cancel", cls: "ghost" }]);
   });
   $("#st-file-csv").value = "";
 }

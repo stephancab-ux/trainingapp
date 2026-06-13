@@ -649,18 +649,30 @@ export function dedupeImports(rows, logs) {
   return { fresh, dupes };
 }
 
-/* v1.3 weekly-import triage: rows with no match are added; rows that match an
-   already-imported csv/seed log are skipped silently (re-export of history);
-   only rows matching a *manual* log need the merge/skip/keep-both review. */
+/* Fields a Garmin row can fill in on an existing log — only where the log is
+   missing them (never overwrites your own data, e.g. notes/RPE/type). */
+const IMPORT_FILL_FIELDS = ["km", "avgHR", "maxHR", "ascent", "descent", "calories", "time"];
+export function fillableFields(log, row) {
+  const out = {};
+  for (const f of IMPORT_FILL_FIELDS) if (log[f] == null && row[f] != null) out[f] = row[f];
+  if (!log.note && row.note) out.note = row.note;
+  return out;
+}
+
+/* v1.3.2 import triage: rows with no match are added; a row matching an
+   existing activity GAP-FILLS any fields the activity is missing (calories,
+   max HR, ascent/descent…) rather than being thrown away. If the activity is
+   already complete, the row is left unchanged. */
 export function classifyImport(rows, logs) {
-  const fresh = [], autoSkip = [], review = [];
+  const fresh = [], enrich = [], unchanged = [];
   for (const { row, matches } of importMatches(rows, logs)) {
     if (!matches.length) { fresh.push(row); continue; }
-    const manual = matches.filter(l => l.source === "manual");
-    if (manual.length) review.push({ row, matches: manual });
-    else autoSkip.push(row);
+    const log = matches[0]; // best match
+    const fill = fillableFields(log, row);
+    if (Object.keys(fill).length) enrich.push({ row, log, fill });
+    else unchanged.push(row);
   }
-  return { fresh, autoSkip, review };
+  return { fresh, enrich, unchanged };
 }
 
 /* ---------------- progress helpers ---------------- */
