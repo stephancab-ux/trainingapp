@@ -16,21 +16,24 @@ const svg = (w, h, inner) =>
    data-wi for tap-to-inspect. */
 export function ridgeChart(vol, { width = 352, height = 158, selected = null } = {}) {
   if (!vol.length) return "";
+  const HIKE = "#7fd6c0";
+  const T = p => p.run + p.bike + (p.hike || 0);
   const W = width, H = height, base = H - 16;
-  const max = Math.max(60, ...vol.map(v => Math.max(v.run + v.bike, v.target || 0))) * 1.07;
+  const max = Math.max(60, ...vol.map(v => Math.max(T(v), v.target || 0))) * 1.07;
   const n = vol.length, gap = 3, bw = (W - gap * (n - 1)) / n;
   const y = v => base - (v / max) * (base - 10);
   let s = "";
   let far = `M0 ${base}`;
-  vol.forEach((p, i) => { far += ` L${(i + 0.5) * (bw + gap)} ${y((p.run + p.bike) * 0.62 + max * 0.12)}`; });
+  vol.forEach((p, i) => { far += ` L${(i + 0.5) * (bw + gap)} ${y(T(p) * 0.62 + max * 0.12)}`; });
   s += `<path d="${far} L${W} ${base} Z" fill="rgba(86,219,232,.05)"/>`;
   vol.forEach((p, i) => {
-    const x = i * (bw + gap), tot = p.run + p.bike;
+    const x = i * (bw + gap), runTop = p.bike + p.run, tot = T(p);
     const dim = selected != null && selected !== i;
     const op = (p.isDeload ? 0.45 : 1) * (dim ? 0.45 : 1);
     s += `<g opacity="${op}">`;
     s += `<rect x="${x}" y="${y(p.bike)}" width="${bw}" height="${Math.max(0, base - y(p.bike))}" fill="${BIKE}"/>`;
-    s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(tot))}" rx="2.5" fill="${CY}"/>`;
+    s += `<rect x="${x}" y="${y(runTop)}" width="${bw}" height="${Math.max(0, y(p.bike) - y(runTop))}" ${p.hike ? "" : "rx=\"2.5\""} fill="${CY}"/>`;
+    if (p.hike) s += `<rect x="${x}" y="${y(tot)}" width="${bw}" height="${Math.max(0, y(runTop) - y(tot))}" rx="2.5" fill="${HIKE}"/>`;
     s += `</g>`;
     if (p.target) s += `<line x1="${x - 1}" y1="${y(p.target)}" x2="${x + bw + 1}" y2="${y(p.target)}" stroke="${SAND}" stroke-width="1.6" stroke-dasharray="4 3" opacity="${dim ? 0.4 : 1}"/>`;
     if (p.isDeload) s += `<text x="${x + bw / 2}" y="${H - 3}" fill="${MUT}" font-size="9" text-anchor="middle" font-weight="700">col</text>`;
@@ -38,7 +41,7 @@ export function ridgeChart(vol, { width = 352, height = 158, selected = null } =
     if (selected === i) s += `<rect x="${x - 1.5}" y="${Math.min(y(Math.max(tot, p.target || 0, 30))) - 3}" width="${bw + 3}" height="${base - Math.min(y(Math.max(tot, p.target || 0, 30))) + 3}" rx="3" fill="none" stroke="rgba(86,219,232,.8)" stroke-width="1.5"/>`;
   });
   s += `<line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="${LINE}"/>`;
-  const peak = Math.max(...vol.map(v => v.run + v.bike));
+  const peak = Math.max(...vol.map(T));
   if (peak > 0 && selected == null) {
     const hh = Math.floor(peak / 60), mm = Math.round(peak % 60);
     s += `<text x="${W}" y="${y(peak) - 5}" fill="${MUT}" font-size="9.5" text-anchor="end" font-weight="650">${hh} h ${String(mm).padStart(2, "0")}</text>`;
@@ -153,4 +156,38 @@ export function consistencyCells(cells, slots = 12) {
     const ring = c.isDeload ? "box-shadow:inset 0 0 0 1.5px rgba(230,211,163,.35);" : "";
     return `<i style="background:${bg};${ring}" title="${c.id} · ${Math.round(c.pct * 100)} %"></i>`;
   })).join("");
+}
+
+/* A compact 5-segment semicircle dial (VO₂ fitness category). pos 0–1 marks
+   where the value sits; segs = 5 colours poor→superior. */
+export function vo2Gauge({ pos = 0.5, color = CY, segs }) {
+  const W = 116, H = 64, cx = 58, cy = 58, r = 44, sw = 8;
+  const pt = a => [cx + r * Math.cos(a * Math.PI / 180), cy - r * Math.sin(a * Math.PI / 180)];
+  const seg = (a0, a1, col) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1); return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${col}" stroke-width="${sw}" fill="none"/>`; };
+  let s = "";
+  for (let i = 0; i < 5; i++) s += seg(180 - i * 36, 180 - (i + 1) * 36, segs[i]);
+  const [mx, my] = pt(180 - pos * 180);
+  s += `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="6" fill="#fff" stroke="${color}" stroke-width="3"/>`;
+  return svg(W, H, s);
+}
+
+/* Stacked vertical bars. rows: [{label?, total, ...keyVals}]; keys+colors map
+   the stack order. Used for daily exercise load + monthly volume. */
+export function stackedBars(rows, { keys, colors, width = 352, height = 120, fmtY = null, labelEvery = 0, target = null } = {}) {
+  if (!rows.length) return "";
+  const W = width, H = height, base = H - 14, top = 10;
+  const max = Math.max(1, ...rows.map(r => keys.reduce((a, k) => a + (r[k] || 0), 0)), target || 0);
+  const n = rows.length, gap = n > 40 ? 0.6 : n > 18 ? 1.5 : 3, bw = (W - gap * (n - 1)) / n;
+  const y = v => base - (v / max) * (base - top);
+  let s = "";
+  rows.forEach((r, i) => {
+    let acc = 0; const x = i * (bw + gap);
+    keys.forEach((k, ki) => { const v = r[k] || 0; if (v <= 0) return; s += `<rect x="${x.toFixed(1)}" y="${y(acc + v).toFixed(1)}" width="${Math.max(0.6, bw).toFixed(1)}" height="${((v / max) * (base - top)).toFixed(1)}" fill="${colors[ki]}"/>`; acc += v; });
+    s += `<rect data-wi="${i}" x="${(x - gap / 2).toFixed(1)}" y="0" width="${(bw + gap).toFixed(1)}" height="${H}" fill="transparent" style="cursor:pointer"/>`;
+  });
+  if (target) s += `<line x1="0" y1="${y(target)}" x2="${W}" y2="${y(target)}" stroke="${SAND}" stroke-width="1.3" stroke-dasharray="4 3"/>`;
+  s += `<line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="${LINE}"/>`;
+  if (fmtY) s += `<text x="2" y="${top + 7}" fill="${MUT}" font-size="9">${fmtY(max)}</text>`;
+  if (labelEvery) rows.forEach((r, i) => { if (r.label && i % labelEvery === 0) s += `<text x="${(i * (bw + gap) + bw / 2).toFixed(1)}" y="${H - 2}" fill="${MUT}" font-size="9" text-anchor="middle">${r.label}</text>`; });
+  return svg(W, H, s);
 }

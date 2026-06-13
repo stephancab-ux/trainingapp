@@ -727,7 +727,10 @@ export function consistency({ weeks, logs, todayISO, n = 12 }) {
 /* ================= v1.2 analytics (all pure) ================= */
 
 const ENDURANCE = new Set(["run", "trail", "bike", "hike"]);
-const TRAIN = l => l && ENDURANCE.has(l.sport) && l.source !== "seed";
+/* Descriptive analytics (load, intensity, efficiency, calories) count ALL real
+   endurance history, including the bootstrapped/imported seed — consistent with
+   weeklyVolume. (Plan completion/adherence still exclude seed separately.) */
+const TRAIN = l => l && ENDURANCE.has(l.sport);
 const speedKmh = l => (l.km > 0 && l.min > 0) ? (l.km * 60) / l.min : null;
 const vam = l => (l.ascent > 0 && l.min > 0) ? (l.ascent * 60) / l.min : null; // m/h climbed
 
@@ -1112,6 +1115,121 @@ export function workoutSteps(session, bounds) {
                  ...z(session.zone || 2), name: session.kind === "long" ? "Long" : "Steady" });
   }
   return steps;
+}
+
+/* ---- v1.4: week/month buckets, distance, Garmin-style load, VO₂ category ---- */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/* Time buckets across [from,to]: Monday weeks, or calendar months. */
+export function bucketize(from, to, unit = "week") {
+  const out = [];
+  if (unit === "month") {
+    let d = parseISO(from); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+    const end = parseISO(to);
+    while (d <= end) {
+      const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+      out.push({ start: toISO(d), end: addDays(toISO(next), -1),
+                 label: MONTHS[d.getUTCMonth()] + (d.getUTCMonth() === 0 ? " " + String(d.getUTCFullYear()).slice(2) : "") });
+      d = next;
+    }
+  } else {
+    let s = addDays(from, -dayIndex(from));
+    while (s <= to) { out.push({ start: s, end: addDays(s, 6), label: `${parseISO(s).getUTCDate()} ${MONTHS[parseISO(s).getUTCMonth()]}` }); s = addDays(s, 7); }
+  }
+  return out;
+}
+
+export function volumeInRange(logs, from, to) {
+  const r = logs.filter(l => l.date >= from && l.date <= to);
+  return {
+    run: r.filter(isRunType).reduce((a, l) => a + (l.min || 0), 0),
+    bike: r.filter(l => l.sport === "bike").reduce((a, l) => a + (l.min || 0), 0),
+    hike: r.filter(l => l.sport === "hike").reduce((a, l) => a + (l.min || 0), 0),
+  };
+}
+export function loadInRange(logs, bounds, from, to) {
+  return logs.filter(l => TRAIN(l) && l.date >= from && l.date <= to).reduce((s, l) => s + sessionLoad(l, bounds), 0);
+}
+export function intensityInRange(logs, bounds, from, to) {
+  const band = { aerobic: 0, threshold: 0, anaerobic: 0 };
+  logs.filter(l => TRAIN(l) && l.date >= from && l.date <= to).forEach(l => { band[intensityOfLog(l, bounds)] += l.min || 0; });
+  const total = band.aerobic + band.threshold + band.anaerobic;
+  return { ...band, total, easyPct: total ? band.aerobic / total : null, hardPct: total ? (band.threshold + band.anaerobic) / total : null };
+}
+
+/* Garmin-style load focus: load split into Low aerobic (Z1–2), High aerobic
+   (Z3–4) and Anaerobic (Z5), with a polarized "optimal range" per bucket. */
+function loadBucketOf(l, bounds) {
+  const z = zoneOfHR(bounds, l.avgHR);
+  if (z != null) return z <= 2 ? "low" : z <= 4 ? "high" : "anaerobic";
+  const t = l.type;
+  if (t === "intervals" || t === "hills") return "anaerobic";
+  if (t === "tempo" || t === "climb") return "high";
+  return "low";
+}
+export function loadFocus(logs, bounds, from, to) {
+  const b = { low: 0, high: 0, anaerobic: 0 };
+  for (const l of logs) { if (!TRAIN(l) || l.date < from || l.date > to) continue; b[loadBucketOf(l, bounds)] += sessionLoad(l, bounds); }
+  const total = b.low + b.high + b.anaerobic;
+  const opt = { low: [total * 0.55, total * 0.80], high: [total * 0.15, total * 0.35], anaerobic: [total * 0.03, total * 0.12] };
+  let focus = "Well balanced";
+  if (!total) focus = "No load yet";
+  else if (b.anaerobic < opt.anaerobic[0]) focus = "Anaerobic shortage";
+  else if (b.high < opt.high[0]) focus = "Aerobic shortage";
+  else if (b.anaerobic > opt.anaerobic[1]) focus = "Too much anaerobic";
+  return { ...b, total, opt, focus };
+}
+export function dailyLoad(logs, bounds, from, to) {
+  const days = {};
+  for (const l of logs) {
+    if (!TRAIN(l) || l.date < from || l.date > to) continue;
+    const d = (days[l.date] = days[l.date] || { low: 0, high: 0, anaerobic: 0, total: 0 });
+    const load = sessionLoad(l, bounds);
+    d[loadBucketOf(l, bounds)] += load; d.total += load;
+  }
+  const out = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push({ date: d, ...(days[d] || { low: 0, high: 0, anaerobic: 0, total: 0 }) });
+  return out;
+}
+
+/* VO₂max fitness category by age + sex (Poor→Superior), with a colour and a
+   0–1 position for the dial. Thresholds ≈ Cooper/ACSM norms. */
+const VO2_NORMS = {
+  // [Fair, Good, Excellent, Superior] thresholds, by age bracket
+  male:   { 20: [42, 46, 51, 56], 30: [41, 45, 49, 53], 40: [38, 43, 47, 52], 50: [35, 40, 43, 49], 60: [31, 36, 40, 45] },
+  female: { 20: [36, 40, 44, 49], 30: [34, 38, 42, 46], 40: [32, 35, 39, 44], 50: [28, 32, 36, 41], 60: [25, 30, 33, 38] },
+};
+const VO2_CATS = [
+  { label: "Poor", color: "#e8554e" }, { label: "Fair", color: "#e6a13c" },
+  { label: "Good", color: "#5fbf6a" }, { label: "Excellent", color: "#4a90e2" },
+  { label: "Superior", color: "#8e6ff0" },
+];
+export function vo2Category(value, age, sex) {
+  if (value == null || !age || !sex || !VO2_NORMS[sex]) return null;
+  const bracket = age < 30 ? 20 : age < 40 ? 30 : age < 50 ? 40 : age < 60 ? 50 : 60;
+  const t = VO2_NORMS[sex][bracket];
+  let idx = 0;
+  for (let i = 0; i < t.length; i++) if (value >= t[i]) idx = i + 1;
+  const scaleLo = t[0] - 8, scaleHi = t[3] + 6;
+  const pos = Math.max(0, Math.min(1, (value - scaleLo) / (scaleHi - scaleLo)));
+  return { ...VO2_CATS[idx], idx, pos, bracketLabel: `${bracket}–${bracket + 9}`, thresholds: t };
+}
+
+/* Long vs regular outings for a sport, split by distance so it works on
+   imported data that carries no type tag. "Long" = an explicit long session,
+   or (when untyped) ≥ 1.2× the median distance for that sport. Returns the two
+   date-sorted series plus the threshold used. */
+export function distanceSplit(logs, sport, from, to) {
+  const inSport = l => l.km > 0 && (sport === "run" ? isRunType(l) : l.sport === sport);
+  const all = logs.filter(inSport);
+  const ds = all.map(l => l.km).sort((a, b) => a - b);
+  const median = ds.length ? ds[Math.floor(ds.length / 2)] : 0;
+  const threshold = median * 1.2;
+  const isLong = l => l.type === "long" || (l.type == null && ds.length >= 4 && l.km >= threshold);
+  const pick = pred => all.filter(l => l.date >= from && l.date <= to && pred(l))
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .map(l => ({ date: l.date, km: l.km }));
+  return { long: pick(isLong), regular: pick(l => !isLong(l)), threshold, median };
 }
 
 /* ---- the offline AI coach: deterministic, ranked, explained ---- */

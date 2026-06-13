@@ -8,18 +8,22 @@ export const SCHEMA_VERSION = 3;
 /* The Progress cards in their default order; `on` = shown out of the box. */
 export const PROGRESS_CARDS = [
   { id: "volume",      on: true },
+  { id: "loadFocus",   on: true },
+  { id: "exerciseLoad", on: false },
   { id: "trainingLoad", on: true },
   { id: "streak",      on: true },
   { id: "calories",    on: true },
   { id: "weight",      on: true },
+  { id: "vo2",         on: true },
   { id: "pace",        on: true },
   { id: "coach",       on: true },
   { id: "bests",       on: true },
-  { id: "vo2",         on: false },
   { id: "balance",     on: false },
   { id: "caloriesByType", on: false },
   { id: "runSpeed",    on: false },
   { id: "rideSpeed",   on: false },
+  { id: "runDistance", on: false },
+  { id: "rideDistance", on: false },
   { id: "ascent",      on: false },
   { id: "paceVsRpe",   on: false },
   { id: "efficiency",  on: false },
@@ -39,6 +43,7 @@ export function defaultSettings() {
     maxHR: 183,
     maxHRAuto: true,
     age: null,
+    sex: null,
     restingHR: null,
     lthr: null,
     customZones: null,
@@ -57,7 +62,7 @@ export function defaultSettings() {
       easyRun: true, runTempo: true, runIntervals: true, runHills: true, longRun: true, trailRun: true,
       easyRide: true, bikeIntervals: true, bikeClimb: true, longRide: true,
     },
-    progressRange: { preset: "12w", offset: 0, compare: false },
+    progressRange: { preset: "12w", offset: 0, compare: false, unit: "week" },
     progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     lastExportAt: null,
   };
@@ -183,6 +188,7 @@ export function migrate(doc) {
   // settings keys added after first release get safe defaults
   d.settings = { ...defaultSettings(), ...d.settings };
   d.settings.allowedTypes = { ...defaultSettings().allowedTypes, ...(d.settings.allowedTypes || {}) };
+  d.settings.progressRange = { ...defaultSettings().progressRange, ...(d.settings.progressRange || {}) };
   d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
   d.manualBests ||= [];

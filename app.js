@@ -25,6 +25,9 @@ function fmtDur(min) {
   return `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).padStart(2, "0")}`;
 }
 function fmtDate(iso, opts = { weekday: "long", day: "numeric", month: "long" }) {
+  // add the year whenever it's not the current year, so old activities read clearly
+  if (!("year" in opts) && E.parseISO(iso).getUTCFullYear() !== E.parseISO(todayISO()).getUTCFullYear())
+    opts = { ...opts, year: "numeric" };
   return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "UTC" }).format(E.parseISO(iso));
 }
 /* Day + month, plus the year whenever it's not the current year — so an old
@@ -33,6 +36,8 @@ const fmtShort = iso => fmtDate(iso,
   E.parseISO(iso).getUTCFullYear() === E.parseISO(todayISO()).getUTCFullYear()
     ? { day: "numeric", month: "short" }
     : { day: "numeric", month: "short", year: "numeric" });
+/* very compact d/m label for dense daily bar axes */
+const shortDay = iso => { const d = E.parseISO(iso); return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
 
 const ICONS = {
   run: `<svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg>`,
@@ -1312,13 +1317,13 @@ let ridgeSel = null;
 function ridgeDetail(vol) {
   if (ridgeSel == null || !vol[ridgeSel]) return "";
   const p = vol[ridgeSel];
-  const tot = p.run + p.bike;
+  const tot = p.run + p.bike + (p.hike || 0);
   const parts = [];
-  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}` : "no activity logged");
-  if (p.target) parts.push(`${Math.round((tot / p.target) * 100)} % of the ${fmtDur(p.target)} target`);
-  else parts.push("no plan that week");
+  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}${p.hike ? ` · hike ${fmtDur(p.hike)}` : ""}` : "no activity logged");
+  if (p.target) parts.push(`${Math.round(((p.run + p.bike) / p.target) * 100)} % of the ${fmtDur(p.target)} plan`);
   if (p.isDeload) parts.push(`<span style="color:var(--sand)">deload</span>`);
-  return `<div class="callout">${fmtShort(p.start)} – ${fmtShort(E.addDays(p.start, 6))} · ${parts.join(" · ")}</div>`;
+  const end = p.end || E.addDays(p.start, 6);
+  return `<div class="callout">${fmtShort(p.start)} – ${fmtShort(end)} · ${parts.join(" · ")}</div>`;
 }
 
 let lineSel = {}; // cardId -> {si,pi} | null
@@ -1327,11 +1332,13 @@ const dnum = iso => Math.round((E.parseISO(iso) - E.parseISO(X0)) / 864e5);
 const byDate = (a, b) => (a.date < b.date ? -1 : 1);
 
 const CARD_LABEL = {
-  volume: "Weekly volume", trainingLoad: "Training load", streak: "Program streak",
+  volume: "Training volume", loadFocus: "Load focus", exerciseLoad: "Exercise load",
+  trainingLoad: "Training load", streak: "Program streak",
   calories: "Calories burned", caloriesByType: "Calories by activity", weight: "Weight",
   pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
   vo2: "VO₂ max", balance: "Aerobic / anaerobic", runSpeed: "Running speed by type",
-  rideSpeed: "Ride speed by type", ascent: "Climbing", paceVsRpe: "Pace vs RPE",
+  rideSpeed: "Ride speed by type", runDistance: "Run distance", rideDistance: "Ride distance",
+  ascent: "Climbing", paceVsRpe: "Pace vs RPE",
   efficiency: "Efficiency trend", rpeHeatmap: "RPE calendar", rpeByType: "RPE by type",
   consistency: "Consistency",
 };
@@ -1382,16 +1389,32 @@ function renderProgress() {
     .map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date })));
   const rpeList = doc.logs.filter(l => l.rpe != null && ["run", "trail", "bike", "hike"].includes(l.sport) && inRange(l.date)).sort(byDate);
 
-  const vol = E.weeklyVolume({ logs: doc.logs, weeks: doc.weeks, todayISO: win.to, n: nW });
-  const intensity = E.weeklyIntensity({ logs: doc.logs, bounds: B, todayISO: win.to, n: Math.min(nW, 12) });
-  const load = E.trainingLoad({ logs: doc.logs, bounds: B, todayISO: win.to, n: Math.min(nW, 12) });
+  // bucketed series honour the week/month toggle
+  const unit = doc.settings.progressRange.unit || "week";
+  const buckets = E.bucketize(win.from, win.to, unit);
+  const todayD = t;
+  const vol = buckets.map(bk => {
+    const v = E.volumeInRange(doc.logs, bk.start, bk.end);
+    const plans = doc.weeks.filter(w => w.startDate >= bk.start && w.startDate <= bk.end);
+    return { ...v, start: bk.start, end: bk.end, label: bk.label,
+             target: plans.reduce((a, w) => a + E.plannedMinutes(w), 0) || null,
+             isDeload: plans.length === 1 && plans[0].isDeload,
+             current: todayD >= bk.start && todayD <= bk.end };
+  });
+  const loadB = buckets.map(bk => ({ start: bk.start, label: bk.label, load: E.loadInRange(doc.logs, B, bk.start, bk.end) }));
+  const intB = buckets.map(bk => ({ start: bk.start, label: bk.label, ...E.intensityInRange(doc.logs, B, bk.start, bk.end) }));
+  const calB = buckets.map(bk => ({ start: bk.start, label: bk.label, total: E.caloriesInRange(doc.logs, bk.start, bk.end) }));
+  const load = E.trainingLoad({ logs: doc.logs, bounds: B, todayISO: t, n: 12 }); // ACWR is a "now" metric
+  const lf = E.loadFocus(doc.logs, B, win.from, win.to);
+  const exLoad = E.dailyLoad(doc.logs, B, win.from, win.to);
   const cons = E.consistency({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
   const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: t });
   const bests = E.personalBests({ logs: doc.logs, manualBests: doc.manualBests });
-  const calWeeks = E.weeklyCalories({ logs: doc.logs, todayISO: win.to, n: nW });
-  const calDaily = E.dailyCalories({ logs: doc.logs, from: win.from, to: win.to });
   const calTypes = E.caloriesByType({ logs: doc.logs, todayISO: win.to, n: nW });
   const calSplit = E.plannedVsUnplannedCalories({ weeks: doc.weeks, logs: doc.logs, from: win.from, to: win.to });
+  const calTypeCounts = {};
+  doc.logs.forEach(l => { if (l.calories > 0 && inRange(l.date)) calTypeCounts[l.sport] = (calTypeCounts[l.sport] || 0) + 1; });
+  const vo2Cat = lastV ? E.vo2Category(lastV.value, doc.settings.age, doc.settings.sex) : null;
 
   // rolling efficiency (running speed ÷ RPE)
   const effLogs = doc.logs.filter(l => E.isRunType(l) && l.rpe && l.km > 0 && l.min > 0 && inRange(l.date)).sort(byDate);
@@ -1405,24 +1428,64 @@ function renderProgress() {
   const wrap = (id, inner) => `<div class="chartwrap" data-card="${id}">${inner}</div>`;
   const tip = id => lineSel[id] ? "TAP AGAIN TO CLEAR" : "TAP A POINT";
 
+  const anyHike = vol.some(v => v.hike > 0);
   const CARDS = {
     volume: () => `
-      <div class="hd"><span class="eyebrow">Weekly volume</span><span class="eyebrow tapx">${ridgeSel == null ? "LAST 12 · TAP A WEEK" : "TAP AGAIN TO CLEAR"}</span></div>
-      ${wrap("volume", C.ridgeChart(vol, { selected: ridgeSel }))}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span><span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
+      <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span><span class="eyebrow tapx">${ridgeSel == null ? "TAP A BAR" : "TAP AGAIN TO CLEAR"}</span></div>
+      ${unit === "month"
+        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike"], colors: ["#5d6ccc", "var(--cy)", "#7fd6c0"], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
+        : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel }))}
+      <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span>${anyHike ? `<span><i style="background:#7fd6c0"></i>hike</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
       ${ridgeDetail(vol)}`,
 
     trainingLoad: () => {
-      const ld = load.weeks.map(w => ({ x: dnum(w.start), y: w.load, date: w.start }));
+      const ld = loadB.map(w => ({ x: dnum(w.start), y: w.load, date: w.start }));
       const statusTxt = { undertraining: "Undertraining", optimal: "Optimal", overreaching: "Overreaching", "high-risk": "High risk", building: "Building base" }[load.status];
       const statusCol = load.status === "high-risk" ? "var(--bad)" : load.status === "optimal" ? "var(--cy)" : "var(--sand)";
       return `
       <div class="hd"><span class="eyebrow">Training load</span>${load.acwr != null ? `<span class="chip" style="color:${statusCol};border-color:${statusCol}33">${statusTxt} · ${load.acwr.toFixed(2)}</span>` : `<span class="eyebrow tapx">build a baseline</span>`}</div>
       ${ld.filter(p => p.y > 0).length >= 2
-        ? wrap("trainingLoad", C.lineChart(ld, { axis: true, taps: true, color: "#8e9df8", selected: lineSel.trainingLoad, xLabels: [fmtShort(load.weeks[0].start), fmtShort(load.weeks[load.weeks.length - 1].start)] }))
+        ? wrap("trainingLoad", C.lineChart(ld, { axis: true, taps: true, color: "#8e9df8", selected: lineSel.trainingLoad, xLabels: [loadB[0].label, loadB[loadB.length - 1].label] }))
         : `<p class="row-sub">Log a few sessions and your acute-vs-chronic load appears here, flagging over- and under-training.</p>`}
       ${lineDetail("trainingLoad", [{ points: ld }], p => `load ${Math.round(p.y)}`)}
       ${load.acwr != null ? `<div class="callout">7-day load <b>${load.acute}</b> vs 4-week baseline <b>${load.chronic}</b>. The sweet spot is 0.8–1.3.</div>` : ""}`;
+    },
+
+    loadFocus: () => {
+      const segs = [
+        { key: "low", label: "Low aerobic", color: "#5fbf6a" },
+        { key: "high", label: "High aerobic", color: "#e6a13c" },
+        { key: "anaerobic", label: "Anaerobic", color: "#e8554e" },
+      ];
+      const bars = lf.total > 0 ? segs.map(s => {
+        const val = lf[s.key], pct = val / lf.total, [lo, hi] = lf.opt[s.key];
+        const w = Math.max(2, Math.round(pct * 100));
+        const inOpt = val >= lo && val <= hi;
+        const optL = lf.total ? Math.round(lo / lf.total * 100) : 0, optR = lf.total ? Math.round(hi / lf.total * 100) : 0;
+        return `<div class="lf-row">
+          <span class="lf-name"><i style="background:${s.color}"></i>${s.label}</span>
+          <span class="lf-track"><i class="lf-fill" style="width:${w}%;background:${s.color}"></i><i class="lf-opt" style="left:${optL}%;width:${Math.max(2, optR - optL)}%"></i></span>
+          <span class="lf-val ${inOpt ? "ok" : ""}">${Math.round(val)}</span>
+        </div>`;
+      }).join("") : "";
+      return `
+      <div class="hd"><span class="eyebrow">Load focus</span><span class="eyebrow tapx">${win.label.toLowerCase()}</span></div>
+      ${lf.total > 0
+        ? `<div class="stat"><span class="midnum">${Math.round(lf.total)}</span><span class="unit">total load · ${lf.focus.toLowerCase()}</span></div>
+           <div class="lf">${bars}</div>
+           <div class="callout">The shaded band is the polarized optimal range — most load low-aerobic, a slice high-aerobic, a sprinkle anaerobic.</div>`
+        : `<p class="row-sub">Log sessions with heart rate and your load splits into low-aerobic, high-aerobic and anaerobic — Garmin-style.</p>`}`;
+    },
+
+    exerciseLoad: () => {
+      const rows = exLoad.map(d => ({ ...d, label: fmtShort(d.date) }));
+      const has = rows.some(r => r.total > 0);
+      const labelEvery = Math.max(1, Math.round(rows.length / 6));
+      return `
+      <div class="hd"><span class="eyebrow">Exercise load</span><span class="eyebrow tapx">per day</span></div>
+      ${has ? wrap("exerciseLoad", C.stackedBars(rows.map((r, i) => ({ ...r, label: i % labelEvery === 0 ? shortDay(r.date) : "" })), { keys: ["low", "high", "anaerobic"], colors: ["#5fbf6a", "#e6a13c", "#e8554e"], height: 128, labelEvery: 1, fmtY: v => Math.round(v) }))
+        : `<p class="row-sub">Each day's training load, coloured by intensity — appears as you log sessions.</p>`}
+      <div class="legend2"><span><i style="background:#5fbf6a"></i>low aerobic</span><span><i style="background:#e6a13c"></i>high aerobic</span><span><i style="background:#e8554e"></i>anaerobic</span></div>`;
     },
 
     weight: () => `
@@ -1444,21 +1507,63 @@ function renderProgress() {
         : `<p class="row-sub">Run easy (Z2, ≤ ${B[1].hi} bpm for 20+ min) and this chart wakes up.</p>`}
       ${lineDetail("pace", [{ points: pPts }], p => `${E.fmtPace(p.y)} /km`)}`,
 
-    vo2: () => `
-      <div class="hd"><span class="eyebrow">VO₂ max · Garmin</span></div>
-      <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
+    vo2: () => {
+      const SEGS = ["#e8554e", "#e6a13c", "#5fbf6a", "#4a90e2", "#8e6ff0"];
+      const cat = vo2Cat
+        ? `<div class="vo2cat">${C.vo2Gauge({ pos: vo2Cat.pos, color: vo2Cat.color, segs: SEGS })}
+             <div class="vo2cat-lab" style="color:${vo2Cat.color}">${vo2Cat.label}<small>${doc.settings.sex === "female" ? "women" : "men"} ${vo2Cat.bracketLabel}</small></div></div>`
+        : "";
+      return `
+      <div class="hd"><span class="eyebrow">VO₂ max · Garmin</span>${!vo2Cat && lastV ? `<button class="eyebrow tapx lk" id="vo2-setcat">rate it →</button>` : ""}</div>
+      <div class="vo2top">
+        <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
+        ${cat}
+      </div>
       ${vPts.length >= 2 ? wrap("vo2", C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vo2[0].date), fmtShort(lastV.date)] })) : ""}
       ${lineDetail("vo2", [{ points: vPts }], p => `${p.y} ml/kg/min`)}
-      <button class="btn ghost mini" id="pg-vo2">Add reading</button>`,
+      <button class="btn ghost mini" id="pg-vo2">Add reading</button>`;
+    },
+
+    runDistance: () => {
+      const d = E.distanceSplit(doc.logs, "run", win.from, win.to);
+      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const ser = [];
+      if (reg.length) ser.push({ points: reg, color: "var(--cy)" });
+      if (long.length) ser.push({ points: long, color: "var(--sand)" });
+      const al = seriesAvg(long), ar = seriesAvg(reg);
+      return `
+      <div class="hd"><span class="eyebrow">Run distance · long vs regular</span><span class="eyebrow tapx">km</span></div>
+      ${avgLine([al != null ? `long ${al.toFixed(1)}` : "", ar != null ? `regular ${ar.toFixed(1)}` : "", "km"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("runDistance", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.runDistance })) : `<p class="row-sub">Log runs with distance — your long runs are tracked apart from your regular ones, so you can watch the long run grow.</p>`}
+      <div class="legend2"><span><i style="background:var(--sand)"></i>long run</span><span><i style="background:var(--cy)"></i>regular</span></div>
+      ${lineDetail("runDistance", ser, p => `${p.y.toFixed(1)} km`)}`;
+    },
+
+    rideDistance: () => {
+      const d = E.distanceSplit(doc.logs, "bike", win.from, win.to);
+      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date }));
+      const ser = [];
+      if (reg.length) ser.push({ points: reg, color: "#8e9df8" });
+      if (long.length) ser.push({ points: long, color: "var(--sand)" });
+      const al = seriesAvg(long), ar = seriesAvg(reg);
+      return `
+      <div class="hd"><span class="eyebrow">Ride distance · long vs regular</span><span class="eyebrow tapx">km</span></div>
+      ${avgLine([al != null ? `long ${al.toFixed(1)}` : "", ar != null ? `regular ${ar.toFixed(1)}` : "", "km"])}
+      ${ser.some(s => s.points.length >= 2) ? wrap("rideDistance", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rideDistance })) : `<p class="row-sub">Log rides with distance — long rides are tracked apart from regular ones, so your long-ride progression is clear.</p>`}
+      <div class="legend2"><span><i style="background:var(--sand)"></i>long ride</span><span><i style="background:#8e9df8"></i>regular</span></div>
+      ${lineDetail("rideDistance", ser, p => `${p.y.toFixed(1)} km`)}`;
+    },
 
     balance: () => {
-      const w = intensity[intensity.length - 1];
-      const pts = intensity.filter(x => x.total > 0).map(x => ({ x: dnum(x.start), y: x.hardPct * 100, date: x.start }));
+      const w = E.intensityInRange(doc.logs, B, win.from, win.to);
+      const pts = intB.filter(x => x.total > 0).map(x => ({ x: dnum(x.start), y: x.hardPct * 100, date: x.start }));
       return `
-      <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w && w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
+      <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
       ${pts.length >= 2 ? wrap("balance", C.lineChart(pts, { axis: true, taps: true, color: "var(--sand)", target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
       ${lineDetail("balance", [{ points: pts }], p => `${Math.round(p.y)}% hard`)}
-      ${w && w.total ? `<div class="callout">${Math.round(w.easyPct * 100)}% easy / ${Math.round(w.hardPct * 100)}% hard this week. ${w.hardPct > 0.35 ? "Skewing hard — add easy volume." : w.hardPct < 0.1 ? "Mostly easy — one quality session would sharpen you." : "Near the 80/20 sweet spot."}</div>` : ""}`;
+      ${w.total ? `<div class="callout">${Math.round(w.easyPct * 100)}% easy / ${Math.round(w.hardPct * 100)}% hard over ${win.label.toLowerCase()}. ${w.hardPct > 0.35 ? "Skewing hard — add easy volume." : w.hardPct < 0.1 ? "Mostly easy — one quality session would sharpen you." : "Near the 80/20 sweet spot."}</div>` : ""}`;
     },
 
     runSpeed: () => {
@@ -1564,27 +1669,27 @@ function renderProgress() {
         : `<p class="row-sub">Your records appear as you log — biggest climb, longest ride, fastest 5K/10K/half/marathon, 40K.</p>`}`,
 
     calories: () => {
-      const showWeekly = nW > 2;
-      const series = showWeekly ? calWeeks.map(w => ({ x: dnum(w.start), y: w.total, date: w.start }))
-                                : calDaily.map(d => ({ x: dnum(d.date), y: d.total, date: d.date }));
+      const series = calB.map(w => ({ x: dnum(w.start), y: w.total, date: w.start }));
       const total = series.reduce((a, p) => a + p.y, 0);
       const nonzero = series.filter(p => p.y > 0);
       const splitTot = calSplit.planned + calSplit.unplanned;
       const avgC = seriesAvg(series);
       return `
-      <div class="hd"><span class="eyebrow">Calories burned</span><span class="eyebrow tapx">${showWeekly ? "per week" : "per day"}</span></div>
+      <div class="hd"><span class="eyebrow">Calories burned</span><span class="eyebrow tapx">per ${unit}</span></div>
       <div class="stat"><span class="midnum">${total.toLocaleString()}</span><span class="unit">kcal · ${win.label.toLowerCase()}</span></div>
-      ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${showWeekly ? "week" : "day"}`]) : ""}
-      ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [fmtShort(series[0].date), fmtShort(series[series.length - 1].date)] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
+      ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${unit}`]) : ""}
+      ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
       ${lineDetail("calories", [{ points: series }], p => `${Math.round(p.y).toLocaleString()} kcal`)}
       ${splitTot > 0 ? `<div class="callout">Planned <b>${calSplit.planned.toLocaleString()}</b> · unplanned <b>${calSplit.unplanned.toLocaleString()}</b> kcal in this range.</div>` : ""}`;
     },
 
     caloriesByType: () => `
       <div class="hd"><span class="eyebrow">Calories by activity</span><span class="eyebrow tapx">${win.label.toLowerCase()}</span></div>
-      ${calTypes.total > 0 ? `<div class="catbars">${calTypes.buckets.map(b => `
-        <div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:var(--cy)"></i></span><span class="cv">${b.cal.toLocaleString()}</span></div>`).join("")}</div>
-        ${calTypes.top ? `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}.</div>` : ""}`
+      ${calTypes.total > 0 ? `<div class="catbars">${calTypes.buckets.map(b => {
+        const n = calTypeCounts[b.sport] || 0, avg = n ? Math.round(b.cal / n) : 0;
+        return `<div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:var(--cy)"></i></span><span class="cv">${b.cal.toLocaleString()}<small>${n ? ` · ${n}× · ${avg.toLocaleString()} avg` : ""}</small></span></div>`;
+      }).join("")}</div>
+        ${calTypes.top ? (() => { const tn = calTypeCounts[calTypes.top.sport] || 0; return `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}${tn ? `, averaging <b>${Math.round(calTypes.top.cal / tn).toLocaleString()}</b> kcal across ${tn} session${tn === 1 ? "" : "s"}` : ""}.</div>`; })() : ""}`
         : `<p class="row-sub">Once activities carry calories, this breaks them down by sport.</p>`}`,
 
     streak: () => `
@@ -1613,8 +1718,12 @@ function renderProgress() {
     <button class="iconbtn sm" id="rg-prev" aria-label="earlier">‹</button>
     <select id="rg-preset" class="rangesel">${RANGE_OPTS.map(([v, l]) => `<option value="${v}" ${pr.preset === v ? "selected" : ""}>${l}</option>`).join("")}</select>
     <button class="iconbtn sm" id="rg-next" aria-label="later" ${pr.offset <= 0 ? "disabled" : ""}>›</button>
+    <span class="unitseg" style="margin-left:auto">
+      <button class="useg ${unit === "week" ? "on" : ""}" data-unit="week">Week</button>
+      <button class="useg ${unit === "month" ? "on" : ""}" data-unit="month">Month</button>
+    </span>
+    <button class="chip ${pr.compare ? "zc2" : ""}" id="rg-compare">vs prev</button>
     <span class="rglabel">${fmtShort(win.from)}–${fmtShort(win.to)}</span>
-    <button class="chip ${pr.compare ? "zc2" : ""}" id="rg-compare" style="margin-left:auto">vs prev</button>
   </div>`;
   page.innerHTML = `
     <div class="phead"><h1 class="page">Progress</h1><button class="iconbtn" id="pg-customize" aria-label="Customize">${ICONS_UI.sliders}</button></div>
@@ -1628,6 +1737,8 @@ function renderProgress() {
   page.querySelector("#rg-prev").addEventListener("click", () => setRange({ offset: pr.offset + 1 }));
   page.querySelector("#rg-next").addEventListener("click", () => { if (pr.offset > 0) setRange({ offset: pr.offset - 1 }); });
   page.querySelector("#rg-compare").addEventListener("click", () => setRange({ compare: !pr.compare }));
+  page.querySelectorAll(".useg").forEach(b => b.addEventListener("click", () => setRange({ unit: b.dataset.unit })));
+  page.querySelector("#vo2-setcat")?.addEventListener("click", openVo2Rate);
   page.querySelector("#pg-customize").addEventListener("click", openProgressCustomize);
   page.querySelectorAll("[data-wi]").forEach(r => r.addEventListener("click", () => {
     ridgeSel = ridgeSel === +r.dataset.wi ? null : +r.dataset.wi; renderProgress();
@@ -1708,6 +1819,32 @@ function openAddBest() {
       doc.manualBests.push({ key, value, date });
     });
     toast("Record saved ✓");
+  });
+}
+
+/* Quick age + sex capture so the VO₂ fitness-category gauge can rate you
+   against the norms — also editable in Settings. */
+function openVo2Rate() {
+  let sex = doc.settings.sex || "male";
+  const sheet = openSheet(`
+    <div class="sh-title">Rate my VO₂ max</div>
+    <div class="sh-sub">VO₂ norms depend on age and sex — set both and your reading gets a Poor → Superior rating.</div>
+    <div class="frow"><span class="l">Age</span><input type="number" id="vr-age" inputmode="numeric" min="14" max="100" value="${doc.settings.age || ""}" placeholder="years"></div>
+    <div class="frow"><span class="l">Sex</span>
+      <span class="segpick" id="vr-sex">
+        <button class="${sex === "male" ? "on" : ""}" data-v="male">Male</button>
+        <button class="${sex === "female" ? "on" : ""}" data-v="female">Female</button>
+      </span></div>
+    <button class="btn" id="vr-save">Save</button>
+  `);
+  sheet.querySelectorAll("#vr-sex button").forEach(b => b.addEventListener("click", () => {
+    sex = b.dataset.v; sheet.querySelectorAll("#vr-sex button").forEach(x => x.classList.toggle("on", x === b));
+  }));
+  sheet.querySelector("#vr-save").addEventListener("click", () => {
+    const age = num(sheet.querySelector("#vr-age").value);
+    closeOverlay();
+    persist(() => { doc.settings.age = age; doc.settings.sex = sex; });
+    toast("Saved ✓");
   });
 }
 
@@ -1800,6 +1937,7 @@ function renderSettings() {
       <button class="srow" id="st-max"><span class="l">Max HR<span>${st.maxHRAuto ? "auto-updates from your activities" : "set manually"}</span></span><span class="v">${st.maxHR} bpm</span><span class="chev">›</span></button>
       <button class="srow tog" data-tog="maxHRAuto"><span class="l">Auto-update max HR<span>raise it when an activity goes higher</span></span><span class="switch ${st.maxHRAuto ? "on" : ""}"></span></button>
       <button class="srow" id="st-age"><span class="l">Age<span>estimates max HR (208 − 0.7 × age)</span></span><span class="v ${st.age ? "" : "add"}">${st.age ? st.age + " yr" : "Add"}</span><span class="chev">›</span></button>
+      <button class="srow" id="st-sex"><span class="l">Sex<span>rates your VO₂ max against age/sex norms</span></span><span class="v ${st.sex ? "" : "add"}">${st.sex ? (st.sex === "female" ? "Female" : "Male") : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-rhr"><span class="l">Resting HR<span>adding it switches zones to Karvonen</span></span><span class="v ${st.restingHR ? "" : "add"}">${st.restingHR ? st.restingHR + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lthr"><span class="l">Lactate threshold<span>optional — enables LTHR-based zones</span></span><span class="v ${st.lthr ? "" : "add"}">${st.lthr ? st.lthr + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-method"><span class="l">Zone method</span><span class="v">${METHOD_LABEL[st.zoneMethod] || st.zoneMethod}</span><span class="chev">›</span></button>
@@ -1842,6 +1980,7 @@ function renderSettings() {
     persist(() => { st.maxHRAuto = !st.maxHRAuto; });
   });
   $("#st-age").addEventListener("click", openAgeSheet);
+  $("#st-sex").addEventListener("click", openSexSheet);
   $("#st-rhr").addEventListener("click", () => openValueSheet({
     title: "Resting HR", label: "Resting HR", suffix: "bpm", value: st.restingHR ?? "", min: 30, max: 100, allowClear: !!st.restingHR,
     onSave: v => {
@@ -2004,6 +2143,26 @@ function openAgeSheet() {
   });
   sheet.querySelector("#ag-clear")?.addEventListener("click", () => {
     closeOverlay(); persist(() => { st.age = null; }); toast("Cleared");
+  });
+}
+
+function openSexSheet() {
+  const st = doc.settings;
+  const sheet = openSheet(`
+    <div class="sh-title">Sex</div>
+    <div class="sh-sub">VO₂ max norms differ by sex — used only to rate your reading Poor → Superior. Nothing else changes.</div>
+    <div class="frow"><span class="l">Sex</span>
+      <span class="segpick" id="sx-pick">
+        <button class="${st.sex === "male" ? "on" : ""}" data-v="male">Male</button>
+        <button class="${st.sex === "female" ? "on" : ""}" data-v="female">Female</button>
+      </span></div>
+    ${st.sex ? `<button class="btn ghost" id="sx-clear">Clear</button>` : ""}
+  `);
+  sheet.querySelectorAll("#sx-pick button").forEach(b => b.addEventListener("click", () => {
+    closeOverlay(); persist(() => { st.sex = b.dataset.v; }); toast("Saved ✓");
+  }));
+  sheet.querySelector("#sx-clear")?.addEventListener("click", () => {
+    closeOverlay(); persist(() => { st.sex = null; }); toast("Cleared");
   });
 }
 

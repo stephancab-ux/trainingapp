@@ -691,3 +691,69 @@ test("fmtBestValue formats time / distance / metres", () => {
   assert.equal(E.fmtBestValue({ unit: "km", value: 70.71 }), "70.7 km");
   assert.equal(E.fmtBestValue({ unit: "m", value: 1240 }), "1240 m");
 });
+
+/* ---------- v1.4: seed counts, buckets, load focus, VO₂ category ---------- */
+
+test("descriptive analytics now count seed/imported history (the load bug)", () => {
+  const logs = [
+    { date: "2026-06-01", sport: "bike", min: 90, avgHR: 125, source: "seed" },
+    { date: "2026-06-03", sport: "run", min: 40, avgHR: 150, source: "csv" },
+  ];
+  const tl = E.trainingLoad({ logs, bounds: BOUNDS, todayISO: "2026-06-05", n: 2 });
+  assert.ok(tl.weeks.some(w => w.load > 0), "seed/csv activities produce load");
+  const wi = E.weeklyIntensity({ logs, bounds: BOUNDS, todayISO: "2026-06-05", n: 2 });
+  assert.ok(wi.some(w => w.total > 0), "seed/csv count toward intensity");
+});
+
+test("bucketize: weeks vs calendar months", () => {
+  const wk = E.bucketize("2026-05-04", "2026-05-31", "week");
+  assert.equal(E.dayIndex(wk[0].start), 0); // Monday
+  assert.ok(wk.length >= 4);
+  const mo = E.bucketize("2026-03-10", "2026-06-05", "month");
+  assert.deepEqual(mo.map(b => b.label), ["Mar", "Apr", "May", "Jun"]);
+  assert.equal(mo[0].start, "2026-03-01");
+});
+
+test("loadFocus splits into low/high/anaerobic with an optimal range", () => {
+  const logs = [
+    { date: "2026-06-01", sport: "bike", min: 120, avgHR: 120, source: "csv" }, // Z2 → low
+    { date: "2026-06-02", sport: "run", min: 40, avgHR: 150, source: "csv" },   // Z4 → high
+    { date: "2026-06-03", sport: "run", min: 20, avgHR: 175, source: "csv" },   // Z5 → anaerobic
+  ];
+  const lf = E.loadFocus(logs, BOUNDS, "2026-06-01", "2026-06-07");
+  assert.ok(lf.low > 0 && lf.high > 0 && lf.anaerobic > 0);
+  assert.ok(lf.total === lf.low + lf.high + lf.anaerobic);
+  assert.ok(lf.opt.low[1] > lf.opt.low[0]);
+});
+
+test("vo2Category: 43 for a 35-yr-old man is 'Fair'", () => {
+  const c = E.vo2Category(43, 35, "male");
+  assert.equal(c.label, "Fair");
+  assert.equal(c.bracketLabel, "30–39");
+  assert.ok(c.pos > 0 && c.pos < 1);
+  assert.equal(E.vo2Category(58, 35, "male").label, "Superior");
+  assert.equal(E.vo2Category(43, null, "male"), null); // needs age + sex
+});
+
+test("distanceSplit: long vs regular by distance, untyped imports included", () => {
+  const logs = [
+    { date: "2026-06-01", sport: "run", km: 5, min: 30 },
+    { date: "2026-06-03", sport: "run", km: 5.2, min: 31 },
+    { date: "2026-06-05", sport: "run", km: 5.1, min: 30 },
+    { date: "2026-06-07", sport: "run", km: 12, min: 75 }, // clearly the long one
+    { date: "2026-06-08", sport: "bike", km: 40, min: 90 },
+  ];
+  const d = E.distanceSplit(logs, "run", "2026-06-01", "2026-06-30");
+  assert.equal(d.long.length, 1);
+  assert.equal(d.long[0].km, 12);
+  assert.equal(d.regular.length, 3);
+  assert.ok(d.threshold > 5 && d.threshold < 12);
+  // an explicit long tag wins even when the distance is modest
+  const tagged = E.distanceSplit(
+    [{ date: "2026-06-01", sport: "run", km: 6, min: 40, type: "long" },
+     { date: "2026-06-02", sport: "run", km: 6, min: 40 },
+     { date: "2026-06-03", sport: "run", km: 6, min: 40 },
+     { date: "2026-06-04", sport: "run", km: 6, min: 40 }],
+    "run", "2026-06-01", "2026-06-30");
+  assert.ok(tagged.long.some(l => l.km === 6));
+});
