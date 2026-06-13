@@ -66,6 +66,7 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .tab svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .tab.on{color:var(--cy)}
 .tab .dot{position:absolute;top:5px;right:26%;width:8px;height:8px;border-radius:50%;background:var(--cy)}
+.tabbadge{position:absolute;top:2px;right:22%;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--bad);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;line-height:1}
 
 /* ---------- today ---------- */
 .t-chips{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
@@ -325,6 +326,30 @@ svg text{font-family:inherit}
 .ctabs{display:inline-flex;background:#121b24;border:1px solid var(--line);border-radius:9px;padding:2px}
 .ctab{min-height:26px;padding:0 10px;border-radius:7px;background:transparent;color:var(--mut);font-size:11px;font-weight:700}
 .ctab.on{background:var(--cy);color:var(--cy-ink)}
+.ctabwrap{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.substat{margin:1px 2px 9px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* v1.7 — duration wheel, status chips, accordion settings, coach unread */
+.frow-wheel{min-height:0;align-items:stretch}
+.dwheel{position:relative;height:144px;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;flex:1;margin-left:auto;max-width:170px;
+  -webkit-mask-image:linear-gradient(#0000,#000 32%,#000 68%,#0000);mask-image:linear-gradient(#0000,#000 32%,#000 68%,#0000);scrollbar-width:none}
+.dwheel::-webkit-scrollbar{display:none}
+.dwheel::before{content:"";position:absolute;left:0;right:0;top:54px;height:36px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);pointer-events:none}
+.dwheel-pad{height:54px}
+.dwheel-item{height:36px;scroll-snap-align:center;display:flex;align-items:baseline;justify-content:center;gap:5px;color:var(--mut);opacity:.5}
+.dwheel-item b{font-size:19px;font-weight:750;font-variant-numeric:tabular-nums}
+.dwheel-item i{font-size:11px;font-style:normal;font-weight:600}
+.dwheel-item.sel{color:var(--ink);opacity:1}
+.dwheel-item.sel b{color:var(--cy)}
+/* collapsible Settings groups */
+.group.collapsed .scard{display:none}
+.ghtap{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;padding:0;margin:10px 4px 7px;color:var(--mut);font-size:11px;font-weight:750;letter-spacing:.16em;text-transform:uppercase}
+.ghtap .ghx{display:flex;align-items:center;gap:8px}
+.ghtap .ghsum{color:var(--sub);letter-spacing:.04em;text-transform:none;font-weight:700;font-size:12px}
+.ghtap .chev{color:var(--mut);font-size:16px}
+/* coach unread */
+.coachcard.unread{border-color:#2a4a55}
+.unread-dot{width:8px;height:8px;border-radius:50%;background:var(--cy);flex:none;margin-right:2px}
 
 /* v1.4 — week/month toggle, segmented picker, load focus, VO₂ gauge */
 .unitseg{display:inline-flex;background:#121b24;border:1px solid var(--line);border-radius:10px;padding:2px}

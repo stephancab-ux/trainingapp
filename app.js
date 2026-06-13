@@ -181,7 +181,7 @@ function wireSheetDrag(sheet, scrim) {
   sheet.addEventListener("pointerdown", e => {
     // ignore inputs and the reorder drag-handle, so dragging a card down
     // reorders the list instead of swiping the sheet away
-    if (e.target.closest("input, select, textarea, [data-drag]")) return;
+    if (e.target.closest("input, select, textarea, [data-drag], .dwheel")) return;
     if (sheet.scrollTop > 0) return;
     startY = e.clientY; dy = 0; dragging = false; t0 = performance.now();
     sheet.addEventListener("pointermove", onMove);
@@ -218,6 +218,33 @@ function wireSheetDrag(sheet, scrim) {
       scrim.style.opacity = "";
     }
   }
+}
+
+/* iPhone-timer-style minutes wheel. Fills `el` with a scroll-snap column of
+   minute values (shown h:mm past 60), centres `value`, and returns read() →
+   the selected total minutes. Used by every duration input. */
+const WHEEL_IH = 36;
+function buildDurationWheel(el, { min = 1, max = 300, value = 45, onChange } = {}) {
+  const fmt = m => (m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}` : `${m}`);
+  let html = `<div class="dwheel-pad"></div>`;
+  for (let m = min; m <= max; m++)
+    html += `<div class="dwheel-item" data-m="${m}"><b>${fmt(m)}</b><i>${m >= 60 ? "h:mm" : "min"}</i></div>`;
+  html += `<div class="dwheel-pad"></div>`;
+  el.innerHTML = html;
+  el.classList.add("dwheel");
+  let cur = Math.max(min, Math.min(max, Math.round(value)));
+  const items = el.querySelectorAll(".dwheel-item");
+  const setHi = () => items.forEach(it => it.classList.toggle("sel", +it.dataset.m === cur));
+  requestAnimationFrame(() => { el.scrollTop = (cur - min) * WHEEL_IH; setHi(); });
+  let raf;
+  el.addEventListener("scroll", () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const m = Math.max(min, Math.min(max, min + Math.round(el.scrollTop / WHEEL_IH)));
+      if (m !== cur) { cur = m; setHi(); onChange && onChange(cur); }
+    });
+  });
+  return () => cur;
 }
 function openModal(title, body, buttons) {
   overlayRoot().innerHTML =
@@ -390,8 +417,8 @@ function setTab(name) {
 
 function render() {
   $("#fab").hidden = tab !== "week"; // the log-activity FAB lives on the Diary tab
-  const cd = $("#coachdot");
-  if (cd) cd.hidden = !(checkinDue() || hasFreshCoach()); // program + insights now on Coach
+  const cd = $("#coachbadge");
+  if (cd) { const n = coachUnread(); cd.textContent = n > 9 ? "9+" : String(n); cd.hidden = n === 0; }
   renderBanner();
   ({ today: renderToday, week: renderDiary, progress: renderProgress, coach: renderCoach, settings: renderSettings })[tab]();
 }
@@ -402,6 +429,23 @@ function hasFreshCoach() {
     return E.coachInsights({ doc, todayISO: todayISO() })
       .some(i => i.impact * i.confidence >= 0.5);
   } catch { return false; }
+}
+/* Content-aware signature so a changed insight re-notifies (djb2 of title+body). */
+function sigHash(s) { let h = 5381; for (let k = 0; k < s.length; k++) h = ((h << 5) + h + s.charCodeAt(k)) | 0; return (h >>> 0).toString(36); }
+function insightSig(i) { return `${i.id}:${sigHash((i.title || "") + "|" + (i.body || ""))}`; }
+/* Count of unread coach messages for the tab badge: significant insights the
+   user hasn't tapped yet, +1 for a due, unseen weekly check-in. */
+function coachUnread() {
+  try {
+    const seen = doc.coachSeen || {};
+    // count every insight shown on the Coach tab that hasn't been tapped yet,
+    // so the badge always matches the visible unread message dots
+    let n = E.coachInsights({ doc, todayISO: todayISO() })
+      .filter(i => !seen[insightSig(i)]).length;
+    const wk = currentWeek();
+    if (checkinDue() && wk && !seen["checkin:" + wk.startDate]) n += 1;
+    return n;
+  } catch { return 0; }
 }
 
 /* ---------------- COACH ---------------- */
@@ -430,6 +474,10 @@ function renderCoach() {
 
   const week = currentWeek() || lastWeek();
   const due = checkinDue();
+  doc.coachSeen = doc.coachSeen || {};
+  // opening Coach acknowledges a due check-in reminder (insights still need a tap)
+  const cw = currentWeek();
+  if (cw && due && doc.coachSeen["checkin:" + cw.startDate] == null) { doc.coachSeen["checkin:" + cw.startDate] = todayISO(); S.save(doc); }
   let body = streakBlock() + (week ? programSection(week, due) : `<h1 class="page">Coach</h1>`) +
     `<div class="eyebrow" style="margin:14px 2px 2px">Your coach</div>
      <p class="row-sub" style="margin:2px 2px 6px">Reviewed offline from your own data after every workout and week.</p>`;
@@ -442,8 +490,10 @@ function renderCoach() {
       body += `<div class="cgroup"><div class="gh">${GROUP_TITLE[g]}</div>`;
       for (const i of items) {
         const c = CAT_META[i.category] || CAT_META.trend;
-        body += `<div class="card coachcard"><div class="cc-top"><span class="cdot" style="background:${c.color}"></span>
-          <b>${esc(i.title)}</b><button class="cc-x" data-dismiss="${esc(i.id)}" aria-label="Dismiss">×</button></div>
+        const sig = insightSig(i), unseen = !doc.coachSeen[sig];
+        body += `<div class="card coachcard ${unseen ? "unread" : ""}" data-isig="${esc(sig)}"><div class="cc-top"><span class="cdot" style="background:${c.color}"></span>
+          <b>${esc(i.title)}</b>${unseen ? `<span class="unread-dot"></span>` : ""}<button class="cc-x" data-dismiss="${esc(i.id)}" aria-label="Dismiss">×</button></div>`;
+        body += `
           <p class="cc-body">${esc(i.body)}</p>
           <p class="cc-why">${esc(i.why || "")}</p>
           ${i.action ? `<button class="btn mini" data-act="${esc(i.id)}">${ACTION_LABEL[i.action.kind] || "Apply"}</button>` : ""}
@@ -455,6 +505,19 @@ function renderCoach() {
   page.innerHTML = body;
   if (week) wireProgram(page, week, due);
 
+  // tapping a message marks just that one read (clears its unread dot + badge)
+  page.querySelectorAll(".coachcard[data-isig]").forEach(card => card.addEventListener("click", e => {
+    if (e.target.closest("button")) return;
+    const sig = card.dataset.isig;
+    if (!doc.coachSeen) doc.coachSeen = {};
+    if (doc.coachSeen[sig]) return;
+    doc.coachSeen[sig] = todayISO();
+    S.save(doc);
+    card.classList.remove("unread");
+    card.querySelector(".unread-dot")?.remove();
+    const cb = $("#coachbadge");
+    if (cb) { const n = coachUnread(); cb.textContent = n > 9 ? "9+" : String(n); cb.hidden = n === 0; }
+  }));
   page.querySelectorAll("[data-dismiss]").forEach(b => b.addEventListener("click", () => {
     persist(() => { doc.coachDismissed = { ...doc.coachDismissed, [b.dataset.dismiss]: todayISO() }; });
   }));
@@ -679,8 +742,8 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="sh-title">${isEdit ? "Edit" : "Log"} · ${esc(title || sport)}</div>
     <div class="sh-sub">${fmtDate(date)}${isEdit ? "" : " — pre-filled with the plan"}</div>
     ${activityRow}
-    <div class="frow"><span class="l">Duration</span>
-      <span class="stepper"><button data-d="-1">−</button><input type="text" inputmode="numeric" class="v dur" id="lg-min" value="${min}"><span class="suffix">min</span><button data-d="1">+</button></span></div>
+    <div class="frow frow-wheel"><span class="l">Duration</span>
+      <div class="dwheel" id="lg-min-wheel"></div></div>
     ${typeRow}
     ${venueRow}
     ${isGym ? "" : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>`}
@@ -688,21 +751,18 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Calories</span><input type="text" inputmode="numeric" id="lg-cal" placeholder="—" value="${isEdit && log.calories != null ? log.calories : ""}"><span class="suffix">kcal</span></div>
+    ${sport === "other" ? "" : `<div class="frow"><span class="l">Aerobic TE</span><input type="text" inputmode="decimal" id="lg-te" placeholder="—" value="${isEdit && log.aerobicTE != null ? log.aerobicTE : ""}"><span class="suffix">/ 5</span></div>`}
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
       `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}">${i + 1}</button>`).join("")}</div>
     <div class="frow"><span class="l">Note</span><input type="text" id="lg-note" placeholder="optional" value="${isEdit ? esc(log.note || "") : ""}"></div>
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
   `);
-  const minInput = sheet.querySelector("#lg-min");
-  const readMin = () => { const v = Math.round(num(minInput.value) ?? min); return Math.max(1, v || 1); };
+  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 300, value: min });
   sheet.querySelectorAll("[data-lgsp]").forEach(b => b.addEventListener("click", () => {
     if (b.dataset.lgsp === sport) return;
     closeOverlay();
     openLogSheet({ date, sport: b.dataset.lgsp, log, title: SPORT_NAME[b.dataset.lgsp] || b.dataset.lgsp });
-  }));
-  sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => {
-    minInput.value = Math.max(1, readMin() + parseInt(b.dataset.d, 10));
   }));
   sheet.querySelectorAll("[data-ty]").forEach(b => b.addEventListener("click", () => {
     typ = b.dataset.ty;
@@ -725,18 +785,22 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     const asc = sheet.querySelector("#lg-asc") ? num(sheet.querySelector("#lg-asc").value) : null;
     const desc = sheet.querySelector("#lg-desc") ? num(sheet.querySelector("#lg-desc").value) : null;
     const cal = num(sheet.querySelector("#lg-cal").value);
+    const teEl = sheet.querySelector("#lg-te");
+    const te = teEl ? num(teEl.value) : null;
     const note = sheet.querySelector("#lg-note").value.trim();
     closeOverlay();
     persist(() => {
       if (isEdit) {
         Object.assign(log, { sport, min, km: km ?? undefined, avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
                              ascent: asc ?? undefined, descent: desc ?? undefined, calories: cal ?? undefined,
+                             aerobicTE: te ?? undefined,
                              rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined,
                              venue: isGym ? venue : undefined });
       } else {
         doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
                         avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined,
                         descent: desc ?? undefined, calories: cal ?? undefined, rpe: rpe ?? undefined,
+                        aerobicTE: te ?? undefined,
                         note: note || undefined, type: typ ?? undefined,
                         venue: isGym ? venue : undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -955,7 +1019,7 @@ function renderDiary() {
   const maxMin = Math.max(1, ...perf.map(([sp]) => sum.bySport[sp].min));
   const sumBars = perf.map(([sp, lab, col]) => {
     const s = sum.bySport[sp];
-    return `<div class="row"><span class="nm">${lab}</span><span class="bar"><i style="width:${Math.max(4, Math.round(s.min / maxMin * 100))}%;background:${col}"></i></span><span class="qty">${s.count}× · ${fmtDur(s.min)}</span></div>`;
+    return `<div class="row"><span class="nm">${lab}</span><span class="bar"><i style="width:${Math.max(4, Math.round(s.min / maxMin * 100))}%;background:${col}"></i></span><span class="qty">${s.count}× · ${fmtDur(s.min)}${s.km ? ` · ${s.km.toFixed(1)} km` : ""}</span></div>`;
   }).join("");
   const summaryCard = sum.total.count
     ? `<div class="card" style="padding:13px 16px"><div class="tot">${sumBars}</div>
@@ -1249,8 +1313,8 @@ function openSessionEditor(week, s, st) {
       `<button data-actsw="${act.sport}" class="${act.sport === s.sport ? "on" : ""}">${act.label}</button>`).join("")}</span></div>` : ""}
     <div class="type-row"><span class="l">Type</span><span class="opts" id="se-types">${opts.map(o =>
       `<button data-se="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
-    <div class="frow"><span class="l">Duration</span>
-      <span class="stepper"><button data-d="-5">−</button><input type="text" inputmode="numeric" class="v dur" id="se-min" value="${dur}"><span class="suffix">min</span><button data-d="5">+</button></span></div>
+    <div class="frow frow-wheel"><span class="l">Duration</span>
+      <div class="dwheel" id="se-min-wheel"></div></div>
     <div class="type-row"><span class="l">Target zone</span><span class="opts" id="se-zones">${[1,2,3,4,5].map(z =>
       `<button data-z="${z}" class="${z === zone ? "on" : ""}">Z${z}</button>`).join("")}</span></div>
     <div class="frow" id="se-climb-row" ${chosen.id === "bikeClimb" ? "" : "hidden"}><span class="l">Climb target</span><input type="text" inputmode="numeric" id="se-asc" placeholder="—" value="${s.targetAscent || ""}"><span class="suffix">m ↑</span></div>
@@ -1260,8 +1324,7 @@ function openSessionEditor(week, s, st) {
     <button class="btn ghost" id="se-watch">Send to watch (.FIT)</button>
     <button class="btn ghost" id="se-save">Save changes</button>
   `);
-  const minInput = sheet.querySelector("#se-min");
-  const readMin = () => Math.max(5, Math.round(num(minInput.value) ?? dur) || 5);
+  const readMin = buildDurationWheel(sheet.querySelector("#se-min-wheel"), { min: 5, max: 240, value: dur });
   const refresh = () => {
     const climb = chosen.id === "bikeClimb";
     sheet.querySelector("#se-climb-row").hidden = !climb;
@@ -1294,7 +1357,6 @@ function openSessionEditor(week, s, st) {
     });
     openSessionEditor(week, s, sessionStatus(week, s));
   }));
-  sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => { minInput.value = Math.max(5, readMin() + +b.dataset.d); }));
   sheet.querySelectorAll("[data-se]").forEach(b => b.addEventListener("click", () => {
     chosen = opts.find(o => o.id === b.dataset.se);
     sheet.querySelectorAll("[data-se]").forEach(x => x.classList.toggle("on", x === b));
@@ -1807,16 +1869,15 @@ function openAdhocSession(sport) {
     <div class="sh-sub">A suggestion sized from your recent training — adjust anything, then do it.</div>
     <div class="type-row"><span class="l">Type</span><span class="opts" id="ah-types">${opts.map(o =>
       `<button data-ah="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
-    <div class="frow"><span class="l">Duration</span>
-      <span class="stepper"><button data-d="-5">−</button><input type="text" inputmode="numeric" class="v dur" id="ah-min" value="${dur}"><span class="suffix">min</span><button data-d="5">+</button></span></div>
+    <div class="frow frow-wheel"><span class="l">Duration</span>
+      <div class="dwheel" id="ah-min-wheel"></div></div>
     <div class="type-row"><span class="l">Target zone</span><span class="opts" id="ah-zones">${[1, 2, 3, 4, 5].map(z =>
       `<button data-z="${z}" class="${z === zone ? "on" : ""}">Z${z}</button>`).join("")}</span></div>
     <div id="ah-detail" class="callout"></div>
     <button class="btn" id="ah-watch">Send to watch (.FIT)</button>
     <button class="btn" id="ah-log">Log it now</button>
   `);
-  const minInput = sheet.querySelector("#ah-min");
-  const readMin = () => Math.max(5, Math.round(num(minInput.value) ?? dur) || 5);
+  const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: 240, value: dur });
   const sessionObj = () => {
     const s = { sport, kind: chosen.kind, targetMin: readMin(), zone };
     if (chosen.kind === "quality") s.qualityTemplate = chosen.tpl;
@@ -1839,7 +1900,6 @@ function openAdhocSession(sport) {
     sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", +x.dataset.z === zone));
     refresh();
   }));
-  sheet.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => { minInput.value = Math.max(5, readMin() + +b.dataset.d); }));
   sheet.querySelectorAll("[data-z]").forEach(b => b.addEventListener("click", () => {
     zone = +b.dataset.z; sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", x === b)); refresh();
   }));
@@ -1886,12 +1946,11 @@ function xTicksFor(pts) {
 }
 
 const CARD_LABEL = {
-  volume: "Training volume", load: "Load", trainingLoad: "Training load",
-  calories: "Calories burned", caloriesByType: "Calories by activity", weight: "Weight",
+  volume: "Training volume", load: "Load & training load",
+  calories: "Calories", weight: "Weight",
   pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
   vo2: "VO₂ max", balance: "Aerobic / anaerobic", speedByType: "Speed by type",
-  distance: "Distance", ascent: "Climbing", paceVsRpe: "Pace vs RPE",
-  efficiency: "Efficiency trend", rpeHeatmap: "RPE calendar", rpeByType: "RPE by type",
+  distance: "Distance", ascent: "Climbing", paceVsRpe: "RPE & efficiency",
   consistency: "Consistency",
 };
 
@@ -2000,24 +2059,55 @@ function renderProgress() {
       <div class="legend2"><span><i style="background:var(--cy)"></i>run</span><span><i style="background:#5d6ccc"></i>ride</span>${anyHike ? `<span><i style="background:#7fd6c0"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:#c98bdb"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
       ${ridgeDetail(vol)}`,
 
-    trainingLoad: () => {
-      const ld = loadB.map(w => ({ x: dnum(w.start), y: w.load, date: w.start }));
-      const band = E.trainingLoadBand(doc.logs, B, buckets).map(b => ({ x: dnum(b.start), lo: b.lo, hi: b.hi }));
-      const statusTxt = { undertraining: "Undertraining", optimal: "Optimal", overreaching: "Overreaching", "high-risk": "High risk", building: "Building base" }[load.status];
-      const statusCol = load.status === "high-risk" ? "var(--bad)" : load.status === "optimal" ? "var(--cy)" : "var(--sand)";
-      return `
-      <div class="hd"><span class="eyebrow">Training load</span>${load.acwr != null ? `<span class="chip" style="color:${statusCol};border-color:${statusCol}33">${statusTxt} · ${load.acwr.toFixed(2)}</span>` : `<span class="eyebrow tapx">build a baseline</span>`}</div>
-      ${ld.filter(p => p.y > 0).length >= 2
-        ? wrap("trainingLoad", C.lineChart(ld, { axis: true, taps: true, color: "#8e9df8", band, selected: lineSel.trainingLoad, xLabels: [loadB[0].label, loadB[loadB.length - 1].label], xTicks: xTicksFor(ld) }))
-        : `<p class="row-sub">Log a few sessions and your acute-vs-chronic load appears here, flagging over- and under-training.</p>`}
-      ${lineDetail("trainingLoad", [{ points: ld }], p => `load ${Math.round(p.y)}`)}
-      <div class="legend2"><span><i style="background:rgba(122,196,90,.5)"></i>optimal range</span></div>
-      ${load.acwr != null ? `<div class="callout">7-day load <b>${load.acute}</b> vs 4-week baseline <b>${load.chronic}</b>. Stay in the <b>green band</b> — above it is overload, below is detraining.</div>` : ""}`;
-    },
-
     load: () => {
-      const view = cardToggle.load || "focus";
-      const tabs = cardTabs("load", [["focus", "Focus"], ["daily", "Daily"]], view);
+      const view = cardToggle.load || "trend";
+      const tabs = cardTabs("load", [["focus", "Focus"], ["daily", "Daily"], ["te", "Effect"], ["trend", "Trend"]], view);
+
+      if (view === "trend") {
+        const SC = { optimal: "#5fbf6a", overreaching: "#e6a13c", "high-risk": "#e8554e", undertraining: "#6f86c9", building: "#6f86c9" };
+        const curve = E.loadCurve(doc.logs, B, win.from, win.to, t);
+        const ld = curve.map(c => ({ x: dnum(c.date), y: c.acute, date: c.date }));
+        const band = curve.map(c => ({ x: dnum(c.date), lo: c.lo, hi: c.hi }));
+        const segColors = curve.map(c => SC[c.status] || "#8e9df8");
+        const statusTxt = { undertraining: "Recovery", optimal: "Productive", overreaching: "Overreaching", "high-risk": "High risk", building: "Building base" }[load.status];
+        const statusCol = SC[load.status] || "var(--cy)";
+        return `
+        <div class="hd"><span class="eyebrow">Load · trend</span>${tabs}</div>
+        ${load.acwr != null ? `<div class="substat"><span class="chip" style="color:${statusCol};border-color:${statusCol}33">${statusTxt} · ${load.acwr.toFixed(2)}</span></div>` : ""}
+        ${ld.filter(p => p.y > 0).length >= 2
+          ? wrap("loadTrend", C.lineChart(null, { series: [{ points: ld, color: "#8e9df8", segColors }], axis: true, taps: true, band, selected: lineSel.loadTrend, xLabels: [fmtShort(curve[0].date), fmtShort(curve[curve.length - 1].date)], xTicks: xTicksFor(ld) }))
+          : `<p class="row-sub">Log a few sessions and your rolling 7-day load appears here, flagging over- and under-training.</p>`}
+        ${lineDetail("loadTrend", [{ points: ld }], p => `load ${Math.round(p.y)}`)}
+        <div class="legend2"><span><i style="background:#5fbf6a"></i>optimal</span><span><i style="background:#e6a13c"></i>overreaching</span><span><i style="background:#e8554e"></i>high risk</span><span><i style="background:#6f86c9"></i>detraining</span></div>
+        ${load.acwr != null ? `<div class="callout">7-day load <b>${load.acute}</b> vs 28-day baseline <b>${load.chronic}</b> (rises as you train). Stay in the <b>green band</b> — above is overload, below detraining.</div>` : ""}
+        ${doc.settings.restingHR == null ? `<div class="callout">Set your <b>resting HR</b> in Settings → Heart rate for more accurate load.</div>` : ""}`;
+      }
+
+      if (view === "te") {
+        const teByDay = {};
+        for (const l of doc.logs) {
+          if (!inRange(l.date) || !["run", "trail", "bike", "hike", "gym"].includes(l.sport)) continue;
+          const e = E.effectiveAerobicTE(l, B);
+          if (e.te <= 0) continue;
+          if (!teByDay[l.date] || e.te > teByDay[l.date].te) teByDay[l.date] = { ...e, id: l.id, date: l.date };
+        }
+        const teDays = Object.values(teByDay).sort(byDate);
+        const tePts = teDays.map(d => ({ x: dnum(d.date), y: d.te, date: d.date, id: d.id }));
+        const segColors = teDays.map(d => E.teBand(d.te).color);
+        const cur = teDays.length ? teDays[teDays.length - 1] : null;
+        const cb = cur ? E.teBand(cur.te) : null;
+        const anyEst = teDays.some(d => d.estimated);
+        return `
+        <div class="hd"><span class="eyebrow">Load · effect</span>${tabs}</div>
+        ${cb ? `<div class="substat"><span class="chip" style="color:${cb.color};border-color:${cb.color}33">${cb.label} · ${cur.te.toFixed(1)}</span>${cur.estimated ? `<span class="eyebrow tapx">estimate</span>` : ""}</div>` : ""}
+        ${tePts.length >= 2
+          ? wrap("loadTE", C.lineChart(null, { series: [{ points: tePts, color: "#7cae72", segColors }], axis: true, taps: true, fmtY: v => v.toFixed(1), selected: lineSel.loadTE, xTicks: xTicksFor(tePts) }))
+          : `<p class="row-sub">Aerobic Training Effect (0–5) per day — imported from Garmin, entered when you log, or estimated from your heart rate.</p>`}
+        ${lineDetail("loadTE", [{ points: tePts }], p => `TE ${p.y.toFixed(1)}`)}
+        <div class="legend2">${E.TE_BANDS.map(b => `<span><i style="background:${b.color}"></i>${b.label}</span>`).join("")}</div>
+        ${anyEst ? `<div class="callout">Days without a Garmin value are <b>estimated</b> from heart rate — import or log the real Aerobic TE to refine them.</div>` : ""}`;
+      }
+
       const legend = `<div class="legend2"><span><i style="background:#5fbf6a"></i>low aerobic</span><span><i style="background:#e6a13c"></i>high aerobic</span><span><i style="background:#e8554e"></i>anaerobic</span></div>`;
       if (view === "daily") {
         const rows = exLoad.map(d => ({ ...d, label: fmtShort(d.date) }));
@@ -2130,40 +2220,47 @@ function renderProgress() {
 
     speedByType: () => {
       const sport = cardToggle.speedByType || "run";
+      const pace = (cardToggle.speedUnit || "kmh") === "pace";
+      const unitTabs = cardTabs("speedUnit", [["kmh", "km/h"], ["pace", "min/km"]], pace ? "pace" : "kmh");
       const tabs = cardTabs("speedByType", [["run", "Run"], ["bike", "Ride"]], sport);
+      // negative seconds/km in pace mode keeps faster = higher on the chart
+      const mk = (filter) => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
+        .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
+      const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
+      const uLabel = pace ? "/km" : "km/h";
       let ser, avg, legend, empty;
       if (sport === "run") {
         const longIds = new Set(E.distanceSplit(doc.logs, "run", win.from, win.to).long.map(x => x.id));
         const hardT = l => ["tempo", "intervals", "hills"].includes(l.type);
-        const long = speedPts(l => E.isRunType(l) && longIds.has(l.id));
-        const easy = speedPts(l => E.isRunType(l) && !longIds.has(l.id) && !hardT(l));
-        const hard = speedPts(l => E.isRunType(l) && !longIds.has(l.id) && hardT(l));
+        const long = mk(l => E.isRunType(l) && longIds.has(l.id));
+        const easy = mk(l => E.isRunType(l) && !longIds.has(l.id) && !hardT(l));
+        const hard = mk(l => E.isRunType(l) && !longIds.has(l.id) && hardT(l));
         ser = [];
         if (easy.length) ser.push({ points: easy, color: "var(--cy)" });
         if (long.length) ser.push({ points: long, color: "#7fd6c0" });
         if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
-        avg = avgLine([easy.length ? `easy ${seriesAvg(easy).toFixed(1)}` : "", long.length ? `long ${seriesAvg(long).toFixed(1)}` : "", hard.length ? `hard ${seriesAvg(hard).toFixed(1)}` : "", "km/h"]);
+        avg = avgLine([easy.length ? `easy ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", uLabel]);
         legend = `<span><i style="background:var(--cy)"></i>easy</span><span><i style="background:#7fd6c0"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span>`;
         empty = "Log runs with distance to compare easy, long and hard-day speeds over time.";
       } else {
         const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
-        const climb = speedPts(l => l.sport === "bike" && l.type === "climb");
-        const longRide = speedPts(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
-        const easy = speedPts(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
+        const climb = mk(l => l.sport === "bike" && l.type === "climb");
+        const longRide = mk(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
+        const easy = mk(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
         ser = [];
         if (easy.length) ser.push({ points: easy, color: "#8e9df8" });
         if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
         if (longRide.length) ser.push({ points: longRide, color: "#7fd6c0" });
-        avg = avgLine([easy.length ? `easy ${seriesAvg(easy).toFixed(1)}` : "", climb.length ? `climb ${seriesAvg(climb).toFixed(1)}` : "", longRide.length ? `long ${seriesAvg(longRide).toFixed(1)}` : "", "km/h"]);
+        avg = avgLine([easy.length ? `easy ${avgVal(easy)}` : "", climb.length ? `climb ${avgVal(climb)}` : "", longRide.length ? `long ${avgVal(longRide)}` : "", uLabel]);
         legend = `<span><i style="background:#8e9df8"></i>easy/int</span><span><i style="background:var(--sand)"></i>climb</span><span><i style="background:#7fd6c0"></i>long</span>`;
         empty = "Log rides with distance — easy/interval, climbing and long-ride speeds are tracked separately.";
       }
       return `
-      <div class="hd"><span class="eyebrow">Speed by type</span>${tabs}</div>
+      <div class="hd"><span class="eyebrow">Speed by type</span><span class="ctabwrap">${unitTabs}${tabs}</span></div>
       ${avg}
-      ${ser.some(s => s.points.length >= 2) ? wrap("speedByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.speedByType, xTicks: xTicksFor(ser.flatMap(s => s.points)) })) : `<p class="row-sub">${empty}</p>`}
+      ${ser.some(s => s.points.length >= 2) ? wrap("speedByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: pace ? (v => E.fmtPace(-v)) : (v => v.toFixed(0)), selected: lineSel.speedByType, xTicks: xTicksFor(ser.flatMap(s => s.points)) })) : `<p class="row-sub">${empty}</p>`}
       <div class="legend2">${legend}</div>
-      ${lineDetail("speedByType", ser, p => `${p.y.toFixed(1)} km/h`)}`;
+      ${lineDetail("speedByType", ser, p => pace ? `${E.fmtPace(-p.y)} /km` : `${p.y.toFixed(1)} km/h`)}`;
     },
 
     ascent: () => {
@@ -2182,69 +2279,97 @@ function renderProgress() {
     },
 
     paceVsRpe: () => {
+      const view = cardToggle.paceVsRpe || "pace";
+      const tabs = cardTabs("paceVsRpe", [["pace", "Pace·RPE"], ["eff", "Effic."], ["cal", "Calendar"], ["type", "By type"]], view);
+
+      if (view === "eff") {
+        const e7 = rollEff(7), e28 = rollEff(28);
+        const ser = [];
+        if (e28.length) ser.push({ points: e28, color: "#8e9df8" });
+        if (e7.length) ser.push({ points: e7, color: "var(--cy)" });
+        return `
+        <div class="hd"><span class="eyebrow">RPE · efficiency</span>${tabs}</div>
+        ${e7.length ? avgLine([`${seriesAvg(e7).toFixed(2)} over ${win.label.toLowerCase()}`]) : ""}
+        ${e7.length >= 2 ? wrap("efficiency", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(1), selected: lineSel.efficiency })) : `<p class="row-sub">Log runs with distance and RPE — a rising line means more speed for the same effort.</p>`}
+        <div class="legend2"><span><i style="background:var(--cy)"></i>7-day</span><span><i style="background:#8e9df8"></i>28-day</span></div>
+        ${lineDetail("efficiency", ser, p => p.y.toFixed(2))}`;
+      }
+
+      if (view === "cal") {
+        const cells = rpeList.slice(-56).map(l => ({
+          band: E.rpeDeviation(l, doc.logs).band,
+          title: `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`,
+        }));
+        return `
+        <div class="hd"><span class="eyebrow">RPE · calendar</span>${tabs}</div>
+        ${cells.length ? `<div class="heat">${C.heatmapCells(cells)}</div>
+          <div class="legend2"><span><i style="background:rgba(86,219,232,.55)"></i>easier</span><span><i style="background:rgba(143,161,179,.30)"></i>normal</span><span><i style="background:rgba(232,107,107,.6)"></i>harder</span></div>
+          <div class="callout" id="heat-detail" data-cells='${esc(JSON.stringify(rpeList.slice(-56).map(l => `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`)))}'>Tap a square to see the session.</div>`
+          : `<p class="row-sub">Add an RPE when you log — each workout becomes a square here, red when it felt harder than it should.</p>`}`;
+      }
+
+      if (view === "type") {
+        const colors = { easy: "var(--cy)", long: "#7fd6c0", tempo: "var(--sand)", intervals: "#e89b5a", hills: "#e86b6b", climb: "#8e9df8" };
+        const ser = [];
+        const avgParts = [];
+        for (const ty of ["easy", "long", "tempo", "intervals", "hills", "climb"]) {
+          const pts = rpeList.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty, id: l.id }));
+          if (pts.length) { ser.push({ points: pts, color: colors[ty] }); avgParts.push(`${ty} ${seriesAvg(pts).toFixed(1)}`); }
+        }
+        return `
+        <div class="hd"><span class="eyebrow">RPE · by type</span>${tabs}</div>
+        ${avgParts.length ? avgLine(avgParts) : ""}
+        ${ser.some(s => s.points.length >= 2) ? wrap("rpeByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rpeByType })) : `<p class="row-sub">Tag your logs with a type and RPE to see each kind's effort trend on its own.</p>`}
+        ${lineDetail("rpeByType", ser, p => `${p.ty} · RPE ${p.y}`)}`;
+      }
+
       const sp = doc.logs.filter(l => E.isRunType(l) && l.km > 0 && l.min > 0 && l.rpe && inRange(l.date)).sort(byDate);
       const speed = sp.map(l => ({ x: dnum(l.date), y: l.km * 60 / l.min, date: l.date, id: l.id }));
       const rpe = sp.map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, id: l.id }));
       const ser = [{ points: speed, color: "var(--cy)" }, { points: rpe, color: "var(--sand)" }];
       return `
-      <div class="hd"><span class="eyebrow">Pace vs RPE</span><span class="eyebrow tapx">efficiency</span></div>
+      <div class="hd"><span class="eyebrow">RPE · pace</span>${tabs}</div>
       ${speed.length >= 2 ? wrap("paceVsRpe", C.lineChart(null, { series: ser, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.paceVsRpe })) : `<p class="row-sub">Log runs with distance and RPE — when speed climbs while RPE stays flat, you're getting more efficient.</p>`}
       <div class="legend2"><span><i style="background:var(--cy)"></i>speed km/h</span><span><i style="background:var(--sand)"></i>RPE</span></div>
       ${lineDetail("paceVsRpe", ser, (p, si) => si === 0 ? `${p.y.toFixed(1)} km/h` : `RPE ${p.y}`)}`;
-    },
-
-    efficiency: () => {
-      const e7 = rollEff(7), e28 = rollEff(28);
-      const ser = [];
-      if (e28.length) ser.push({ points: e28, color: "#8e9df8" });
-      if (e7.length) ser.push({ points: e7, color: "var(--cy)" });
-      return `
-      <div class="hd"><span class="eyebrow">Running efficiency</span><span class="eyebrow tapx">speed ÷ RPE</span></div>
-      ${e7.length ? avgLine([`${seriesAvg(e7).toFixed(2)} over ${win.label.toLowerCase()}`]) : ""}
-      ${e7.length >= 2 ? wrap("efficiency", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(1), selected: lineSel.efficiency })) : `<p class="row-sub">Log runs with distance and RPE — a rising line means more speed for the same effort.</p>`}
-      <div class="legend2"><span><i style="background:var(--cy)"></i>7-day</span><span><i style="background:#8e9df8"></i>28-day</span></div>
-      ${lineDetail("efficiency", ser, p => p.y.toFixed(2))}`;
-    },
-
-    rpeHeatmap: () => {
-      const cells = rpeList.slice(-56).map(l => ({
-        band: E.rpeDeviation(l, doc.logs).band,
-        title: `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`,
-      }));
-      return `
-      <div class="hd"><span class="eyebrow">RPE calendar</span><span class="eyebrow tapx">felt vs expected</span></div>
-      ${cells.length ? `<div class="heat">${C.heatmapCells(cells)}</div>
-        <div class="legend2"><span><i style="background:rgba(86,219,232,.55)"></i>easier</span><span><i style="background:rgba(143,161,179,.30)"></i>normal</span><span><i style="background:rgba(232,107,107,.6)"></i>harder</span></div>
-        <div class="callout" id="heat-detail" data-cells='${esc(JSON.stringify(rpeList.slice(-56).map(l => `${fmtShort(l.date)} · ${logTitle(l)} · RPE ${l.rpe}`)))}'>Tap a square to see the session.</div>`
-        : `<p class="row-sub">Add an RPE when you log — each workout becomes a square here, red when it felt harder than it should.</p>`}`;
-    },
-
-    rpeByType: () => {
-      const colors = { easy: "var(--cy)", long: "#7fd6c0", tempo: "var(--sand)", intervals: "#e89b5a", hills: "#e86b6b", climb: "#8e9df8" };
-      const ser = [];
-      const avgParts = [];
-      for (const ty of ["easy", "long", "tempo", "intervals", "hills", "climb"]) {
-        const pts = rpeList.filter(l => (l.type || "easy") === ty).map(l => ({ x: dnum(l.date), y: l.rpe, date: l.date, ty, id: l.id }));
-        if (pts.length) { ser.push({ points: pts, color: colors[ty] }); avgParts.push(`${ty} ${seriesAvg(pts).toFixed(1)}`); }
-      }
-      return `
-      <div class="hd"><span class="eyebrow">RPE by type</span><span class="eyebrow tapx">1–10</span></div>
-      ${avgParts.length ? avgLine(avgParts) : ""}
-      ${ser.some(s => s.points.length >= 2) ? wrap("rpeByType", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.rpeByType })) : `<p class="row-sub">Tag your logs with a type and RPE to see each kind's effort trend on its own.</p>`}
-      ${lineDetail("rpeByType", ser, p => `${p.ty} · RPE ${p.y}`)}`;
     },
 
     consistency: () => `
       <div class="hd"><span class="eyebrow">Consistency</span><span class="eyebrow" style="letter-spacing:.04em;${cons.streak ? "color:var(--cy)" : ""}">${cons.streak ? `STREAK · ${cons.streak} WK${cons.streak > 1 ? "S" : ""} ≥ 80 %` : "LAST 12 PLAN WEEKS"}</span></div>
       ${cons.cells.length ? `<div class="cells">${C.consistencyCells(cons.cells)}</div>` : `<p class="row-sub">This strip fills as plan weeks complete.</p>`}`,
 
-    bests: () => `
-      <div class="hd"><span class="eyebrow">Personal bests</span><button class="eyebrow tapx lk" id="pg-pb">add ＋</button></div>
-      ${bests.length ? `<div class="pbs">${bests.map(p => `<button class="pb" ${p.logId ? `data-pbid="${p.logId}"` : ""}>
-        <span class="pl">${p.label}</span><span class="pv">${fmtBest(p)}</span><span class="pd">${p.manual ? "manual" : fmtShort(p.date)}</span></button>`).join("")}</div>`
-        : `<p class="row-sub">Your records appear as you log — biggest climb, longest ride, fastest 5K/10K/half/marathon, 40K.</p>`}`,
+    bests: () => {
+      const PB_SPORT = { run5k: "run", run10k: "run", runHalf: "run", runFull: "run", longestRun: "run",
+        bike40k: "bike", longestRide: "bike", longestTrail: "trail", longestHike: "hike" };
+      const pbSport = p => PB_SPORT[p.key] || (p.logId && doc.logs.find(l => l.id === p.logId)?.sport) || "bike";
+      const head = `<div class="hd"><span class="eyebrow">Personal bests</span>`;
+      if (!bests.length) return `${head}<button class="eyebrow tapx lk" id="pg-pb">add ＋</button></div>
+        <p class="row-sub">Your records appear as you log — biggest climb, longest ride, fastest 5K/10K/half/marathon, 40K.</p>`;
+      const bySport = {};
+      for (const p of bests) { const sp = pbSport(p); (bySport[sp] = bySport[sp] || []).push(p); }
+      const avail = [["run", "Run"], ["bike", "Ride"], ["trail", "Trail"], ["hike", "Hike"]].filter(([sp]) => bySport[sp]);
+      let cur = cardToggle.bests;
+      if (!cur || !bySport[cur]) cur = bySport.run ? "run" : avail[0][0];
+      const list = bySport[cur] || [];
+      return `${head}${cardTabs("bests", avail, cur)}</div>
+      <div class="pbs">${list.map(p => `<button class="pb" ${p.logId ? `data-pbid="${p.logId}"` : ""}>
+        <span class="pl">${p.label}</span><span class="pv">${fmtBest(p)}</span><span class="pd">${p.manual ? "manual" : fmtShort(p.date)}</span></button>`).join("")}</div>
+      <button class="lk" id="pg-pb" style="margin-top:10px;font-size:12px">add a record ＋</button>`;
+    },
 
     calories: () => {
+      const view = cardToggle.calories || "burned";
+      const tabs = cardTabs("calories", [["burned", "Burned"], ["bytype", "By activity"]], view);
+      if (view === "bytype") {
+        return `
+        <div class="hd"><span class="eyebrow">Calories · by activity</span>${tabs}</div>
+        ${calTypes.total > 0 ? `<div class="catbars">${calTypes.buckets.map(b => {
+          const n = calTypeCounts[b.sport] || 0, avg = n ? Math.round(b.cal / n) : 0;
+          return `<div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:var(--cy)"></i></span><span class="cv">${b.cal.toLocaleString()}<small>${n ? ` · ${n}× · ${avg.toLocaleString()} avg` : ""}</small></span></div>`;
+        }).join("")}</div>
+          ${calTypes.top ? (() => { const tn = calTypeCounts[calTypes.top.sport] || 0; return `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}${tn ? `, averaging <b>${Math.round(calTypes.top.cal / tn).toLocaleString()}</b> kcal across ${tn} session${tn === 1 ? "" : "s"}` : ""}.</div>`; })() : ""}`
+          : `<p class="row-sub">Once activities carry calories, this breaks them down by sport.</p>`}`;
+      }
       const series = calB.map(w => ({ x: dnum(w.start), y: w.total, date: w.start }));
       const total = series.reduce((a, p) => a + p.y, 0);
       const nonzero = series.filter(p => p.y > 0);
@@ -2253,22 +2378,13 @@ function renderProgress() {
       const curFrom = unit === "month" ? t.slice(0, 7) + "-01" : E.addDays(t, -E.dayIndex(t));
       const curCal = E.caloriesInRange(doc.logs, curFrom, t);
       return `
-      <div class="hd"><span class="eyebrow">Calories burned</span><span class="eyebrow tapx">per ${unit}</span></div>
+      <div class="hd"><span class="eyebrow">Calories · burned</span>${tabs}</div>
       <div class="stat"><span class="midnum">${total.toLocaleString()}</span><span class="unit">kcal · ${win.label.toLowerCase()}</span></div>
       ${avgC != null && series.length > 1 ? avgLine([`${Math.round(avgC).toLocaleString()} kcal / ${unit}`, `this ${unit} ${Math.round(curCal).toLocaleString()} kcal`]) : ""}
       ${nonzero.length >= 2 ? wrap("calories", C.lineChart(series, { axis: true, taps: true, avg: true, color: "#e6a45a", fmtY: v => Math.round(v), selected: lineSel.calories, xLabels: [calB[0].label, calB[calB.length - 1].label] })) : `<p class="row-sub">Log or import activities with calories to see your energy output over time.</p>`}
       ${lineDetail("calories", [{ points: series }], p => `${Math.round(p.y).toLocaleString()} kcal`)}
       ${splitTot > 0 ? `<div class="callout">Planned <b>${calSplit.planned.toLocaleString()}</b> · unplanned <b>${calSplit.unplanned.toLocaleString()}</b> kcal in this range.</div>` : ""}`;
     },
-
-    caloriesByType: () => `
-      <div class="hd"><span class="eyebrow">Calories by activity</span><span class="eyebrow tapx">${win.label.toLowerCase()}</span></div>
-      ${calTypes.total > 0 ? `<div class="catbars">${calTypes.buckets.map(b => {
-        const n = calTypeCounts[b.sport] || 0, avg = n ? Math.round(b.cal / n) : 0;
-        return `<div class="catbar"><span class="cl">${b.label}</span><span class="bar"><i style="width:${Math.round(b.share * 100)}%;background:var(--cy)"></i></span><span class="cv">${b.cal.toLocaleString()}<small>${n ? ` · ${n}× · ${avg.toLocaleString()} avg` : ""}</small></span></div>`;
-      }).join("")}</div>
-        ${calTypes.top ? (() => { const tn = calTypeCounts[calTypes.top.sport] || 0; return `<div class="callout">Most of it — ${Math.round(calTypes.top.share * 100)}% — came from ${calTypes.top.label}${tn ? `, averaging <b>${Math.round(calTypes.top.cal / tn).toLocaleString()}</b> kcal across ${tn} session${tn === 1 ? "" : "s"}` : ""}.</div>`; })() : ""}`
-        : `<p class="row-sub">Once activities carry calories, this breaks them down by sport.</p>`}`,
 
     coach: () => {
       const ins = E.coachInsights({ doc, todayISO: t }).slice(0, 2);
@@ -2280,7 +2396,7 @@ function renderProgress() {
 
   const order = doc.settings.progressCards.filter(c => c.on && CARDS[c.id]);
   const pr = doc.settings.progressRange;
-  const RANGE_OPTS = [["thisWeek", "This week"], ["4w", "4 weeks"], ["8w", "8 weeks"], ["12w", "12 weeks"], ["3m", "3 months"], ["6m", "6 months"], ["ytd", "Year to date"], ["all", "All time"]];
+  const RANGE_OPTS = [["thisWeek", "Last 7 days"], ["4w", "4 weeks"], ["8w", "8 weeks"], ["12w", "12 weeks"], ["3m", "3 months"], ["6m", "6 months"], ["ytd", "Year to date"], ["all", "All time"]];
   const rangeBar = `<div class="rangebar">
     <button class="iconbtn sm" id="rg-prev" aria-label="earlier">‹</button>
     <select id="rg-preset" class="rangesel">${RANGE_OPTS.map(([v, l]) => `<option value="${v}" ${pr.preset === v ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -2502,6 +2618,7 @@ function openValueSheet({ title, label, suffix, step = "1", value = "", withDate
 
 const METHOD_LABEL = { pctmax: "% of max HR", karvonen: "Karvonen (HR reserve)", lthr: "Lactate threshold", custom: "Custom bounds" };
 
+let settingsOpen = new Set(); // collapsed Settings sections that are expanded (session-lifetime)
 function renderSettings() {
   const page = $('[data-page="settings"]');
   const st = doc.settings;
@@ -2509,6 +2626,10 @@ function renderSettings() {
   const lay = st.layout;
   const exportDays = st.lastExportAt
     ? Math.floor((E.parseISO(todayISO()) - E.parseISO(st.lastExportAt)) / 864e5) : null;
+  const sOpen = g => settingsOpen.has(g);
+  const ghBtn = (grp, title, summary) => `<button class="gh ghtap" data-grp="${grp}"><span>${title}</span><span class="ghx"><span class="ghsum">${summary}</span><span class="chev">${sOpen(grp) ? "⌄" : "›"}</span></span></button>`;
+  const equipOwned = Object.keys(W.EQUIPMENT_LABELS).filter(k => W.HOME_EQUIPMENT.includes(k) && st.equipment[k]).length;
+  const workoutsOn = WORKOUT_TOGGLES.filter(([k]) => st.allowedTypes[k] !== false).length;
 
   page.innerHTML = `
     <h1 class="page">Settings</h1>
@@ -2525,7 +2646,7 @@ function renderSettings() {
       ${b.map((z, i) => `<div class="zr"><span class="chip zc${z.z}">Z${z.z}</span><span class="what">${E.ZONE_NAMES[i]}</span><span class="range">${z.lo} – ${z.hi}</span></div>`).join("")}
       <button class="srow" id="st-custom" style="border-top:1px solid var(--line)"><span class="l" style="color:var(--cy)">Customize zones<span>your own bpm bounds — every plan and chart updates</span></span><span class="chev">›</span></button>
     </div></div>
-    <div class="group"><div class="gh">Plan</div><div class="scard">
+    <div class="group ${sOpen("plan") ? "" : "collapsed"}">${ghBtn("plan", "Training plan", `${st.weeklyCounts.run}·${st.weeklyCounts.bike}·${st.weeklyCounts.gym}`)}<div class="scard">
       <button class="srow" id="st-mix"><span class="l">Weekly mix<span>runs · rides · gym per week</span></span><span class="v">${st.weeklyCounts.run} · ${st.weeklyCounts.bike} · ${st.weeklyCounts.gym}</span><span class="chev">›</span></button>
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
       <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
@@ -2537,12 +2658,12 @@ function renderSettings() {
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
     </div></div>
-    <div class="group"><div class="gh">Workouts allowed</div><div class="scard">
+    <div class="group ${sOpen("workouts") ? "" : "collapsed"}">${ghBtn("workouts", "Workouts allowed", `${workoutsOn}/${WORKOUT_TOGGLES.length} on`)}<div class="scard">
       ${WORKOUT_TOGGLES.map(([key, label, sub]) => `
         <button class="srow tog" data-fam="${key}"><span class="l">${label}<span>${sub}</span></span>
           <span class="switch ${st.allowedTypes[key] !== false ? "on" : ""}"></span></button>`).join("")}
     </div></div>
-    <div class="group"><div class="gh">Home equipment</div><div class="scard">
+    <div class="group ${sOpen("equip") ? "" : "collapsed"}">${ghBtn("equip", "Home equipment", `${equipOwned} owned`)}<div class="scard">
       <p class="row-sub" style="padding:6px 14px 2px">Switch on what you own — home workouts only pick exercises you can actually do.</p>
       ${Object.entries(W.EQUIPMENT_LABELS).filter(([k]) => W.HOME_EQUIPMENT.includes(k)).map(([key, label]) => `
         <button class="srow tog" data-equip="${key}"><span class="l">${label}</span>
@@ -2600,6 +2721,11 @@ function renderSettings() {
     onSave: v => { st.climbBaseAscent = Math.round(v / 10) * 10; toast("Climb target updated"); },
   }));
   $("#st-pace").addEventListener("click", openPaceSheet);
+  page.querySelectorAll(".ghtap").forEach(b => b.addEventListener("click", () => {
+    const g = b.dataset.grp;
+    if (settingsOpen.has(g)) settingsOpen.delete(g); else settingsOpen.add(g);
+    renderSettings();
+  }));
   page.querySelectorAll("[data-fam]").forEach(b => b.addEventListener("click", () => {
     const key = b.dataset.fam;
     const turningOff = st.allowedTypes[key] !== false;
