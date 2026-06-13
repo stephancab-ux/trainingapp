@@ -27,7 +27,12 @@ function fmtDur(min) {
 function fmtDate(iso, opts = { weekday: "long", day: "numeric", month: "long" }) {
   return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "UTC" }).format(E.parseISO(iso));
 }
-const fmtShort = iso => fmtDate(iso, { day: "numeric", month: "short" });
+/* Day + month, plus the year whenever it's not the current year — so an old
+   personal best reads "23 May 2024" while recent dates stay compact. */
+const fmtShort = iso => fmtDate(iso,
+  E.parseISO(iso).getUTCFullYear() === E.parseISO(todayISO()).getUTCFullYear()
+    ? { day: "numeric", month: "short" }
+    : { day: "numeric", month: "short", year: "numeric" });
 
 const ICONS = {
   run: `<svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/></svg>`,
