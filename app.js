@@ -1158,7 +1158,7 @@ function programSection(week, due) {
   }).join("");
 
   return `
-    <div><div class="eyebrow">${fmtShort(week.startDate)} – ${fmtShort(end)}${week.isDeload ? ` · <span style="color:var(--sand)">DELOAD</span>` : ""}</div>
+    <div><div class="eyebrow">${fmtShort(week.startDate)} – ${fmtShort(end)}${week.isDeload ? ` · <span style="color:var(--sand)">DELOAD</span>` : ""}${week.taper != null ? ` · <span style="color:var(--sand)">${week.taper === 0 ? "RACE WEEK" : "TAPER"}</span>` : ""}</div>
     <h1 class="page">Week ${week.weekNum}</h1></div>
     ${due ? `<button class="card" id="wk-checkin" style="display:flex;gap:12px;align-items:center;border-color:rgba(86,219,232,.35)">
        <span style="flex:1;text-align:left"><b>Sunday check-in is open</b><br><span class="row-sub">2 minutes: weight, feel, next week's volume</span></span>
@@ -1802,7 +1802,11 @@ function openCheckin(week) {
       ${state.hrv7d ? `<span class="chip">HRV&nbsp;<b>${state.hrv7d}</b>&nbsp;ms</span>` : ""}</div>`;
 
     const allow = doc.settings.allowedTypes;
-    const build = ratePct => nextIsDeload
+    const wo = E.weeksToEvent(doc.settings, startDate);
+    const isTaper = wo === 0 || wo === 1 || wo === 2;
+    const build = ratePct => isTaper
+      ? E.taperWeek({ prevLoadWeek: prevLoad, startDate, weekNum: nextNum, weeksOut: wo })
+      : nextIsDeload
       ? E.deloadWeek({ prevLoadWeek: prevLoad, startDate, weekNum: nextNum })
       : E.planNextWeek({
           prevLoadWeek: prevLoad, chosenRate: ratePct / 100, settings: doc.settings,
@@ -1817,6 +1821,26 @@ function openCheckin(week) {
       return `<div class="pv"><span class="d">${s.day.toUpperCase()}</span><span class="s">${kindLabel(s)}</span>
         <span class="m">${old ? `<span>${old.targetMin} → </span>` : ""}<b>${s.targetMin}</b> <span>min</span></span></div>`;
     }).join("");
+
+    if (isTaper) {
+      const nw = build(0);
+      const what = doc.settings.goal === "cycling" ? "event" : "race";
+      el.querySelector(".wrap").innerHTML = head("Step 4 — next week.") + recap + `
+        <div class="card prop">
+          <div class="eyebrow">Week ${nextNum} · <span style="color:var(--sand)">${wo === 0 ? "race week" : "taper"}</span></div>
+          <div class="top"><span class="rate" style="color:var(--sand)">${Math.round((1 + (nw.rate || 0)) * 100)} %</span><span class="rec" style="color:var(--sand);border-color:rgba(230,211,163,.4)">automatic</span></div>
+          <p class="why">${wo === 0
+            ? `It's ${what} week — volume drops right back so you toe the line fresh. Keep it short and easy, then enjoy it.`
+            : `${wo} week${wo > 1 ? "s" : ""} to your ${what} — easing volume now (a short sharpener stays) so you arrive rested and sharp.`}</p>
+          <div class="nextline"><span class="midnum">${fmtDur(E.plannedMinutes(nw))}</span><span class="unit">next week · ${fmtDur(E.plannedMinutes(week))} this week</span></div>
+          <div class="preview">${previewRows(nw)}</div>
+        </div>
+        <button class="btn" id="ci-confirm">Lock in week ${nextNum}</button>
+        <button class="btn ghost" id="ci-back">Back</button>`;
+      el.querySelector("#ci-confirm").addEventListener("click", () => confirm2(rec, nw.rate || 0, nw));
+      el.querySelector("#ci-back").addEventListener("click", () => go(3));
+      return;
+    }
 
     if (nextIsDeload) {
       const nw = build(0);

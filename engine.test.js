@@ -1093,3 +1093,32 @@ test("goalDefaults returns a sane mix + emphasis per goal", () => {
   assert.ok(E.goalDefaults("strength").allowed.includes("gymStrength"));
   assert.deepEqual(E.goalDefaults("anything-else").mix, { run: 3, bike: 3, gym: 0 });
 });
+
+test("weeksToEvent counts whole weeks to the event's Monday", () => {
+  const s = { goalEvent: { date: "2026-07-13" } };
+  assert.equal(E.weeksToEvent(s, "2026-07-13"), 0);
+  assert.equal(E.weeksToEvent(s, "2026-07-06"), 1);
+  assert.equal(E.weeksToEvent(s, "2026-06-15"), 4);
+  assert.equal(E.weeksToEvent({ goalEvent: null }, "2026-06-15"), null);
+});
+
+test("taperWeek scales volume down and keeps a sharpener until race week", () => {
+  const prev = E.firstWeekFromMix("2026-06-15", { weeklyCounts: { run: 3, bike: 2, gym: 0 }, restDay: "sun" });
+  const r = prev.sessions.find(s => s.sport === "run");
+  r.kind = "quality"; r.qualityTemplate = "runQ1"; r.zone = 4;
+  const tot = w => w.targetMin.run + w.targetMin.bike;
+  const t2 = E.taperWeek({ prevLoadWeek: prev, startDate: "2026-06-29", weekNum: 3, weeksOut: 2 });
+  const t0 = E.taperWeek({ prevLoadWeek: prev, startDate: "2026-07-13", weekNum: 5, weeksOut: 0 });
+  assert.ok(tot(t2) < tot(prev), "2 weeks out is lower than the build week");
+  assert.ok(tot(t0) < tot(t2), "race week is the lowest");
+  assert.ok(t2.sessions.some(s => s.kind === "quality"), "sharpener kept 2 weeks out");
+  assert.ok(t0.sessions.every(s => s.kind !== "quality"), "race week is all easy");
+  assert.equal(t0.taper, 0);
+});
+
+test("coachInsights surfaces an event countdown when a dated event is set", () => {
+  const doc = { settings: { ...SETTINGS, goal: "race", goalEvent: { date: "2026-07-13", distanceKm: 42.2 } },
+    weeks: [E.generateWeek1("2026-06-15")], logs: [], checkins: [], vo2History: [], manualBests: [] };
+  const ins = E.coachInsights({ doc, todayISO: "2026-06-15" });
+  assert.ok(ins.some(i => i.id === "event-countdown"), "countdown insight present");
+});

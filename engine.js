@@ -374,6 +374,44 @@ export function isDeloadWeek(weekNum, deloadEvery) {
   return deloadEvery > 0 && weekNum % deloadEvery === 0;
 }
 
+/* Whole weeks from the Monday of `weekStartISO` to the Monday of the goal event
+   (settings.goalEvent.date), or null with no dated event. 0 = the event is that week. */
+export function weeksToEvent(settings, weekStartISO) {
+  const ev = settings && settings.goalEvent;
+  if (!ev || !ev.date) return null;
+  return Math.round((parseISO(mondayOf(ev.date)) - parseISO(mondayOf(weekStartISO))) / (7 * 864e5));
+}
+
+/* Taper toward the event — scale the previous week down so you arrive fresh:
+   ~2 weeks out 70 %, final week 50 %, race week 40 %. A short sharpener (quality)
+   is kept until race week, when everything goes easy. */
+export function taperWeek({ prevLoadWeek, startDate, weekNum, weeksOut }) {
+  const factor = weeksOut >= 2 ? 0.7 : weeksOut === 1 ? 0.5 : 0.4;
+  const longCap = weeksOut >= 2 ? 75 : weeksOut === 1 ? 50 : 40;
+  const keepQuality = weeksOut >= 1;
+  const sessions = prevLoadWeek.sessions.map(s => {
+    if (s.sport === "rest") return { ...s };
+    if (s.sport === "gym") {
+      return { day: s.day, slot: s.slot, sport: "gym", kind: "easy",
+               targetMin: snapGymMinutes(round5(s.targetMin * factor)), venue: s.venue || "home",
+               gym: { seed: hashSeed(`${startDate}-${s.day}-${s.slot ?? 0}`), avoidIds: [], swaps: {} } };
+    }
+    const isQ = s.kind === "quality" && keepQuality;
+    let min = round5(s.targetMin * factor);
+    if (s.kind === "long") min = Math.min(min, longCap);
+    const out = { day: s.day, slot: s.slot, sport: s.sport,
+                  kind: isQ ? "quality" : (s.kind === "long" ? "long" : "easy"),
+                  targetMin: Math.max(20, min), zone: isQ ? (s.zone || 4) : Math.min(2, s.zone || 2) };
+    if (isQ && s.qualityTemplate) out.qualityTemplate = s.qualityTemplate;
+    return out;
+  });
+  return {
+    id: isoWeekId(startDate), startDate, weekNum, isDeload: false, taper: weeksOut, sessions,
+    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+    rate: factor - 1,
+  };
+}
+
 export function lastLoadWeek(weeks) {
   if (!weeks.length) return null;
   for (let i = weeks.length - 1; i >= 0; i--) if (!weeks[i].isDeload) return weeks[i];
@@ -489,7 +527,10 @@ export function projectWeeks({ weeks, settings, quality = { run: false, bike: fa
     const last = sim[sim.length - 1];
     const startDate = addDays(last.startDate, 7);
     const weekNum = last.weekNum + 1;
-    const w = isDeloadWeek(weekNum, settings.deloadEvery)
+    const wo = weeksToEvent(settings, startDate);
+    const w = (wo === 0 || wo === 1 || wo === 2)
+      ? taperWeek({ prevLoadWeek: lastLoadWeek(sim), startDate, weekNum, weeksOut: wo })
+      : isDeloadWeek(weekNum, settings.deloadEvery)
       ? deloadWeek({ prevLoadWeek: lastLoadWeek(sim), startDate, weekNum })
       : planNextWeek({
           prevLoadWeek: lastLoadWeek(sim), chosenRate: settings.growthRate, settings,
@@ -499,7 +540,7 @@ export function projectWeeks({ weeks, settings, quality = { run: false, bike: fa
         });
     sim.push(w);
     out.push({
-      weekNum, startDate, isDeload: w.isDeload,
+      weekNum, startDate, isDeload: w.isDeload, taper: w.taper,
       run: w.targetMin.run, bike: w.targetMin.bike,
       total: w.targetMin.run + w.targetMin.bike,
       hasQuality: w.sessions.some(s => s.kind === "quality"),
@@ -1715,6 +1756,40 @@ export function coachInsights({ doc, todayISO }) {
           body: "You've hit your plan consistently — this is exactly how fitness comes back.",
           why: `${cons.streak} straight weeks at ≥ 80% completion.`,
           impact: 0.5, confidence: 0.8 });
+
+  // how the training plan is going + event countdown
+  const planWeeks = doc.weeks || [];
+  if (planWeeks.length) {
+    const done = planWeeks.filter(w => addDays(w.startDate, 6) < todayISO).slice(-3);
+    if (done.length) {
+      const avg = done.reduce((a, w) => a + weekCompletion(w, logs), 0) / done.length;
+      const pc = Math.round(avg * 100), span = `your last ${done.length} week${done.length > 1 ? "s" : ""}`;
+      if (avg >= 0.9)
+        add({ id: "plan-ontrack", category: "strength", title: "Plan on track",
+              body: `You're completing about ${pc}% of your planned training — consistency like this is what drives the gains.`,
+              why: `Average completion across ${span}.`, impact: 0.7, confidence: 0.7 });
+      else if (avg >= 0.65)
+        add({ id: "plan-behind", category: "recommendation", title: "Slipping a little off plan",
+              body: `You're logging about ${pc}% of the plan. Protect the key sessions — or trim the weekly mix so it fits your week.`,
+              why: `Average completion across ${span}.`, impact: 0.7, confidence: 0.65 });
+      else
+        add({ id: "plan-low", category: "recovery", title: "The plan's getting away",
+              body: `Only about ${pc}% of planned training is getting done. Ease the mix, or start a fresh plan around what's realistic right now.`,
+              why: `Average completion across ${span}.`, impact: 0.8, confidence: 0.7 });
+    }
+    const ev = doc.settings.goalEvent;
+    if (ev && ev.date && ev.date >= todayISO) {
+      const wo = weeksToEvent(doc.settings, todayISO);
+      if (wo != null && wo >= 0) {
+        const what = doc.settings.goal === "cycling" ? "event" : "race";
+        add({ id: "event-countdown", category: wo <= 2 ? "recommendation" : "trend",
+              title: wo === 0 ? "It's race week!" : `${wo} week${wo > 1 ? "s" : ""} to your ${what}`,
+              body: wo === 0 ? "Keep it short and easy, rest up, then enjoy it." : wo <= 2 ? "You're tapering now — lower volume, stay sharp, arrive fresh." : "Stay consistent and keep building steadily toward it.",
+              why: ev.distanceKm ? `${ev.distanceKm} km on ${ev.date}.` : `Target ${what} on ${ev.date}.`,
+              impact: wo <= 2 ? 0.85 : 0.6, confidence: 0.9 });
+      }
+    }
+  }
 
   // new personal bests in the last 7 days
   const pbs = personalBests({ logs, manualBests: doc.manualBests || [] });
