@@ -185,6 +185,11 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .feelgrid button{flex:1;min-height:64px;border-radius:14px;background:var(--card);border:1.5px solid var(--line);display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center;color:var(--sub);font-size:11px;font-weight:650}
 .feelgrid button b{font-size:22px;color:var(--ink)}
 .feelgrid button.on{border-color:var(--cy);background:rgba(86,219,232,.08)}
+.goalgrid{display:flex;flex-direction:column;gap:8px}
+.goalgrid button{display:block;width:100%;text-align:left;padding:12px 15px;border:1.5px solid var(--line);border-radius:15px;background:var(--card);font-size:12.5px;color:var(--mut);font-weight:550}
+.goalgrid button b{display:block;font-size:15px;color:var(--ink);font-weight:700;margin-bottom:1px}
+.goalgrid button.on{border-color:var(--cy);background:rgba(86,219,232,.08)}
+.goalgrid button.on b{color:var(--cy)}
 .prop .top{display:flex;align-items:baseline;gap:10px}
 .prop .rate{font-size:54px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--cy)}
 .prop .rec{font-size:11px;font-weight:750;letter-spacing:.1em;color:var(--cy);text-transform:uppercase;border:1px solid rgba(86,219,232,.4);padding:3px 8px;border-radius:999px;transition:opacity .2s}

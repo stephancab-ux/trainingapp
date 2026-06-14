@@ -1065,10 +1065,31 @@ test("recommendBurnGoal / recommendClimbTarget / recommendGrowthRate suggest, wi
   assert.equal(E.recommendClimbTarget({ logs: rides.slice(0, 1) }), null);
 });
 
-test("initDoc starts empty (no demo data) but with a generated week 1", () => {
-  const d = S.initDoc("2026-06-15", "2026-06-12");
+test("initDoc starts a clean no-plan doc (empty data, no weeks)", () => {
+  const d = S.initDoc("2026-06-12");
   assert.deepEqual(d.logs, []);
   assert.deepEqual(d.weighIns, []);
   assert.deepEqual(d.vo2History, []);
-  assert.equal(d.weeks.length, 1);
+  assert.deepEqual(d.weeks, []);
+  assert.equal(d.settings.goal, "general");
+});
+
+test("firstWeekFromMix builds Week 1 from the mix (1 run / 5 ride / 3 gym = 9 sessions)", () => {
+  const settings = { weeklyCounts: { run: 1, bike: 5, gym: 3 }, restDay: "sun", gymVenueDefault: "home" };
+  const w = E.firstWeekFromMix("2026-06-15", settings);
+  const nonRest = w.sessions.filter(s => s.sport !== "rest");
+  assert.equal(nonRest.length, 9, "all 9 placed");
+  assert.equal(nonRest.filter(s => s.sport === "run").length, 1);
+  assert.equal(nonRest.filter(s => s.sport === "bike").length, 5);
+  assert.equal(nonRest.filter(s => s.sport === "gym").length, 3);
+  assert.ok(nonRest.every(s => s.kind !== "quality"), "week 1 is all easy");
+  assert.equal(w.weekNum, 1);
+});
+
+test("goalDefaults returns a sane mix + emphasis per goal", () => {
+  assert.deepEqual(E.goalDefaults("race").mix, { run: 4, bike: 1, gym: 0 });
+  assert.ok(E.goalDefaults("race").allowed.includes("longRun"));
+  assert.deepEqual(E.goalDefaults("strength").mix, { run: 2, bike: 1, gym: 3 });
+  assert.ok(E.goalDefaults("strength").allowed.includes("gymStrength"));
+  assert.deepEqual(E.goalDefaults("anything-else").mix, { run: 3, bike: 3, gym: 0 });
 });

@@ -33,6 +33,9 @@ export function defaultSettings() {
   return {
     maxHR: 183,
     maxHRAuto: true,
+    name: null,
+    goal: "general",
+    goalEvent: null,
     age: null,
     sex: null,
     heightCm: null,
@@ -109,12 +112,12 @@ export function seedLogs() {
   }));
 }
 
-export function initDoc(startDate, todayISO) {
+export function initDoc(todayISO) {
   return {
     schemaVersion: SCHEMA_VERSION,
     createdAt: todayISO,
     settings: defaultSettings(),
-    weeks: [generateWeek1(startDate)],
+    weeks: [],
     logs: [],
     checkins: [],
     weighIns: [],

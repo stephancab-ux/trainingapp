@@ -375,6 +375,7 @@ export function isDeloadWeek(weekNum, deloadEvery) {
 }
 
 export function lastLoadWeek(weeks) {
+  if (!weeks.length) return null;
   for (let i = weeks.length - 1; i >= 0; i--) if (!weeks[i].isDeload) return weeks[i];
   return weeks[weeks.length - 1];
 }
@@ -553,6 +554,34 @@ export function placeLayout({ run, bike, gym = 0, restDay = "sun" }) {
   }
   for (const d of DAYS) if (!layout[d].length) layout[d] = ["rest"];
   return layout;
+}
+
+/* Goal → recommended starting mix + workout-type emphasis for the onboarding funnel.
+   The user overrides everything; this just seeds sensible defaults with a reason. */
+export function goalDefaults(goal) {
+  switch (goal) {
+    case "race":     return { mix: { run: 4, bike: 1, gym: 0 }, allowed: ["longRun", "runTempo", "runIntervals"], reason: "Run-focused with a long run and tempo work to build race endurance." };
+    case "cycling":  return { mix: { run: 1, bike: 4, gym: 0 }, allowed: ["longRide", "bikeClimb", "bikeIntervals"], reason: "Ride-focused with a long ride and climbing to build cycling endurance." };
+    case "weight":   return { mix: { run: 3, bike: 3, gym: 1 }, allowed: [], reason: "A higher-frequency balanced mix; pair it with a weekly burn goal toward your target weight." };
+    case "strength": return { mix: { run: 2, bike: 1, gym: 3 }, allowed: ["gymStrength"], reason: "Gym strength three times a week, with easy aerobic sessions to recover." };
+    default:         return { mix: { run: 3, bike: 3, gym: 0 }, allowed: [], reason: "A balanced run + ride base — a solid all-round starting point." };
+  }
+}
+
+/* Build a personalised Week 1 straight from the weekly mix (onboarding funnel) — Week 1
+   reflects the chosen run/ride/gym counts instead of the fixed generateWeek1 table. */
+export function firstWeekFromMix(startDate, settings) {
+  const c = settings.weeklyCounts || { run: 3, bike: 3, gym: 0 };
+  const restDay = settings.restDay || "sun";
+  const layout = placeLayout({ run: c.run, bike: c.bike, gym: c.gym, restDay });
+  const sessions = buildSessions(35 * c.run, 60 * c.bike, 45 * c.gym, layout, {
+    deload: false, quality: { run: false, bike: false, gym: false },
+    gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate,
+  });
+  return {
+    id: isoWeekId(startDate), startDate, weekNum: 1, isDeload: false, sessions,
+    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+  };
 }
 
 /* True if a layout value (string or array) contains a run. */

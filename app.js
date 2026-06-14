@@ -392,28 +392,161 @@ function start() {
 }
 
 function renderFirstRun() {
-  const def = E.mondayOf(todayISO());
   document.body.insertAdjacentHTML("beforeend", `
     <div class="firstrun"><div class="wrap">
       <img class="fr-logo" src="./icons/logo-full.png" alt="Stephan Endurance — Plan. Perform. Progress.">
-      <p class="note-sub">Your run + bike rebuild, on this phone and nowhere else. Easy weeks first, growth when you've earned it, deload every 4th week.</p>
-      <div class="card">
-        <div class="lab" style="margin-bottom:8px">Plan start</div>
-        <div class="frow" style="border:none"><span class="l">Week 1 begins</span>
-          <input type="date" id="fr-date" value="${def}"></div>
-        <p class="row-sub" style="margin-top:6px">Weeks run Monday–Sunday. Defaults to <b>this week</b> so you can start today — pick a later date to begin fresh next Monday.</p>
-      </div>
-      <button class="btn" id="fr-go">Start week 1</button>
-      <p class="row-sub">Pre-loaded with your Garmin history (weight, VO₂, recent activities). Everything is editable later.</p>
+      <p class="note-sub">Your run, ride and gym companion — on this phone, no account, no tracking. Start a guided plan built around your goal, or just log your activities.</p>
+      <button class="btn" id="fr-plan">Start a training plan</button>
+      <button class="btn ghost" id="fr-log">Just use the app</button>
+      <p class="row-sub">You can switch either way later — add a plan when you're ready, or stop one and start fresh.</p>
     </div></div>`);
-  $("#fr-go").addEventListener("click", () => {
-    const v = $("#fr-date").value || def;
-    doc = S.initDoc(E.mondayOf(v), todayISO());
-    S.save(doc);
-    document.querySelector(".firstrun").remove();
-    start();
-    toast(`Week 1 starts ${fmtShort(doc.weeks[0].startDate)}`);
-  });
+  const boot = () => { doc = S.initDoc(todayISO()); S.save(doc); document.querySelector(".firstrun").remove(); start(); };
+  $("#fr-plan").addEventListener("click", () => { boot(); openPlanFunnel(); });
+  $("#fr-log").addEventListener("click", () => { boot(); toast("You're set — tap ＋ to log, or start a plan anytime from Coach."); });
+}
+
+const GOALS = [
+  ["race", "Run a race", "5K → marathon"],
+  ["cycling", "Cycling event", "a distance or sportive"],
+  ["weight", "Lose weight", "toward a target weight"],
+  ["strength", "Get stronger", "gym-focused"],
+  ["general", "General fitness", "a balanced base"],
+];
+const GOAL_LABEL = { race: "Run a race", cycling: "Cycling event", weight: "Lose weight", strength: "Get stronger", general: "General fitness" };
+const RACE_DIST = [["5", "5K"], ["10", "10K"], ["21.1", "Half"], ["42.2", "Marathon"]];
+const RIDE_DIST = [["40", "40K"], ["80", "80K"], ["100", "100K"], ["160", "160K"]];
+
+/* The guided plan-building funnel — goal → profile → body → training, then builds
+   Week 1 from the chosen mix. Reused by first-run, Today, Coach and Settings. */
+function openPlanFunnel() {
+  const cs = doc.settings;
+  const state = {
+    step: 1, goal: cs.goal || "general",
+    eventDist: cs.goalEvent?.distanceKm ?? null, eventDate: cs.goalEvent?.date ?? "",
+    name: cs.name ?? "", age: cs.age ?? "", sex: cs.sex ?? null,
+    height: cs.heightCm ?? "", weight: doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : "",
+    target: cs.targetWeightKg ?? 80, mix: { ...(cs.weeklyCounts || { run: 3, bike: 3, gym: 0 }) },
+    restDay: cs.restDay || "sun", start: E.mondayOf(todayISO()), mixTouched: false,
+  };
+  document.body.insertAdjacentHTML("beforeend", `<div class="checkin" id="funnel"><div class="wrap"></div></div>`);
+  const el = $("#funnel");
+  requestAnimationFrame(() => el.classList.add("show"));
+  const close = () => { el.classList.remove("show"); setTimeout(() => el.remove(), 320); };
+  const TOTAL = 4;
+  const stepsBar = () => `<div class="steps">${Array.from({ length: TOTAL }, (_, i) => `<i class="${i < state.step ? "f" : ""}"></i>`).join("")}</div>`;
+  const head = (title, sub) => `<div><div class="eyebrow">Build your plan</div><h1 class="page">${title}</h1>${stepsBar()}${sub ? `<p class="row-sub" style="margin-top:8px">${sub}</p>` : ""}</div>`;
+  const nav = (label = "Continue") => `<button class="btn" id="fn-next">${label}</button><button class="btn ghost" id="fn-back">${state.step === 1 ? "Not now" : "Back"}</button>`;
+  const isRaceish = () => state.goal === "race" || state.goal === "cycling";
+  const go = n => { state.step = n; render(); };
+  const wireNav = onNext => {
+    el.querySelector("#fn-next").addEventListener("click", onNext);
+    el.querySelector("#fn-back").addEventListener("click", () => { if (state.step === 1) close(); else go(state.step - 1); });
+  };
+
+  function renderGoal() {
+    const dists = state.goal === "cycling" ? RIDE_DIST : RACE_DIST;
+    el.querySelector(".wrap").innerHTML = head("Your goal", "We'll suggest a starting mix — you can tweak everything.") + `
+      <div class="goalgrid">${GOALS.map(([v, l, sub]) => `<button data-goal="${v}" class="${state.goal === v ? "on" : ""}"><b>${l}</b>${sub}</button>`).join("")}</div>
+      ${isRaceish() ? `<div class="card" style="margin-top:12px">
+        <div class="lab" style="margin-bottom:8px">Target ${state.goal === "cycling" ? "ride" : "race"} <span class="row-sub">· optional</span></div>
+        <div class="wpg-chips">${dists.map(([v, l]) => `<button class="fchip ${String(state.eventDist) === v ? "on" : ""}" data-dist="${v}">${l}</button>`).join("")}</div>
+        <div class="frow" style="border:none;margin-top:8px"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
+      </div>` : ""}
+      ${nav()}`;
+    const grabDate = () => { const d = el.querySelector("#fn-date"); if (d) state.eventDate = d.value; };
+    el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grabDate(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal).mix }; render(); }));
+    el.querySelectorAll("[data-dist]").forEach(b => b.addEventListener("click", () => { grabDate(); state.eventDist = state.eventDist === +b.dataset.dist ? null : +b.dataset.dist; render(); }));
+    wireNav(() => { grabDate(); go(2); });
+  }
+  function renderAbout() {
+    el.querySelector(".wrap").innerHTML = head("About you", "Sizes your zones and rates your fitness.") + `
+      <div class="card">
+        <div class="frow"><span class="l">Name</span><input type="text" id="fn-name" placeholder="optional" value="${esc(String(state.name))}"></div>
+        <div class="frow"><span class="l">Age</span><input type="text" inputmode="numeric" id="fn-age" placeholder="years" value="${state.age}"><span class="suffix">yr</span></div>
+        <div class="frow" style="border:none"><span class="l">Sex</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end">${[["male", "Male"], ["female", "Female"]].map(([v, l]) => `<button data-sex="${v}" style="flex:0 0 88px" class="${state.sex === v ? "on" : ""}">${l}</button>`).join("")}</span></div>
+      </div>
+      <p class="row-sub">Sex + height unlock the VO₂ rating, BMI and burn-goal estimate.</p>
+      ${nav()}`;
+    el.querySelectorAll("[data-sex]").forEach(b => b.addEventListener("click", () => { state.sex = b.dataset.sex; el.querySelectorAll("[data-sex]").forEach(x => x.classList.toggle("on", x === b)); }));
+    wireNav(() => { state.name = el.querySelector("#fn-name").value.trim(); state.age = num(el.querySelector("#fn-age").value); go(3); });
+  }
+  function renderBody() {
+    el.querySelector(".wrap").innerHTML = head("Body & goal", "All optional — editable later.") + `
+      <div class="card">
+        <div class="frow"><span class="l">Height</span><input type="text" inputmode="numeric" id="fn-h" placeholder="cm" value="${state.height}"><span class="suffix">cm</span></div>
+        <div class="frow"><span class="l">Current weight</span><input type="text" inputmode="decimal" id="fn-w" placeholder="kg" value="${state.weight}"><span class="suffix">kg</span></div>
+        <div class="frow" style="border:none"><span class="l">Target weight</span><input type="text" inputmode="decimal" id="fn-tw" value="${state.target}"><span class="suffix">kg</span></div>
+      </div>
+      ${nav()}`;
+    wireNav(() => { state.height = num(el.querySelector("#fn-h").value); state.weight = num(el.querySelector("#fn-w").value); state.target = num(el.querySelector("#fn-tw").value) || state.target; go(4); });
+  }
+  function renderTraining() {
+    const total = () => state.mix.run + state.mix.bike + state.mix.gym;
+    el.querySelector(".wrap").innerHTML = head("Your training", E.goalDefaults(state.goal).reason) + `
+      <div class="card">
+        <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="fn-run">${state.mix.run}</b><button data-d="1">+</button></span></div>
+        <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="fn-bike">${state.mix.bike}</b><button data-d="1">+</button></span></div>
+        <div class="mixrow" data-k="gym" style="border:none"><span class="l">Gym</span><span class="ud"><button data-d="-1">−</button><b id="fn-gym">${state.mix.gym}</b><button data-d="1">+</button></span></div>
+      </div>
+      <div class="card">
+        <div class="frow"><span class="l">Rest day</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end;gap:3px">${E.DAYS.map(d => `<button data-rest="${d}" style="flex:0 0 36px;padding:0" class="${state.restDay === d ? "on" : ""}">${d[0].toUpperCase()}${d[1]}</button>`).join("")}</span></div>
+        <div class="frow" style="border:none"><span class="l">Week 1 starts</span><input type="date" id="fn-start" value="${state.start}"></div>
+      </div>
+      <p class="row-sub" id="fn-count">${total()} sessions a week. Weeks run Monday–Sunday.</p>
+      ${nav("Create my plan")}`;
+    el.querySelectorAll(".mixrow").forEach(row => row.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
+      const k = row.dataset.k;
+      state.mix[k] = Math.max(0, Math.min(6, state.mix[k] + +btn.dataset.d)); state.mixTouched = true;
+      el.querySelector(`#fn-${k}`).textContent = state.mix[k];
+      el.querySelector("#fn-count").textContent = `${total()} sessions a week. Weeks run Monday–Sunday.`;
+    })));
+    el.querySelectorAll("[data-rest]").forEach(b => b.addEventListener("click", () => { state.restDay = b.dataset.rest; el.querySelectorAll("[data-rest]").forEach(x => x.classList.toggle("on", x === b)); }));
+    wireNav(finish);
+  }
+  function finish() {
+    if (state.mix.run + state.mix.bike + state.mix.gym === 0) { toast("Add at least one session"); return; }
+    const startISO = E.mondayOf(el.querySelector("#fn-start")?.value || E.mondayOf(todayISO()));
+    close();
+    persist(() => {
+      const s = doc.settings;
+      s.name = state.name || null;
+      if (state.age) { s.age = Math.round(state.age); s.maxHR = Math.round(208 - 0.7 * s.age); }
+      if (state.sex) s.sex = state.sex;
+      if (state.height) s.heightCm = Math.round(state.height);
+      if (state.target) s.targetWeightKg = state.target;
+      s.goal = state.goal;
+      s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null } : null;
+      s.weeklyCounts = { ...state.mix };
+      s.restDay = state.restDay;
+      s.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay });
+      for (const k of E.goalDefaults(state.goal).allowed) s.allowedTypes = { ...s.allowedTypes, [k]: true };
+      if (state.weight) {
+        doc.weighIns = doc.weighIns.filter(w => w.date !== todayISO());
+        doc.weighIns.push({ date: todayISO(), kg: state.weight });
+        doc.weighIns.sort((a, b) => (a.date < b.date ? -1 : 1));
+      }
+      if (state.goal === "weight" && !s.weeklyCalorieTarget) { const rb = E.recommendBurnGoal(doc); if (rb && rb.burn) s.weeklyCalorieTarget = rb.burn; }
+      doc.weeks = [E.firstWeekFromMix(startISO, s)];
+    });
+    setTab("coach");
+    toast(state.name ? `You're set, ${state.name} — Week 1 is ready` : "Your plan is ready — Week 1 starts now");
+  }
+  function render() {
+    if (state.step === 1) renderGoal();
+    else if (state.step === 2) renderAbout();
+    else if (state.step === 3) renderBody();
+    else renderTraining();
+  }
+  render();
+}
+
+/* Stop the current plan and build a fresh one (e.g. after a goal change). Keeps
+   logged activities, weigh-ins and VO₂ — only the plan/weeks reset. */
+function startNewPlan() {
+  openModal("Start a new plan?", "This ends your current plan and its weeks. Your logged activities, weigh-ins and VO₂ history stay — only the plan resets.", [
+    { label: "Start fresh", fn: () => { persist(() => { doc.weeks = []; doc.checkins = []; }); openPlanFunnel(); } },
+    { label: "Cancel", cls: "ghost" },
+  ]);
 }
 
 function renderCorrupt(raw) {
@@ -506,7 +639,13 @@ function renderCoach() {
   // opening Coach acknowledges a due check-in reminder (insights still need a tap)
   const cw = currentWeek();
   if (cw && due && doc.coachSeen["checkin:" + cw.startDate] == null) { doc.coachSeen["checkin:" + cw.startDate] = todayISO(); S.save(doc); }
-  let body = streakBlock() + (week ? programSection(week, due) : `<h1 class="page">Coach</h1>`) +
+  const hasPlan = doc.weeks.length > 0;
+  let body = (hasPlan
+    ? streakBlock() + programSection(week, due) + `<button class="btn ghost mini" id="co-newplan" style="margin-top:8px">Start a new plan</button>`
+    : `<h1 class="page">Coach</h1>
+       <div class="card pc" style="text-align:center;padding:20px 16px">
+         <p class="note-sub" style="margin-bottom:12px">No training plan yet. Build one around your goal — race, cycling, weight or strength — and your weekly program, projections and check-ins appear here.</p>
+         <button class="btn" id="co-startplan">Create a training plan</button></div>`) +
     `<div class="eyebrow" style="margin:14px 2px 2px">Your coach</div>
      <p class="row-sub" style="margin:2px 2px 6px">Reviewed offline from your own data after every workout and week.</p>`;
   if (!ins.length) {
@@ -532,6 +671,8 @@ function renderCoach() {
   }
   page.innerHTML = body;
   if (week) wireProgram(page, week, due);
+  $("#co-startplan")?.addEventListener("click", () => openPlanFunnel());
+  $("#co-newplan")?.addEventListener("click", startNewPlan);
 
   // tapping a message marks just that one read (clears its unread dot + badge)
   page.querySelectorAll(".coachcard[data-isig]").forEach(card => card.addEventListener("click", e => {
@@ -666,9 +807,19 @@ function renderToday() {
     const log = doc.logs.find(l => l.id === b.dataset.lid); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
   }));
 
-  let head = `<div class="phead"><div><div class="eyebrow">${fmtDate(t)}${week ? ` · <span class="cyt">Week ${week.weekNum}</span>` : ""}</div><h1 class="page">Today</h1></div><button class="iconbtn" id="td-plus" aria-label="Do a workout">＋</button></div>`;
+  let head = `<div class="phead"><div><div class="eyebrow">${doc.settings.name ? esc(doc.settings.name) + " · " : ""}${fmtDate(t)}${week ? ` · <span class="cyt">Week ${week.weekNum}</span>` : ""}</div><h1 class="page">Today</h1></div><button class="iconbtn" id="td-plus" aria-label="Do a workout">＋</button></div>`;
 
   if (!week) {
+    if (!doc.weeks.length) {
+      page.innerHTML = head + `<div class="card">
+        <div class="t-chips"><span class="chip runc">NO PLAN</span></div>
+        <p class="note-sub">You're logging freely — no training plan yet. Build one around your goal whenever you like.</p>
+        <div class="t-actions"><button class="btn" id="td-startplan">Start a training plan</button></div></div>` + activities;
+      $("#td-startplan")?.addEventListener("click", () => openPlanFunnel());
+      $("#td-plus")?.addEventListener("click", openTodayPlus);
+      wireActs();
+      return;
+    }
     if (doc.weeks[0] && t < doc.weeks[0].startDate) {
       page.innerHTML = head + `<div class="card">
         <div class="t-chips"><span class="chip restc">BEFORE WEEK 1</span></div>
@@ -1571,6 +1722,7 @@ function openHistory() {
 /* ---------------- CHECK-IN ---------------- */
 
 function openCheckin(week) {
+  if (!week || !doc.weeks.length) { toast("No active plan"); return; }
   if (checkinFor(week)) { toast("Already checked in"); return; }
   const completion = E.weekCompletion(week, doc.logs);
   const state = { step: 1, weightKg: null, vo2: null, feel: null, hrv7d: null, sleep: null, chosenPct: null, grow: {} };
@@ -2957,6 +3109,7 @@ function renderSettings() {
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
+      <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to start a new plan</span></span><span class="chev">›</span></button>
     </div>`,
     targets: `<div class="scard">
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
@@ -3124,6 +3277,7 @@ function renderSettings() {
     }
   });
   $("#st-lay")?.addEventListener("click", openLayoutEditor);
+  $("#st-newplan")?.addEventListener("click", startNewPlan);
   $("#st-export")?.addEventListener("click", exportJSON);
   $("#st-import")?.addEventListener("click", () => $("#st-file-json").click());
   $("#st-csv")?.addEventListener("click", () => $("#st-file-csv").click());
