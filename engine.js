@@ -31,6 +31,8 @@ export function snapToMonday(iso) {
   return i === 0 ? iso : addDays(iso, 7 - i);
 }
 export function nextMonday(todayISO) { return snapToMonday(todayISO); }
+/* Monday on/before the given date (this week's Monday) — lets the plan start today. */
+export function mondayOf(iso) { return addDays(iso, -dayIndex(iso)); }
 
 export function isoWeekId(iso) {
   const d = parseISO(iso);
@@ -643,7 +645,7 @@ function hmsToMin(t) {
   return Math.round(min);
 }
 
-export function parseGarminCSV(text) {
+export function parseGarminCSV(text, overrides = {}) {
   const rows = parseCSV(text.replace(/^﻿/, ""));
   if (!rows.length) return { error: "Empty file" };
   const header = rows[0].map(h => h.trim());
@@ -661,7 +663,7 @@ export function parseGarminCSV(text) {
   const out = [], counts = { run: 0, bike: 0, trail: 0, hike: 0, other: 0, bad: 0 };
   for (const r of rows.slice(1)) {
     const type = (r[iType] || "").trim();
-    const sport = SPORT_MAP[type] || "other";
+    const sport = overrides[type] || SPORT_MAP[type] || "other";
     const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/.exec((r[iDate] || "").trim());
     const min = hmsToMin((r[iTime] || "").trim());
     if (!m || !min) { counts.bad++; continue; }
@@ -1407,6 +1409,59 @@ export function weekSummary(logs, bounds, from, to) {
     total.count++; total.min += l.min || 0; total.km += l.km || 0; total.ascent += l.ascent || 0; total.cal += l.calories || 0; total.load += ld;
   }
   return { bySport: by, total };
+}
+
+/* Per-sport weekly target bands for the Targets graph. Effective target = the
+   user override (settings.weeklyTargets) or auto-derived from the week's planned
+   minutes via pace (run) / speed (bike); gym target is minutes. conv = {runPace
+   (min/km), rideKmh}. Returns { [sport]: {target, unit, lo, hi, auto} }. */
+export function targetBands(week, settings, conv = {}) {
+  const pct = (settings.targetRangePct ?? 15) / 100;
+  const ov = settings.weeklyTargets || {};
+  const tm = (week && week.targetMin) || { run: 0, bike: 0, gym: 0 };
+  const runPace = conv.runPace > 0 ? conv.runPace : 5.5;
+  const rideKmh = conv.rideKmh > 0 ? conv.rideKmh : 25;
+  const out = {};
+  const add = (sp, auto, unit) => {
+    const t = ov[sp] != null ? ov[sp] : auto;
+    if (t > 0) out[sp] = { target: t, unit, lo: t * (1 - pct), hi: t * (1 + pct), auto: ov[sp] == null };
+  };
+  add("run", tm.run / runPace, "km");
+  add("bike", (tm.bike / 60) * rideKmh, "km");
+  add("gym", tm.gym, "min");
+  for (const sp of ["trail", "hike", "other"]) if (ov[sp] > 0) out[sp] = { target: ov[sp], unit: "km", lo: ov[sp] * (1 - pct), hi: ov[sp] * (1 + pct), auto: false };
+  return out;
+}
+/* Flatten the current + future weeks' planned minutes to the effective targets
+   (km→min via pace), scaling existing session lengths & keeping counts. Snapshots
+   those weeks into doc.planBackup so restorePlan() is exactly reversible. */
+export function applyTargetsToPlan(doc, settings, todayISO, conv = {}) {
+  const cur = mondayOf(todayISO);
+  const affected = doc.weeks.filter(w => w.startDate >= cur);
+  if (!affected.length) return;
+  doc.planBackup = affected.map(w => JSON.parse(JSON.stringify(w)));
+  const bands = targetBands(affected[0], settings, conv);
+  const runPace = conv.runPace > 0 ? conv.runPace : 5.5, rideKmh = conv.rideKmh > 0 ? conv.rideKmh : 25;
+  const tmin = {};
+  if (bands.run) tmin.run = Math.round(bands.run.target * runPace);
+  if (bands.bike) tmin.bike = Math.round((bands.bike.target / rideKmh) * 60);
+  if (bands.gym) tmin.gym = Math.round(bands.gym.target);
+  for (const w of affected) {
+    for (const sp of ["run", "bike", "gym"]) {
+      if (tmin[sp] == null) continue;
+      const curMin = sumSessions(w.sessions, sp);
+      if (curMin > 0) { const f = tmin[sp] / curMin; for (const s of w.sessions) if (s.sport === sp) s.targetMin = Math.max(5, Math.round(s.targetMin * f)); }
+    }
+    w.targetMin = { run: sumSessions(w.sessions, "run"), bike: sumSessions(w.sessions, "bike"), gym: sumSessions(w.sessions, "gym") };
+  }
+  settings.planFollowsTargets = true;
+}
+export function restorePlan(doc, settings) {
+  if (!doc.planBackup) return;
+  const byDate = {}; for (const w of doc.planBackup) byDate[w.startDate] = w;
+  doc.weeks = doc.weeks.map(w => byDate[w.startDate] || w);
+  doc.planBackup = null;
+  if (settings) settings.planFollowsTargets = false;
 }
 
 /* A Garmin-style "optimal range" per bucket: a trailing ~4-bucket chronic

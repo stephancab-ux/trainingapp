@@ -65,6 +65,10 @@ export function defaultSettings() {
       foamRoller: false, jumpRope: false, bench: false, wallBall: false, trx: false,
     },
     bannedExercises: [],
+    importSportMap: {},
+    weeklyTargets: { run: null, bike: null, trail: null, hike: null, gym: null },
+    targetRangePct: 15,
+    planFollowsTargets: false,
     progressRange: { preset: "12w", offset: 0, compare: false, unit: "week" },
     progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     lastExportAt: null,
@@ -262,6 +266,7 @@ export function migrate(doc) {
   d.settings.progressRange = { ...defaultSettings().progressRange, ...(d.settings.progressRange || {}) };
   d.settings.weeklyCounts = { ...defaultSettings().weeklyCounts, ...(d.settings.weeklyCounts || {}) };
   d.settings.equipment = { ...defaultSettings().equipment, ...(d.settings.equipment || {}) };
+  d.settings.weeklyTargets = { ...defaultSettings().weeklyTargets, ...(d.settings.weeklyTargets || {}) };
   d.settings.bannedExercises ||= [];
   d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];

@@ -356,6 +356,34 @@ test("import backfills Aerobic TE onto a log that lacks it, never overwriting a 
   assert.equal(E.fillableFields(miss, row).aerobicTE, 3.1, "missing TE filled");
 });
 
+test("mondayOf back-snaps to this week's Monday; CSV overrides map unknown types", () => {
+  assert.equal(E.mondayOf("2026-06-17"), "2026-06-15"); // Wed → this Mon
+  assert.equal(E.mondayOf("2026-06-15"), "2026-06-15"); // Mon → itself
+  const csv = [CSV_HEADER, row("Cardio", "2026-06-12 08:00:00", "Gym sesh", "0.00", "00:45:00", "120")].join("\n");
+  assert.equal(E.parseGarminCSV(csv).rows[0].sport, "other", "unknown type → other by default");
+  assert.equal(E.parseGarminCSV(csv, { Cardio: "gym" }).rows[0].sport, "gym", "override → gym");
+});
+
+test("targetBands auto-derives from plan; applyTargetsToPlan / restorePlan round-trip", () => {
+  const week = { startDate: "2026-06-15", targetMin: { run: 110, bike: 240, gym: 0 }, sessions: [
+    { day: "mon", sport: "run", targetMin: 55 }, { day: "wed", sport: "run", targetMin: 55 },
+    { day: "tue", sport: "bike", targetMin: 120 }, { day: "thu", sport: "bike", targetMin: 120 }] };
+  const settings = { weeklyTargets: { run: null, bike: null, trail: null, hike: null, gym: null }, targetRangePct: 15 };
+  const b = E.targetBands(week, settings, { runPace: 5.5, rideKmh: 24 });
+  assert.ok(Math.abs(b.run.target - 110 / 5.5) < 0.01, "run km = min/pace");
+  assert.ok(b.run.lo < b.run.target && b.run.hi > b.run.target, "±band");
+  // override run to 30 km and apply
+  const doc = { weeks: [JSON.parse(JSON.stringify(week))] };
+  const before = JSON.stringify(doc.weeks);
+  const s2 = { ...settings, weeklyTargets: { ...settings.weeklyTargets, run: 30 }, planFollowsTargets: false };
+  E.applyTargetsToPlan(doc, s2, "2026-06-17", { runPace: 5.5, rideKmh: 24 });
+  assert.ok(doc.weeks[0].targetMin.run > 110, "run minutes raised toward 30 km");
+  assert.equal(s2.planFollowsTargets, true);
+  E.restorePlan(doc, s2);
+  assert.equal(before, JSON.stringify(doc.weeks), "restore is exact");
+  assert.equal(s2.planFollowsTargets, false);
+});
+
 /* ---------- completion & misc ---------- */
 
 test("completion: seed and 'other' excluded, cap at 1.2", () => {
