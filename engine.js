@@ -978,15 +978,16 @@ export function consistency({ weeks, logs, todayISO, n = 12 }) {
 
 /* ================= v1.2 analytics (all pure) ================= */
 
-const ENDURANCE = new Set(["run", "trail", "bike", "hike"]);
+const ENDURANCE = new Set(["run", "trail", "bike", "hike", "swim"]);
 /* Descriptive analytics (load, intensity, efficiency, calories) count ALL real
    endurance history, including the bootstrapped/imported seed — consistent with
    weeklyVolume. (Plan completion/adherence still exclude seed separately.) */
 const TRAIN = l => l && ENDURANCE.has(l.sport);
-/* Gym joins load + intensity analytics ONLY when it carries an effort signal
-   (heart rate or RPE); otherwise it counts toward time/volume/adherence only. */
+/* Every logged activity counts toward load/intensity — endurance sports always,
+   and any other (gym/other, planned or extra) once it carries an effort signal
+   (HR or RPE) or a type tag; a bare untyped tap stays time/volume/adherence only. */
 const hasEffortSignal = l => l.avgHR != null || l.rpe != null;
-const LOADBEARING = l => l && (ENDURANCE.has(l.sport) || (l.sport === "gym" && hasEffortSignal(l)));
+const LOADBEARING = l => l && (ENDURANCE.has(l.sport) || hasEffortSignal(l) || l.type != null);
 const speedKmh = l => (l.km > 0 && l.min > 0) ? (l.km * 60) / l.min : null;
 const vam = l => (l.ascent > 0 && l.min > 0) ? (l.ascent * 60) / l.min : null; // m/h climbed
 
@@ -999,8 +1000,8 @@ export function zoneOfHR(bounds, hr) {
 
 /* ---- intensity: aerobic / threshold / anaerobic ---- */
 const TYPE_INTENSITY = {
-  recovery: "aerobic", easy: "aerobic", long: "aerobic",
-  tempo: "threshold", climb: "threshold",
+  recovery: "aerobic", easy: "aerobic", long: "aerobic", drills: "aerobic", endurance: "aerobic",
+  tempo: "threshold", climb: "threshold", threshold: "threshold",
   intervals: "anaerobic", hills: "anaerobic",
 };
 export function intensityOfLog(log, bounds) {
@@ -1028,29 +1029,33 @@ export function weeklyIntensity({ logs, bounds, todayISO, n = 12 }) {
 
 /* ---- training load (Foster sRPE; HR/zone or type fallback) ---- */
 const ZONE_EFFORT = { 1: 2, 2: 4, 3: 6, 4: 8, 5: 9 };
-const TYPE_EFFORT = { recovery: 3, easy: 4, long: 5, tempo: 6, climb: 7, intervals: 8, hills: 8 };
+const TYPE_EFFORT = { recovery: 3, easy: 4, long: 5, drills: 4, endurance: 5, tempo: 6, climb: 7, threshold: 6, intervals: 8, hills: 8 };
 export function sessionEffort(log, bounds) {
   if (log.rpe != null) return log.rpe;
   const z = zoneOfHR(bounds, log.avgHR);
   if (z != null) return ZONE_EFFORT[z];
   return TYPE_EFFORT[log.type] || 5;
 }
-// Estimated fractional HR-reserve by session type — used when a log has no avgHR.
-const TYPE_HRR = { recovery: 0.55, easy: 0.62, long: 0.65, tempo: 0.78, climb: 0.80, hills: 0.85, intervals: 0.88 };
+// Estimated fractional HR-reserve by session type / sport — used when a log has no avgHR.
+const TYPE_HRR = { recovery: 0.55, easy: 0.62, long: 0.65, drills: 0.55, endurance: 0.65, tempo: 0.78, climb: 0.80, threshold: 0.80, hills: 0.85, intervals: 0.88 };
+const SPORT_HRR = { swim: 0.62, run: 0.65, bike: 0.60, hike: 0.55, gym: 0.58, other: 0.55 };
 
-/* Banister TRIMP — heart-rate-driven training load, intensity weighted
-   exponentially (a hard session outscores a longer easy one). Uses avgHR vs
-   resting/max from `bounds` when present, else an estimate from the session
-   type. RPE is intentionally NOT used. Returns the raw (unrounded) impulse. */
+/* Banister TRIMP — training load, intensity weighted exponentially (a hard
+   session outscores a longer easy one). Intensity comes from avgHR vs resting/max
+   (bounds) when present; else from RPE (RPE×duration); else an estimate from the
+   session type / sport. A bare non-endurance tap with no signal or type scores 0
+   (time-only). Returns the raw (unrounded) impulse. */
 export function sessionTrimp(log, bounds) {
   if (!log.min) return 0;
-  // gym contributes load only when it carries a heart-rate signal
-  if (log.sport === "gym" && log.avgHR == null) return 0;
+  // non-endurance with no effort signal or type tag = time-only (no load)
+  if (!ENDURANCE.has(log.sport) && log.avgHR == null && log.rpe == null && log.type == null) return 0;
   const maxHR = (bounds && bounds.maxHR) || 190;
   const restHR = bounds && bounds.restHR != null ? bounds.restHR : 50;
   let hrr = log.avgHR != null && maxHR > restHR
     ? (log.avgHR - restHR) / (maxHR - restHR)
-    : (TYPE_HRR[log.type] ?? 0.60);
+    : log.rpe != null
+      ? 0.30 + 0.06 * log.rpe
+      : (TYPE_HRR[log.type] ?? SPORT_HRR[log.sport] ?? 0.55);
   hrr = Math.max(0, Math.min(1, hrr));
   const female = bounds && bounds.sex === "female";
   const k1 = female ? 0.86 : 0.64, k2 = female ? 1.67 : 1.92;

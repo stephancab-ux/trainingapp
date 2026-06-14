@@ -916,12 +916,19 @@ test("plannedMinutes & loggedMinutes count gym; a no-HR gym still counts as volu
   assert.ok(E.loggedMinutes(wg, logs) >= 45, "no-HR gym counts as logged time");
 });
 
-test("sessionLoad (TRIMP): gym needs heart rate; RPE no longer counts toward load", () => {
-  assert.equal(E.sessionLoad({ sport: "gym", min: 45 }, BOUNDS), 0);
-  assert.equal(E.sessionLoad({ sport: "gym", min: 45, rpe: 7 }, BOUNDS), 0, "RPE alone no longer makes gym load");
+test("sessionLoad (TRIMP): HR -> RPE -> type/sport; bare untyped non-endurance is time-only", () => {
+  assert.equal(E.sessionLoad({ sport: "gym", min: 45 }, BOUNDS), 0, "bare untyped gym = no load");
+  assert.ok(E.sessionLoad({ sport: "gym", min: 45, rpe: 7 }, BOUNDS) > 0, "RPE makes a gym session count");
+  assert.ok(E.sessionLoad({ sport: "gym", type: "easy", min: 45 }, BOUNDS) > 0, "a typed gym counts via type estimate");
   assert.ok(E.sessionLoad({ sport: "gym", min: 45, avgHR: 150 }, BOUNDS) > 0);
-  // a run without HR still earns a type-based estimate (RPE ignored)
+  // endurance always counts (incl. an extra swim/hike with no HR) via a sport estimate
+  assert.ok(E.sessionLoad({ sport: "swim", min: 30 }, BOUNDS) > 0, "a bare swim still scores");
+  // RPE scales the load; HR path matches an equivalent run
+  assert.ok(E.sessionLoad({ sport: "swim", min: 30, rpe: 9 }, BOUNDS) > E.sessionLoad({ sport: "swim", min: 30, rpe: 5 }, BOUNDS), "higher RPE = more load");
   assert.ok(E.sessionLoad({ sport: "run", type: "easy", min: 40 }, BOUNDS) > 0);
+  // aerobic TE: estimated for an RPE-only swim, real value when a watch provides it
+  assert.ok(E.effectiveAerobicTE({ sport: "swim", min: 40, rpe: 7 }, BOUNDS).estimated && E.effectiveAerobicTE({ sport: "swim", min: 40, rpe: 7 }, BOUNDS).te > 0);
+  assert.deepEqual(E.effectiveAerobicTE({ sport: "swim", min: 40, aerobicTE: 3.2 }, BOUNDS), { te: 3.2, estimated: false });
 });
 
 test("TRIMP weights intensity non-linearly: hard-short beats easy-long", () => {
