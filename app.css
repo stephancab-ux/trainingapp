@@ -218,6 +218,8 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .goalgrid button b{display:block;font-size:15px;color:var(--ink);font-weight:700;margin-bottom:1px}
 .goalgrid button.on{border-color:var(--cy);background:rgba(86,219,232,.08)}
 .goalgrid button.on b{color:var(--cy)}
+.goalpace{text-align:right;font-size:14px;color:var(--mut);font-weight:600;margin-top:6px}
+.goalpace b{color:var(--cy);font-size:19px;font-weight:800}
 .lyday{gap:10px}
 .lyday.sel{background:rgba(86,219,232,.10);border-radius:12px;border-bottom-color:transparent}
 .lychips2{display:flex;gap:5px;flex-wrap:wrap;flex:1}

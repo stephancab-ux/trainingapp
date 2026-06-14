@@ -599,11 +599,31 @@ export function placeLayout({ run, bike, gym = 0, restDay = "sun" }) {
 
 /* Goal → recommended starting mix + workout-type emphasis for the onboarding funnel.
    The user overrides everything; this just seeds sensible defaults with a reason. */
-export function goalDefaults(goal) {
+/* The three weight-loss rates offered when the goal is "weight". The chosen
+   rate drives the burn goal (recommendBurnGoal), the training volume and the
+   intensity (see goalDefaults below). */
+export const LOSS_RATES = [
+  { key: "gentle",     kg: 0.25, label: "Gentle" },
+  { key: "standard",   kg: 0.5,  label: "Standard" },
+  { key: "aggressive", kg: 0.75, label: "Aggressive" },
+];
+
+export function goalDefaults(goal, opts = {}) {
   switch (goal) {
     case "race":     return { mix: { run: 4, bike: 1, gym: 0 }, allowed: ["longRun", "runTempo", "runIntervals"], reason: "Run-focused with a long run and tempo work to build race endurance." };
     case "cycling":  return { mix: { run: 1, bike: 4, gym: 0 }, allowed: ["longRide", "bikeClimb", "bikeIntervals"], reason: "Ride-focused with a long ride and climbing to build cycling endurance." };
-    case "weight":   return { mix: { run: 3, bike: 3, gym: 1 }, allowed: [], reason: "A higher-frequency balanced mix; pair it with a weekly burn goal toward your target weight." };
+    case "weight": {
+      // Faster loss = more sessions (volume) and harder work (intensity).
+      const rate = opts.lossKg || 0.5;
+      const mix = rate >= 0.75 ? { run: 4, bike: 3, gym: 2 }
+                : rate <= 0.25 ? { run: 2, bike: 2, gym: 1 }
+                : { run: 3, bike: 3, gym: 1 };
+      const allowed = rate >= 0.75 ? ["runIntervals", "bikeIntervals", "gymCardio"] : [];
+      const reason = rate >= 0.75 ? "A high-frequency mix with added intensity to maximise the weekly burn toward your target weight."
+                   : rate <= 0.25 ? "A gentle, sustainable mix paired with a modest weekly burn goal toward your target weight."
+                   : "A higher-frequency balanced mix; pair it with a weekly burn goal toward your target weight.";
+      return { mix, allowed, reason };
+    }
     case "strength": return { mix: { run: 2, bike: 1, gym: 3 }, allowed: ["gymStrength"], reason: "Gym strength three times a week, with easy aerobic sessions to recover." };
     default:         return { mix: { run: 3, bike: 3, gym: 0 }, allowed: [], reason: "A balanced run + ride base — a solid all-round starting point." };
   }
@@ -819,6 +839,67 @@ export function vo2AtTargetWeight(vo2, weightKg, targetKg) {
   return Math.round((vo2 * weightKg / targetKg) * 10) / 10;
 }
 
+/* Daniels' VDOT for a single run performance (km over min). The inverse curve
+   below (danielsPaces) turns a VDOT back into training paces. */
+export function vdotFor(km, min) {
+  if (!(km > 0) || !(min > 0)) return null;
+  const v = (km * 1000) / min; // metres per minute
+  const vo2 = -4.60 + 0.182258 * v + 0.000104 * v * v;
+  const pct = 0.8 + 0.1894393 * Math.exp(-0.012778 * min) + 0.2989558 * Math.exp(-0.1932605 * min);
+  const vdot = vo2 / pct;
+  return vdot > 0 ? Math.round(vdot * 10) / 10 : null;
+}
+
+/* Daniels' training paces (sec per km) from a VDOT. Each pace is a fraction of
+   the velocity at VO₂max (vVDOT); the fractions reproduce Daniels' E/M/T/I/R
+   tables closely. Returns null for a non-positive VDOT. */
+export function danielsPaces(vdot) {
+  if (!(vdot > 0)) return null;
+  // velocity (m/min) achieving a given VO₂ — inverse of the vo2–velocity curve
+  const velAt = vo2 => {
+    const a = 0.000104, b = 0.182258, c = -(4.60 + vo2);
+    return (-b + Math.sqrt(b * b - 4 * a * c)) / (2 * a);
+  };
+  const vV = velAt(vdot);                                   // velocity at VO₂max
+  const pace = frac => Math.round(60000 / (vV * frac));     // sec/km at frac of vVDOT
+  return {
+    easy: [pace(0.70), pace(0.77)],
+    marathon: pace(0.84),
+    threshold: pace(0.88),
+    interval: pace(0.975),
+    rep: pace(1.05),
+  };
+}
+
+/* Goal-derived run training paces — when the goal is a dated run race with a
+   target finish time, the implied VDOT sets the training paces. Null otherwise. */
+export function goalRunPaces(settings) {
+  const ev = settings && settings.goalEvent;
+  if (!ev || settings.goal !== "race" || !(ev.distanceKm > 0) || !(ev.targetSec > 0)) return null;
+  const vdot = vdotFor(ev.distanceKm, ev.targetSec / 60);
+  if (!vdot) return null;
+  return { vdot, racePace: Math.round(ev.targetSec / ev.distanceKm), ...danielsPaces(vdot) };
+}
+
+/* Goal average speed (km/h) for a cycling event with a target time, else null. */
+export function goalRideSpeed(settings) {
+  const ev = settings && settings.goalEvent;
+  if (!ev || settings.goal !== "cycling" || !(ev.distanceKm > 0) || !(ev.targetSec > 0)) return null;
+  return Math.round((ev.distanceKm / (ev.targetSec / 3600)) * 10) / 10;
+}
+
+/* Is the run target realistic vs current fitness? Compares the goal VDOT with
+   the VDOT estimated from recent runs. level: ready ≤1, stretch ≤5, ambitious. */
+export function goalFitnessCheck(doc, asOfISO) {
+  const gp = goalRunPaces(doc.settings);
+  if (!gp) return null;
+  const cur = estimateVo2FromRuns(doc.logs || [], asOfISO || (doc.weighIns?.[doc.weighIns.length - 1]?.date) || "9999-12-31");
+  if (cur == null) return { goalVdot: gp.vdot, currentVdot: null, gap: null, level: "unknown" };
+  const gap = Math.round((gp.vdot - cur) * 10) / 10;
+  const level = gap <= 1 ? "ready" : gap <= 5 ? "stretch" : "ambitious";
+  return { goalVdot: gp.vdot, currentVdot: cur, gap, level };
+}
+
 /* VO₂max estimate from your best recent run (Daniels' VDOT, running only).
    Returns the highest VDOT among qualifying runs in the window, or null. */
 export function estimateVo2FromRuns(logs, asOfISO, windowDays = 56, minKm = 1.5) {
@@ -827,11 +908,8 @@ export function estimateVo2FromRuns(logs, asOfISO, windowDays = 56, minKm = 1.5)
   for (const l of logs) {
     if (!isRunType(l) || !(l.km >= minKm) || !(l.min > 0)) continue;
     if (l.date < from || l.date > asOfISO) continue;
-    const v = (l.km * 1000) / l.min; // metres per minute
-    const vo2 = -4.60 + 0.182258 * v + 0.000104 * v * v;
-    const pct = 0.8 + 0.1894393 * Math.exp(-0.012778 * l.min) + 0.2989558 * Math.exp(-0.1932605 * l.min);
-    const vdot = vo2 / pct;
-    if (vdot > 0 && (best == null || vdot > best)) best = vdot;
+    const vdot = vdotFor(l.km, l.min);
+    if (vdot != null && (best == null || vdot > best)) best = vdot;
   }
   return best == null ? null : Math.round(best * 10) / 10;
 }

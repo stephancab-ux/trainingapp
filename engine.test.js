@@ -1129,3 +1129,48 @@ test("targetSuggestions flags a climb-target increase as rides get bigger", () =
   const climb = E.targetSuggestions(doc).find(s => s.key === "climb");
   assert.ok(climb && climb.recommended > 500, "climb increase suggested");
 });
+
+test("vdotFor + danielsPaces: a faster goal time yields a higher VDOT and faster paces", () => {
+  const fast = E.vdotFor(42.2, 180);   // 3:00 marathon
+  const slow = E.vdotFor(42.2, 240);   // 4:00 marathon
+  assert.ok(fast > slow, "quicker time = higher VDOT");
+  assert.equal(E.vdotFor(0, 30), null);
+  assert.equal(E.vdotFor(5, 0), null);
+  const pf = E.danielsPaces(fast), ps = E.danielsPaces(slow);
+  assert.ok(pf.threshold < ps.threshold, "fitter runner trains at a faster threshold pace");
+  // paces ordered easy(slowest) → marathon → threshold → interval → rep(fastest)
+  assert.ok(ps.easy[0] > ps.marathon && ps.marathon > ps.threshold && ps.threshold > ps.interval && ps.interval > ps.rep);
+  // sanity: VDOT 50 threshold ≈ 4:15/km (255 s) ± 20 s
+  assert.ok(Math.abs(E.danielsPaces(50).threshold - 255) < 20);
+});
+
+test("goalRunPaces / goalRideSpeed read the target time off the goal event", () => {
+  assert.equal(E.goalRunPaces({ goal: "race", goalEvent: { distanceKm: 42.2 } }), null, "no time = no paces");
+  const gp = E.goalRunPaces({ goal: "race", goalEvent: { distanceKm: 10, targetSec: 2400 } }); // 40:00 10K
+  assert.ok(gp && gp.vdot > 0 && gp.threshold > 0);
+  assert.equal(gp.racePace, 240, "race pace 4:00/km");
+  assert.equal(E.goalRunPaces({ goal: "cycling", goalEvent: { distanceKm: 10, targetSec: 2400 } }), null, "cycling isn't a run goal");
+  const sp = E.goalRideSpeed({ goal: "cycling", goalEvent: { distanceKm: 90, targetSec: 3 * 3600 } });
+  assert.equal(sp, 30, "90 km in 3 h = 30 km/h");
+  assert.equal(E.goalRideSpeed({ goal: "race", goalEvent: { distanceKm: 90, targetSec: 10800 } }), null);
+});
+
+test("goalFitnessCheck rates the target against recent-run fitness", () => {
+  const ambitious = { settings: { goal: "race", goalEvent: { distanceKm: 10, targetSec: 2100 } }, // 35:00 10K (VDOT ~50)
+    logs: [{ sport: "run", km: 10, min: 50, date: "2026-06-01" }] };                              // ~28 min 5K pace fitness
+  const c = E.goalFitnessCheck(ambitious, "2026-06-10");
+  assert.ok(c && c.currentVdot != null && c.gap > 0 && c.level === "ambitious");
+  const fresh = E.goalFitnessCheck({ settings: { goal: "race", goalEvent: { distanceKm: 10, targetSec: 2700 } }, logs: [] }, "2026-06-10");
+  assert.equal(fresh.level, "unknown", "no runs logged yet");
+  assert.equal(E.goalFitnessCheck({ settings: { goal: "weight" }, logs: [] }, "2026-06-10"), null);
+});
+
+test("goalDefaults weight mix scales with the loss rate (volume + intensity)", () => {
+  const gentle = E.goalDefaults("weight", { lossKg: 0.25 });
+  const aggressive = E.goalDefaults("weight", { lossKg: 0.75 });
+  const n = m => m.run + m.bike + m.gym;
+  assert.ok(n(aggressive.mix) > n(gentle.mix), "aggressive adds volume");
+  assert.ok(aggressive.allowed.includes("runIntervals"), "aggressive adds intensity");
+  assert.deepEqual(E.goalDefaults("weight").mix, { run: 3, bike: 3, gym: 1 }, "standard default unchanged");
+  assert.equal(E.LOSS_RATES.length, 3);
+});

@@ -159,6 +159,31 @@ function zoneInfo(s) {
   return { label: `Zone ${z}`, lo: b[z - 1].lo, hi: b[z - 1].hi, cls: `zc${z}` };
 }
 
+/* Goal-derived training pace for a run session, when a race target time is set —
+   maps the session onto Daniels' easy / long / threshold / interval paces.
+   Returns { lo, hi, label } in sec/km (lo = slower end), or null. */
+function goalPaceFor(s) {
+  if (!s || (s.sport !== "run" && s.sport !== "trail")) return null;
+  const gp = E.goalRunPaces(doc.settings);
+  if (!gp) return null;
+  if (s.kind === "quality") {
+    if (s.qualityTemplate === "runTempo") return { lo: gp.threshold, hi: gp.threshold, label: "goal threshold pace" };
+    return { lo: gp.interval, hi: gp.interval, label: "goal interval pace" };
+  }
+  if (s.kind === "long") return { lo: gp.easy[1], hi: gp.marathon, label: "goal long-run pace" };
+  return { lo: gp.easy[0], hi: gp.easy[1], label: "goal easy pace" };
+}
+
+/* "3:45 marathon" style label for the current run goal, for pace captions. */
+function goalTimeLabel() {
+  const ev = doc.settings.goalEvent;
+  if (!ev || !ev.targetSec) return "race-time";
+  const h = Math.floor(ev.targetSec / 3600), m = Math.round((ev.targetSec % 3600) / 60);
+  const t = h ? `${h}:${String(m).padStart(2, "0")}` : `${m} min`;
+  const dist = RACE_DIST.find(([v]) => +v === ev.distanceKm);
+  return `${t} ${dist ? dist[1] : (ev.distanceKm + " km")}`;
+}
+
 /* Quality unlock state — the engine's gate, or wide open when the user
    flipped the manual override in Settings. */
 function qstate() {
@@ -419,11 +444,13 @@ const RIDE_DIST = [["40", "40K"], ["80", "80K"], ["100", "100K"], ["160", "160K"
 
 /* The guided plan-building funnel — goal → profile → body → training, then builds
    Week 1 from the chosen mix. Reused by first-run, Today, Coach and Settings. */
-function openPlanFunnel() {
+function openPlanFunnel(opts = {}) {
   const cs = doc.settings;
   const state = {
     step: 1, goal: cs.goal || "general",
     eventDist: cs.goalEvent?.distanceKm ?? null, eventDate: cs.goalEvent?.date ?? "",
+    eventTime: cs.goalEvent?.targetSec ? Math.round(cs.goalEvent.targetSec / 60) : null,
+    lossRate: cs.lossRateKgPerWeek || 0.5,
     name: cs.name ?? "", age: cs.age ?? "", sex: cs.sex ?? null,
     height: cs.heightCm ?? "", weight: doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : "",
     target: cs.targetWeightKg ?? 80, mix: { ...(cs.weeklyCounts || { run: 3, bike: 3, gym: 0 }) },
@@ -447,18 +474,56 @@ function openPlanFunnel() {
 
   function renderGoal() {
     const dists = state.goal === "cycling" ? RIDE_DIST : RACE_DIST;
+    const isBike = state.goal === "cycling";
     el.querySelector(".wrap").innerHTML = head("Your goal", "We'll suggest a starting mix — you can tweak everything.") + `
       <div class="goalgrid">${GOALS.map(([v, l, sub]) => `<button data-goal="${v}" class="${state.goal === v ? "on" : ""}"><b>${l}</b>${sub}</button>`).join("")}</div>
       ${isRaceish() ? `<div class="card" style="margin-top:12px">
-        <div class="lab" style="margin-bottom:8px">Target ${state.goal === "cycling" ? "ride" : "race"} <span class="row-sub">· optional</span></div>
+        <div class="lab" style="margin-bottom:8px">Target ${isBike ? "ride" : "race"} <span class="row-sub">· optional</span></div>
         <div class="wpg-chips">${dists.map(([v, l]) => `<button class="fchip ${String(state.eventDist) === v ? "on" : ""}" data-dist="${v}">${l}</button>`).join("")}</div>
         <div class="frow" style="margin-top:6px"><span class="l">Or distance</span><input type="text" inputmode="decimal" id="fn-distx" placeholder="km" value="${state.eventDist && !dists.some(([v]) => +v === state.eventDist) ? state.eventDist : ""}"><span class="suffix">km</span></div>
-        <div class="frow" style="border:none"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
+        <div class="frow"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
+        ${state.eventDist ? `<div class="frow frow-wheel" style="border:none"><span class="l">Target time</span><div class="dwheel" id="fn-time-wheel"></div></div>
+        <div class="goalpace" id="fn-pace"></div>
+        <p class="row-sub" id="fn-realism" style="margin-top:2px"></p>` : ""}
       </div>` : ""}
       ${nav()}`;
     const grab = () => { const d = el.querySelector("#fn-date"); if (d) state.eventDate = d.value; const dx = el.querySelector("#fn-distx"); if (dx) { const v = num(dx.value); if (v != null) state.eventDist = v; } };
-    el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grab(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal).mix }; render(); }));
+    // live pace / speed readout under the time wheel
+    const showPace = () => {
+      const pl = el.querySelector("#fn-pace");
+      if (!pl) return;
+      if (!state.eventDist || !state.eventTime) { pl.textContent = ""; return; }
+      pl.innerHTML = isBike
+        ? `≈ <b>${(state.eventDist / (state.eventTime / 60)).toFixed(1)}</b> km/h average`
+        : `≈ <b>${E.fmtPace(state.eventTime * 60 / state.eventDist)}</b> /km`;
+    };
+    const showRealism = () => {
+      const rl = el.querySelector("#fn-realism");
+      if (!rl) return;
+      if (isBike || !state.eventDist || !state.eventTime) { rl.textContent = ""; return; }
+      const c = E.goalFitnessCheck({ settings: { goal: "race", goalEvent: { distanceKm: state.eventDist, targetSec: Math.round(state.eventTime * 60) } }, logs: doc.logs, weighIns: doc.weighIns }, todayISO());
+      if (!c) { rl.textContent = ""; return; }
+      if (c.level === "unknown") rl.textContent = `Implies VDOT ≈ ${c.goalVdot}. Log a few runs and we'll check it against your fitness.`;
+      else if (c.level === "ready") rl.textContent = `VDOT ≈ ${c.goalVdot} — in reach of your current fitness (≈ ${c.currentVdot}). We'll train your paces to it.`;
+      else if (c.level === "stretch") rl.textContent = `VDOT ≈ ${c.goalVdot} vs your current ≈ ${c.currentVdot} — a solid stretch. We'll build toward these paces.`;
+      else rl.textContent = `VDOT ≈ ${c.goalVdot} vs your current ≈ ${c.currentVdot} — ambitious. We'll set the paces but ramp you up gradually.`;
+    };
+    // build the minutes wheel (only present once a distance is chosen)
+    const wEl = el.querySelector("#fn-time-wheel");
+    if (wEl) {
+      const def = state.eventTime || Math.round(isBike ? state.eventDist / 25 * 60 : state.eventDist * 6);
+      const read = buildDurationWheel(wEl, { min: isBike ? 15 : 10, max: isBike ? 900 : 540, value: def,
+        onChange: m => { state.eventTime = m; showPace(); showRealism(); } });
+      state.eventTime = read();
+      showPace(); showRealism();
+    }
+    el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grab(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal, { lossKg: state.lossRate }).mix }; render(); }));
     el.querySelectorAll("[data-dist]").forEach(b => b.addEventListener("click", () => { grab(); state.eventDist = state.eventDist === +b.dataset.dist ? null : +b.dataset.dist; render(); }));
+    const dx = el.querySelector("#fn-distx");
+    if (dx) {
+      dx.addEventListener("input", () => { const v = num(dx.value); state.eventDist = v; showPace(); showRealism(); });
+      dx.addEventListener("change", () => { grab(); render(); });   // reveal/refresh the wheel
+    }
     wireNav(() => { grab(); go(2); });
   }
   function renderAbout() {
@@ -474,18 +539,48 @@ function openPlanFunnel() {
     wireNav(() => { state.name = el.querySelector("#fn-name").value.trim(); state.age = num(el.querySelector("#fn-age").value); go(3); });
   }
   function renderBody() {
+    const isWeight = state.goal === "weight";
     el.querySelector(".wrap").innerHTML = head("Body & goal", "All optional — editable later.") + `
       <div class="card">
         <div class="frow"><span class="l">Height</span><input type="text" inputmode="numeric" id="fn-h" placeholder="cm" value="${state.height}"><span class="suffix">cm</span></div>
         <div class="frow"><span class="l">Current weight</span><input type="text" inputmode="decimal" id="fn-w" placeholder="kg" value="${state.weight}"><span class="suffix">kg</span></div>
         <div class="frow" style="border:none"><span class="l">Target weight</span><input type="text" inputmode="decimal" id="fn-tw" value="${state.target}"><span class="suffix">kg</span></div>
       </div>
+      ${isWeight ? `<div class="card">
+        <div class="frow"><span class="l">To lose</span><b id="fn-tolose" class="cyt">—</b></div>
+        <div class="lab" style="margin:4px 0 7px">How fast? <span class="row-sub">· sets your burn goal & training load</span></div>
+        <div class="wpg-chips">${E.LOSS_RATES.map(r => `<button class="fchip ${state.lossRate === r.kg ? "on" : ""}" data-rate="${r.kg}">${r.label} · ${r.kg} kg/wk</button>`).join("")}</div>
+        <p class="row-sub" id="fn-loss-eta" style="margin-top:6px"></p>
+      </div>` : ""}
       ${nav()}`;
+    const refreshLoss = () => {
+      if (!isWeight) return;
+      const w = num(el.querySelector("#fn-w")?.value), tw = num(el.querySelector("#fn-tw")?.value) || state.target;
+      const h = num(el.querySelector("#fn-h")?.value);
+      const lose = w && tw ? Math.max(0, Math.round((w - tw) * 10) / 10) : null;
+      const tl = el.querySelector("#fn-tolose"); if (tl) tl.textContent = lose != null ? `${lose} kg` : "—";
+      const eta = el.querySelector("#fn-loss-eta");
+      if (eta) {
+        const weeks = lose && state.lossRate ? Math.ceil(lose / state.lossRate) : null;
+        const sdoc = { settings: { heightCm: h, age: state.age, sex: state.sex, targetWeightKg: tw }, weighIns: w ? [{ date: todayISO(), kg: w }] : [] };
+        const rb = E.recommendBurnGoal(sdoc, state.lossRate);
+        eta.innerHTML = [weeks ? `≈ ${weeks} weeks at this rate` : null,
+          rb && rb.burn ? `burn goal ≈ ${rb.burn.toLocaleString()} kcal/week` : (lose ? "add age, sex & height for a burn goal" : null)].filter(Boolean).join(" · ");
+      }
+    };
+    el.querySelectorAll("#fn-h, #fn-w, #fn-tw").forEach(i => i.addEventListener("input", refreshLoss));
+    el.querySelectorAll("[data-rate]").forEach(b => b.addEventListener("click", () => {
+      state.lossRate = +b.dataset.rate;
+      el.querySelectorAll("[data-rate]").forEach(x => x.classList.toggle("on", x === b));
+      if (!state.mixTouched) state.mix = { ...E.goalDefaults("weight", { lossKg: state.lossRate }).mix };
+      refreshLoss();
+    }));
+    refreshLoss();
     wireNav(() => { state.height = num(el.querySelector("#fn-h").value); state.weight = num(el.querySelector("#fn-w").value); state.target = num(el.querySelector("#fn-tw").value) || state.target; go(4); });
   }
   function renderMix() {
     const total = () => state.mix.run + state.mix.bike + state.mix.gym;
-    el.querySelector(".wrap").innerHTML = head("Your weekly mix", E.goalDefaults(state.goal).reason) + `
+    el.querySelector(".wrap").innerHTML = head("Your weekly mix", E.goalDefaults(state.goal, { lossKg: state.lossRate }).reason) + `
       <div class="card">
         <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="fn-run">${state.mix.run}</b><button data-d="1">+</button></span></div>
         <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="fn-bike">${state.mix.bike}</b><button data-d="1">+</button></span></div>
@@ -530,7 +625,7 @@ function openPlanFunnel() {
     wireNav(() => { state.layout = finalizeLayout(state.layout, budget, state.restDay); go(6); });
   }
   function renderWorkouts() {
-    if (!state.allowed) { state.allowed = { ...doc.settings.allowedTypes }; for (const k of E.goalDefaults(state.goal).allowed) state.allowed[k] = true; }
+    if (!state.allowed) { state.allowed = { ...doc.settings.allowedTypes }; for (const k of E.goalDefaults(state.goal, { lossKg: state.lossRate }).allowed) state.allowed[k] = true; }
     const tog = key => { const t = WORKOUT_TOGGLES.find(x => x[0] === key); return t ? `<button class="srow tog" data-fam="${key}"><span class="l">${t[1]}<span>${t[2]}</span></span><span class="switch ${state.allowed[key] !== false ? "on" : ""}"></span></button>` : ""; };
     el.querySelector(".wrap").innerHTML = head("Workouts to include", "Switch off any you don't want in your plan.") + `
       <div class="card" style="padding:2px 14px">
@@ -562,7 +657,7 @@ function openPlanFunnel() {
       if (state.height) s.heightCm = Math.round(state.height);
       if (state.target) s.targetWeightKg = state.target;
       s.goal = state.goal;
-      s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null } : null;
+      s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null, targetSec: (state.eventDist && state.eventTime) ? Math.round(state.eventTime * 60) : null } : null;
       s.weeklyCounts = { ...state.mix };
       s.restDay = state.restDay;
       s.layout = state.layout || E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay });
@@ -572,11 +667,20 @@ function openPlanFunnel() {
         doc.weighIns.push({ date: todayISO(), kg: state.weight });
         doc.weighIns.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
-      if (state.goal === "weight" && !s.weeklyCalorieTarget) { const rb = E.recommendBurnGoal(doc); if (rb && rb.burn) s.weeklyCalorieTarget = rb.burn; }
-      doc.weeks = [E.firstWeekFromMix(startISO, s, s.layout)];
+      if (state.goal === "weight") { s.lossRateKgPerWeek = state.lossRate || 0.5; const rb = E.recommendBurnGoal(doc, s.lossRateKgPerWeek); if (rb && rb.burn) s.weeklyCalorieTarget = rb.burn; }
+      // Update: re-derive the current week in place from the new settings, keeping
+      // its week number and the earlier weeks as history. Fresh / first run: Week 1.
+      const cw = opts.update ? (currentWeek() || lastWeek()) : null;
+      if (cw) {
+        const wk = E.firstWeekFromMix(cw.startDate, s, s.layout);
+        wk.weekNum = cw.weekNum; wk.id = cw.id;
+        doc.weeks = doc.weeks.filter(w => w.startDate <= cw.startDate).map(w => w.id === cw.id ? wk : w);
+      } else {
+        doc.weeks = [E.firstWeekFromMix(startISO, s, s.layout)];
+      }
     });
     setTab("coach");
-    toast(state.name ? `You're set, ${state.name} — Week 1 is ready` : "Your plan is ready — Week 1 starts now");
+    toast(opts.update ? "Plan updated ✓" : state.name ? `You're set, ${state.name} — Week 1 is ready` : "Your plan is ready — Week 1 starts now");
   }
   function render() {
     if (state.step === 1) renderGoal();
@@ -592,8 +696,9 @@ function openPlanFunnel() {
 /* Stop the current plan and build a fresh one (e.g. after a goal change). Keeps
    logged activities, weigh-ins and VO₂ — only the plan/weeks reset. */
 function startNewPlan() {
-  openModal("Start a new plan?", "This ends your current plan and its weeks. Your logged activities, weigh-ins and VO₂ history stay — only the plan resets.", [
-    { label: "Start fresh", fn: () => { persist(() => { doc.weeks = []; doc.checkins = []; }); openPlanFunnel(); } },
+  openModal("Goal &amp; plan", "Update applies changes (goal, target time, mix) to your current plan and keeps your history. Start fresh clears the plan weeks and check-ins — logged activities, weigh-ins and VO₂ stay either way.", [
+    { label: "Update plan", fn: () => openPlanFunnel({ update: true }) },
+    { label: "Start fresh", cls: "ghost", fn: () => { persist(() => { doc.weeks = []; doc.checkins = []; }); openPlanFunnel(); } },
     { label: "Cancel", cls: "ghost" },
   ]);
 }
@@ -921,6 +1026,7 @@ function renderToday() {
     const z = zoneInfo(s);
     const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
     const pace = s.sport === "run" ? E.paceHint(doc.logs, bounds(), s.kind === "quality" ? 4 : 2, doc.settings.easyPace) : null;
+    const gpace = goalPaceFor(s);
     card = `<div class="card">
       <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip ${z.cls}">${z.label.toUpperCase()}</span>${st.kind === "skipped" ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
       <div class="bignum">${s.targetMin}<small>min</small></div>
@@ -930,7 +1036,9 @@ function renderToday() {
         <div class="t-pace-v">${tpl.label}</div>
         ${s.targetAscent ? `<p class="row-sub" style="margin-top:3px;color:var(--sand)">Target climb ≈ ${s.targetAscent} m of ascent</p>` : ""}
         <p class="row-sub" style="margin-top:3px">${E.QUALITY_WARMUP}</p></div>` : ""}
-      ${pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
+      ${gpace ? `<div class="t-block"><div class="lab">Pace · ${esc(gpace.label)}</div>
+        <div class="t-pace-v">≈ ${gpace.lo === gpace.hi ? E.fmtPace(gpace.lo) : `${E.fmtPace(gpace.lo)}–${E.fmtPace(gpace.hi)}`} /km <span>from your ${goalTimeLabel()} goal</span></div></div>`
+       : pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
         <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : pace.manual ? "your pace setting — easy runs will tune this" : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
       ${s.note ? `<p class="row-sub" style="margin-top:10px">${esc(s.note)}</p>` : ""}
       ${s.kind === "easy" && s.sport === "run" ? `<p class="t-note">Keep it conversational — walk breaks are fine. Same heart rate, faster pace is how the engine comes back.</p>` : ""}
@@ -1248,9 +1356,11 @@ function openSessionReview(week, s, st) {
     const z = zoneInfo(s);
     const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
     const pace = (s.sport === "run" || s.sport === "trail") ? E.paceHint(doc.logs, bounds(), s.zone || 2, doc.settings.easyPace) : null;
+    const gpace = goalPaceFor(s);
+    const gpaceTxt = gpace ? `${gpace.label[0].toUpperCase() + gpace.label.slice(1)} ≈ ${gpace.lo === gpace.hi ? E.fmtPace(gpace.lo) : `${E.fmtPace(gpace.lo)}–${E.fmtPace(gpace.hi)}`} /km` : null;
     instr = [tpl ? esc(tpl.label) : `Keep it ${s.kind === "long" ? "steady and unhurried" : "conversational"}.`,
       `${z.label} · ${z.lo}–${z.hi} bpm`,
-      pace ? `Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km` : "",
+      gpaceTxt || (pace ? `Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km` : ""),
       s.targetAscent ? `Climb ≈ ${s.targetAscent} m ↑` : ""].filter(Boolean).join("<br>");
   }
   const sheet = openSheet(`
@@ -2581,12 +2691,16 @@ function renderProgress() {
       const startW = doc.weeks[0] ? doc.weeks[0].startDate : todayISO();
       const totalW = (E.weeksToEvent(doc.settings, startW) || 0) + 1;
       const curW = (currentWeek() || lastWeek())?.weekNum || 1;
+      const fmtClock = sec => { const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), ss = sec % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`; };
+      const gpr = E.goalRunPaces(doc.settings), gsp = E.goalRideSpeed(doc.settings);
+      const goalPaceStr = gpr ? `${E.fmtPace(gpr.racePace)} /km` : gsp ? `${gsp} km/h` : null;
       return `<div class="raceday">
         <div class="rd-ring">${C.progressRing({ pct: readiness / 100, color: rcol })}
           <div class="rd-center"><span class="rd-trophy">🏆</span><b>${days}</b><small>days</small></div></div>
         <div class="rd-info">
           <div class="rd-title">${label}${ev.distanceKm ? ` · ${ev.distanceKm} km` : ""}</div>
           <div class="rd-sub">${fmtDate(ev.date)}<span class="rd-phase">${phase}</span></div>
+          ${ev.targetSec ? `<div class="rd-line"><span>Goal</span><b>${fmtClock(ev.targetSec)}${goalPaceStr ? ` · ${goalPaceStr}` : ""}</b></div>` : ""}
           ${ev.distanceKm ? `<div class="rd-line"><span>Longest ${isRide ? "ride" : "run"}</span><b>${Math.round(longest)} / ${ev.distanceKm} km</b></div>` : ""}
           <div class="rd-line"><span>Readiness</span><b style="color:${rcol}">${readiness}%</b></div>
           <div class="rd-line"><span>Training</span><b>Week ${curW} of ${totalW}</b></div>
@@ -3303,7 +3417,7 @@ function renderSettings() {
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
-      <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to start a new plan</span></span><span class="chev">›</span></button>
+      <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
     </div>`,
     targets: `<div class="scard">
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>

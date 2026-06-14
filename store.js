@@ -46,6 +46,7 @@ export function defaultSettings() {
     customZones: null,
     zoneMethod: "pctmax",
     targetWeightKg: 80.0,
+    lossRateKgPerWeek: 0.5,
     weeklyCalorieTarget: null,
     growthRate: 0.07,
     deloadEvery: 4,
