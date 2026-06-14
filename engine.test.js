@@ -1143,6 +1143,31 @@ test("triathlon: 4-sport mix, swim scheduling, bricks, week build", () => {
   assert.ok(!plain.sessions.some(s => s.sport === "swim" || s.sport === "brick"));
 });
 
+test("recommendSportTarget suggests from recent weekly distance, per-sport unit", () => {
+  const today = "2026-06-15";
+  const logs = [];
+  for (let k = 1; k <= 5; k++) { const d = E.addDays(E.addDays(today, -E.dayIndex(today)), -7 * k + 1);
+    logs.push({ sport: "run", km: 30, min: 150, date: d });          // ~30 km/wk running
+    logs.push({ sport: "swim", m: 5000, min: 90, date: d });          // ~5000 m/wk swimming
+  }
+  const r = E.recommendSportTarget({ logs }, "run", today);
+  assert.ok(r >= 32 && r <= 33, `run ~32.4 km (got ${r})`);          // 30 * 1.08
+  const sw = E.recommendSportTarget({ logs }, "swim", today);
+  assert.ok(sw >= 5300 && sw <= 5500 && sw % 100 === 0, `swim ~5400 m (got ${sw})`);
+  assert.equal(E.recommendSportTarget({ logs: [] }, "run", today), null, "sparse → null");
+});
+
+test("personalBests: swim best /100m pace (lower-better) + longest swim, formatted", () => {
+  const pbs = E.personalBests({ logs: [
+    { id: "a", date: "2026-06-01", sport: "swim", m: 1500, min: 30 }, // 2:00/100m
+    { id: "b", date: "2026-06-08", sport: "swim", m: 1000, min: 18 }, // 1:48/100m (faster)
+  ] });
+  const best = pbs.find(p => p.key === "swim100");
+  assert.ok(best && best.value < 110, "keeps the faster pace");
+  assert.equal(E.fmtBestValue(best), "1:48 /100m");
+  assert.equal(pbs.find(p => p.key === "longestSwim").value, 1500);
+});
+
 test("triReadiness: per-leg + overall + weakest, and a coach insight", () => {
   const ev = { kind: "triathlon", tri: "olympic", date: "2026-09-20",
     legs: { swim: { m: 1500 }, bike: { m: 40000 }, run: { m: 10000 } }, distanceKm: 51.5 };

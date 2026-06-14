@@ -101,12 +101,18 @@ const WORKOUT_TOGGLES = [
   ["bikeSprint", "Sprint ride", "all-out Z5 surges"],
   ["bikeClimb", "Climbing ride", "long sustained climbs"],
   ["longRide", "Long ride", "the weekend distance"],
+  ["easySwim", "Easy swim", "relaxed aerobic laps"],
+  ["swimDrills", "Technique", "drills + form work"],
+  ["swimEndurance", "Endurance swim", "continuous steady distance"],
+  ["swimThreshold", "Threshold swim", "around your CSS pace"],
+  ["swimIntervals", "Swim intervals", "reps near/above CSS"],
   ["gymStrength", "Gym strength", "resistance + circuits"],
   ["gymCardio", "Gym cardio", "conditioning finishers"],
   ["gymMobility", "Mobility", "warm-ups + cooldowns"],
 ];
 const RUN_BASE = ["easyRun", "runTempo", "runIntervals", "runHills", "longRun", "trailRun"];
 const RIDE_BASE = ["easyRide", "bikeIntervals", "bikeSprint", "bikeClimb", "longRide"];
+const SWIM_BASE = ["easySwim", "swimDrills", "swimEndurance", "swimThreshold", "swimIntervals"];
 const GYM_BASE = ["gymStrength", "gymCardio", "gymMobility"];
 
 /* Workout-type tags on logs (v1.1). Purely descriptive — no plan math. */
@@ -604,7 +610,7 @@ function openPlanFunnel(opts = {}) {
   }
   function renderMix() {
     state.mix.swim = state.mix.swim || 0;
-    const showSwim = state.goal === "triathlon" || doc.settings.activities?.swim || state.mix.swim > 0;
+    const showSwim = true;
     const total = () => state.mix.run + state.mix.bike + state.mix.gym + (state.mix.swim || 0);
     el.querySelector(".wrap").innerHTML = head("Your weekly mix", E.goalDefaults(state.goal, { lossKg: state.lossRate }).reason) + `
       <div class="card">
@@ -658,6 +664,7 @@ function openPlanFunnel(opts = {}) {
       <div class="card" style="padding:2px 14px">
         <div class="gh" style="margin:4px 4px 2px">Run</div>${RUN_BASE.map(tog).join("")}
         <div class="gh" style="margin:12px 4px 2px">Ride</div>${RIDE_BASE.map(tog).join("")}
+        <div class="gh" style="margin:12px 4px 2px">Swim</div>${SWIM_BASE.map(tog).join("")}
         <div class="gh" style="margin:12px 4px 2px">Gym</div>${GYM_BASE.map(tog).join("")}
       </div>
       ${nav("Create my plan")}`;
@@ -689,7 +696,6 @@ function openPlanFunnel(opts = {}) {
         s.goalEvent = { kind: "triathlon", tri: state.triDist, date: state.eventDate || null,
           legs: { swim: { m: lg.swim }, bike: { m: Math.round(lg.bike * 1000) }, run: { m: Math.round(lg.run * 1000) } },
           distanceKm: Math.round((lg.swim / 1000 + lg.bike + lg.run) * 10) / 10 };
-        s.activities = { ...s.activities, swim: true };
       } else {
         s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null, targetSec: (state.eventDist && state.eventTime) ? Math.round(state.eventTime * 60) : null } : null;
       }
@@ -1139,8 +1145,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
   const isGym = sport === "gym";
   const isSwim = sport === "swim";
   // edit mode: let the user fix a mis-entered sport (any sport; fields adapt)
-  const swimOn = doc.settings.activities?.swim || doc.settings.goal === "triathlon";
-  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(swimOn || isSwim ? [["swim", "Swim"]] : []), ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["swim", "Swim"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
   const activityRow = isEdit ? `
     <div class="type-row"><span class="l">Activity</span><span class="opts">${acts.map(([v, l]) =>
       `<button data-lgsp="${v}" class="${sport === v ? "on" : ""}">${l}</button>`).join("")}</span></div>` : "";
@@ -1256,7 +1261,7 @@ function openUnplannedLog() {
     <div class="sh-title">Log an activity</div>
     <div class="sh-sub">Unplanned sessions count too — "other" stays out of the plan math</div>
     <div class="seg" id="ul-sport" style="flex-wrap:wrap">
-      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button>${doc.settings.activities?.swim || doc.settings.goal === "triathlon" ? `<button data-sp="swim">Swim</button>` : ""}<button data-sp="hike">Hike</button><button data-sp="gym">Gym</button><button data-sp="other">Other</button></div>
+      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button><button data-sp="swim">Swim</button><button data-sp="hike">Hike</button><button data-sp="gym">Gym</button><button data-sp="other">Other</button></div>
     <div class="frow"><span class="l">Date</span><input type="date" id="ul-date" value="${todayISO()}" max="${todayISO()}"></div>
     <button class="btn" id="ul-next">Continue</button>
   `);
@@ -1480,13 +1485,12 @@ function wouldStackHard(week, s, target) {
 function openLinkPicker(week, s) {
   const linked = new Set();
   for (const w of doc.weeks) for (const x of w.sessions) if (x.linkedLogId) linked.add(x.linkedLogId);
-  const cutoff = E.addDays(todayISO(), -21);
-  const cands = doc.logs.filter(l => l.source !== "seed" && l.date >= cutoff && !linked.has(l.id))
-    .sort((a, b) => ((a.sport === s.sport ? 0 : 1) - (b.sport === s.sport ? 0 : 1)) || (a.date < b.date ? 1 : -1));
+  // every logged activity you can see is linkable — newest first, no date limit
+  const cands = doc.logs.filter(l => !linked.has(l.id)).sort((a, b) => (a.date < b.date ? 1 : -1));
   const sheet = openSheet(`
     <div class="sh-title">Link an activity</div>
     <div class="sh-sub">Count this ${SPORT_NAME[s.sport] || s.sport} done from a logged activity — no re-entry.</div>
-    ${cands.length ? `<div class="linklist">${cands.slice(0, 20).map(l =>
+    ${cands.length ? `<div class="linklist">${cands.slice(0, 40).map(l =>
       `<button class="srow" data-link="${l.id}"><span class="l">${logTitle(l)}<span>${fmtShort(l.date)} · ${logExtra(l) || (l.min + " min")}</span></span><span class="chev">›</span></button>`).join("")}</div>`
       : `<p class="row-sub">No recent unlinked activities. Log it, or import from Garmin first.</p>`}
   `);
@@ -1579,31 +1583,32 @@ function renderDiary() {
   const mon = E.addDays(t, -E.dayIndex(t));
   // Strava-style weekly summary: per-sport tabs, a 4-stat block, and a tappable
   // 12-week graph that scrubs which week the stats show.
-  const SP = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+  const SP = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["swim", "Swim"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
   const totalMin = sp => doc.logs.reduce((a, l) => a + ((l.sport || "other") === sp ? (l.min || 0) : 0), 0);
-  const availSports = SP.filter(([sp]) => doc.logs.some(l => (l.sport || "other") === sp));
+  const availSports = SP.filter(([sp]) => sp === "swim" || doc.logs.some(l => (l.sport || "other") === sp)); // swim always shown
   if (!availSports.some(([sp]) => sp === diarySport))
     diarySport = availSports.length ? [...availSports].sort((a, b) => totalMin(b[0]) - totalMin(a[0]))[0][0] : "run";
   const N = 12, weeks = [];
   for (let k = N - 1; k >= 0; k--) {
     const ws = E.addDays(mon, -7 * k);
-    const s = E.weekSummary(doc.logs, bounds(), ws, E.addDays(ws, 6)).bySport[diarySport] || { count: 0, min: 0, km: 0, ascent: 0, cal: 0 };
+    const s = E.weekSummary(doc.logs, bounds(), ws, E.addDays(ws, 6)).bySport[diarySport] || { count: 0, min: 0, km: 0, m: 0, ascent: 0, cal: 0 };
     weeks.push({ start: ws, ...s });
   }
   const sel = diaryWeekSel == null ? N - 1 : Math.max(0, Math.min(N - 1, diaryWeekSel));
   const sw = weeks[sel];
+  const isSwimD = diarySport === "swim";
   const hasDist = ["run", "trail", "bike", "hike"].includes(diarySport);
   const gymish = diarySport === "gym" || diarySport === "other";
   const stat = (v, lab) => `<div class="actcell"><b>${v}</b><span>${lab}</span></div>`;
   const stats = [
-    hasDist ? stat(`${sw.km.toFixed(1)} km`, "Distance") : "",
+    isSwimD ? stat(`${Math.round(sw.m).toLocaleString()} m`, "Distance") : hasDist ? stat(`${sw.km.toFixed(1)} km`, "Distance") : "",
     stat(fmtDur(sw.min), "Time"),
     hasDist ? stat(`${Math.round(sw.ascent).toLocaleString()} m`, "Elev gain") : "",
     stat(`${Math.round(sw.cal).toLocaleString()}`, "Calories"),
   ].filter(Boolean).join("");
-  const statCount = hasDist ? 4 : 2;
-  const metricKey = gymish ? "min" : "km";
-  const gpts = weeks.map(w => ({ x: dnum(w.start), y: w[metricKey], date: w.start }));
+  const statCount = isSwimD ? 3 : hasDist ? 4 : 2;
+  const metricKey = gymish ? "min" : isSwimD ? "m" : "km";
+  const gpts = weeks.map(w => ({ x: dnum(w.start), y: w[metricKey] || 0, date: w.start }));
   // one x-tick per month change (Apr / May / Jun)
   const monthTicks = []; let lastM = "";
   for (const w of weeks) { const m = w.start.slice(0, 7); if (m !== lastM) { monthTicks.push({ x: dnum(w.start), label: fmtDate(w.start, { month: "short" }) }); lastM = m; } }
@@ -1619,7 +1624,7 @@ function renderDiary() {
       <div class="actgrid dstats" style="grid-template-columns:repeat(${statCount},1fr);margin-top:10px">${stats}</div>
       <div class="eyebrow" style="margin:16px 2px 4px">Past 12 weeks</div>
       ${gpts.some(p => p.y > 0)
-        ? `<div class="chartwrap" data-card="diary12">${C.lineChart(gpts, { axis: true, taps: true, color: SPORT_COLOR[diarySport] || SPORT_COLOR.other, selected: { si: 0, pi: sel }, fmtY: gymish ? (v => fmtDur(Math.round(v))) : (v => Math.round(v) + " km"), xTicks: monthTicks })}</div>`
+        ? `<div class="chartwrap" data-card="diary12">${C.lineChart(gpts, { axis: true, taps: true, color: SPORT_COLOR[diarySport] || SPORT_COLOR.other, selected: { si: 0, pi: sel }, fmtY: gymish ? (v => fmtDur(Math.round(v))) : isSwimD ? (v => Math.round(v) + " m") : (v => Math.round(v) + " km"), xTicks: monthTicks })}</div>`
         : `<p class="row-sub">No ${(SPORT_NAME[diarySport] || diarySport).toLowerCase()} logged in the last 12 weeks.</p>`}
     </div>`;
 
@@ -1671,7 +1676,7 @@ function sportLogged(week, sport) {
     l.date >= week.startDate && l.date <= end).reduce((a, l) => a + (l.min || 0), 0);
 }
 
-function changeMix(week, runCount, bikeCount, gymCount = null) {
+function changeMix(week, runCount, bikeCount, gymCount = null, swimCount = null) {
   const idx = weekIndex(week);
   const prev = idx > 0 ? doc.weeks[idx - 1] : null;
   const qs = qstate();
@@ -1679,7 +1684,7 @@ function changeMix(week, runCount, bikeCount, gymCount = null) {
   const allow = doc.settings.allowedTypes;
   const gym = gymCount == null ? week.sessions.filter(s => s.sport === "gym").length : gymCount;
   const { week: newWeek, warnings } = E.relayoutWeek({
-    week, runCount, bikeCount, gymCount: gym,
+    week, runCount, bikeCount, gymCount: gym, swimCount,
     prevRunMin: prev ? prev.targetMin.run : null,
     restDay: doc.settings.restDay,
     quality: ci?.noQuality ? { run: false, bike: false } : { run: qs.run, bike: qs.bike },
@@ -1693,10 +1698,11 @@ function changeMix(week, runCount, bikeCount, gymCount = null) {
     persist(() => {
       doc.weeks[idx] = newWeek;
       // counts become the source of truth; keep the derived layout in sync
-      doc.settings.weeklyCounts = { run: runCount, bike: bikeCount, gym };
-      doc.settings.layout = E.placeLayout({ run: runCount, bike: bikeCount, gym, restDay: doc.settings.restDay });
+      const swim = swimCount == null ? (doc.settings.weeklyCounts?.swim || 0) : swimCount;
+      doc.settings.weeklyCounts = { run: runCount, bike: bikeCount, gym, swim };
+      doc.settings.layout = E.placeLayout({ run: runCount, bike: bikeCount, gym, swim, restDay: doc.settings.restDay });
     });
-    toast(`${runCount} run · ${bikeCount} ride${gym ? ` · ${gym} gym` : ""}`);
+    toast(`${runCount} run · ${bikeCount} ride${swimCount ? ` · ${swimCount} swim` : ""}${gym ? ` · ${gym} gym` : ""}`);
   };
   if (warnings.includes("consecutive-runs") && !doc.settings.warnedRunAdjacency) {
     openModal("Back-to-back runs", "This mix forces runs on consecutive days — the main injury risk at current load. Keep it anyway?", [
@@ -1715,13 +1721,16 @@ function openWeeklyMix(week) {
   const cur = doc.settings.weeklyCounts || { run: 3, bike: 3, gym: 0 };
   let r = week.sessions.filter(s => s.sport === "run").length || cur.run;
   let b = week.sessions.filter(s => s.sport === "bike").length || cur.bike;
+  let sw = week.sessions.filter(s => s.sport === "swim").length || cur.swim || 0;
   let g = week.sessions.filter(s => s.sport === "gym").length;
-  const gymOn = doc.settings.allowedTypes.gymStrength !== false || doc.settings.allowedTypes.gymCardio !== false || doc.settings.allowedTypes.gymMobility !== false;
+  const gymOn = GYM_BASE.some(k => doc.settings.allowedTypes[k] !== false);
+  const swimOn = SWIM_BASE.some(k => doc.settings.allowedTypes[k] !== false);
   const sheet = openSheet(`
     <div class="sh-title">Weekly mix</div>
     <div class="sh-sub">How many of each, per week. They're scheduled around your rest day automatically — fine-tune individual days in the layout editor.</div>
     <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="mx-run">${r}</b><button data-d="1">+</button></span></div>
     <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="mx-bike">${b}</b><button data-d="1">+</button></span></div>
+    <div class="mixrow" data-k="swim"><span class="l">Swims${swimOn ? "" : " <i class='row-sub'>· enable in Workouts allowed</i>"}</span><span class="ud"><button data-d="-1">−</button><b id="mx-swim">${sw}</b><button data-d="1">+</button></span></div>
     <div class="mixrow" data-k="gym"><span class="l">Gym workouts${gymOn ? "" : " <i class='row-sub'>· enable in Workouts allowed</i>"}</span><span class="ud"><button data-d="-1">−</button><b id="mx-gym">${g}</b><button data-d="1">+</button></span></div>
     <p class="row-sub" id="mx-note"></p>
     <button class="btn" id="mx-save">Apply to this week</button>
@@ -1730,23 +1739,24 @@ function openWeeklyMix(week) {
   const refresh = () => {
     sheet.querySelector("#mx-run").textContent = r;
     sheet.querySelector("#mx-bike").textContent = b;
+    sheet.querySelector("#mx-swim").textContent = sw;
     sheet.querySelector("#mx-gym").textContent = g;
-    const tot = r + b + g;
+    const tot = r + b + sw + g;
     sheet.querySelector("#mx-note").textContent = tot === 0 ? "Add at least one session." :
       tot > 6 ? `${tot} sessions — the extras stack as a second session on your freshest day.` : "";
     sheet.querySelector("#mx-save").disabled = tot === 0;
   };
   sheet.querySelectorAll(".mixrow").forEach(row => row.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
     const d = +btn.dataset.d, k = row.dataset.k;
-    if (k === "run") r = clamp(r + d); else if (k === "bike") b = clamp(b + d); else g = clamp(g + d);
+    if (k === "run") r = clamp(r + d); else if (k === "bike") b = clamp(b + d); else if (k === "swim") sw = clamp(sw + d); else g = clamp(g + d);
     refresh();
   })));
   refresh();
   sheet.querySelector("#mx-save").addEventListener("click", () => {
     closeOverlay();
     openModal("Apply your mix", "Auto-place the sessions on your freshest days, or arrange the weekly layout yourself?", [
-      { label: "Auto-place", fn: () => changeMix(week, r, b, g) },
-      { label: "Choose layout", fn: () => { changeMix(week, r, b, g); openLayoutEditor(); } },
+      { label: "Auto-place", fn: () => changeMix(week, r, b, g, sw) },
+      { label: "Choose layout", fn: () => { changeMix(week, r, b, g, sw); openLayoutEditor(); } },
     ]);
   });
 }
@@ -1878,11 +1888,12 @@ function sessionTypeOptions(sport) {
     a.longRun !== false && { id: "long", label: "Long", kind: "long" },
   ].filter(Boolean);
   if (sport === "swim") return [
-    { id: "easy", label: "Easy", kind: "easy" },
-    { id: "endurance", label: "Endurance", kind: "easy" },
-    { id: "threshold", label: "Threshold", kind: "quality" },
-    { id: "intervals", label: "Intervals", kind: "quality" },
-  ];
+    a.easySwim !== false && { id: "easy", label: "Easy", kind: "easy" },
+    a.swimDrills !== false && { id: "drills", label: "Technique", kind: "easy" },
+    a.swimEndurance !== false && { id: "endurance", label: "Endurance", kind: "easy" },
+    a.swimThreshold !== false && { id: "threshold", label: "Threshold", kind: "quality" },
+    a.swimIntervals !== false && { id: "intervals", label: "Intervals", kind: "quality" },
+  ].filter(Boolean);
   return [
     a.easyRide !== false && { id: "easy", label: "Easy", kind: "easy" },
     a.bikeIntervals !== false && { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" },
@@ -2539,7 +2550,7 @@ function openLogActivity() {
 function openAdhocWorkout() {
   // every activity is offered — the "Workouts allowed" toggles are for the PLAN,
   // not for spontaneously doing a workout today (the two are independent)
-  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(doc.settings.activities?.swim || doc.settings.goal === "triathlon" ? [["swim", "Swim"]] : []), ["hike", "Hike"], ["gym", "Gym"]];
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["swim", "Swim"], ["hike", "Hike"], ["gym", "Gym"]];
   const sheet = openSheet(`
     <div class="sh-title">Do a workout</div>
     <div class="sh-sub">A one-off for today — not part of your program. We'll suggest one sized to your training.</div>
@@ -2564,7 +2575,7 @@ const ADHOC_TYPES = {
   trail: [{ id: "easy", label: "Easy", kind: "easy" }, { id: "long", label: "Long", kind: "long" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "trailHilly", label: "Hilly", kind: "easy" }],
   bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
   hike:  [{ id: "short", label: "Short", kind: "easy" }, { id: "day", label: "Day hike", kind: "easy" }, { id: "bigday", label: "Big day", kind: "long" }],
-  swim:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "endurance", label: "Endurance", kind: "easy" }, { id: "threshold", label: "Threshold", kind: "quality" }, { id: "intervals", label: "Intervals", kind: "quality" }],
+  swim:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "drills", label: "Technique", kind: "easy" }, { id: "endurance", label: "Endurance", kind: "easy" }, { id: "threshold", label: "Threshold", kind: "quality" }, { id: "intervals", label: "Intervals", kind: "quality" }],
 };
 function openAdhocSession(sport, opts = {}) {
   const vo2 = !!opts.vo2;
@@ -2847,14 +2858,14 @@ function renderProgress() {
       const view = cardToggle.volume || "targets";
       const tabs = cardTabs("volume", [["targets", "Targets"], ["volume", "Volume"]], view);
       if (view === "targets") {
-        const SPO = [["run", "Run"], ["bike", "Ride"], ["trail", "Trail"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+        const SPO = [["run", "Run"], ["bike", "Ride"], ["swim", "Swim"], ["trail", "Trail"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
         const rows = SPO.filter(([sp]) => tBands[sp]).map(([sp, lab]) => {
           const b = tBands[sp], col = SPORT_COLOR[sp] || SPORT_COLOR.other;
-          const actual = b.unit === "min" ? (wkActual[sp]?.min || 0) : (wkActual[sp]?.km || 0);
+          const actual = b.unit === "min" ? (wkActual[sp]?.min || 0) : b.unit === "m" ? (wkActual[sp]?.m || 0) : (wkActual[sp]?.km || 0);
           const max = Math.max(b.hi, actual) * 1.08 || 1;
           const optL = b.lo / max * 100, optR = b.hi / max * 100;
           const over = actual > b.hi, inb = actual >= b.lo && actual <= b.hi;
-          const fmt = v => b.unit === "min" ? fmtDur(Math.round(v)) : v.toFixed(1) + " km";
+          const fmt = v => b.unit === "min" ? fmtDur(Math.round(v)) : b.unit === "m" ? `${Math.round(v).toLocaleString()} m` : v.toFixed(1) + " km";
           return `<div class="lf-row">
             <span class="lf-name"><i style="background:${col}"></i>${lab}</span>
             <span class="lf-track"><i class="lf-fill ${over ? "over" : ""}" style="width:${Math.max(2, Math.min(100, actual / max * 100))}%;background:${col}"></i><i class="lf-opt" style="left:${optL}%;width:${Math.max(2, optR - optL)}%"></i></span>
@@ -3005,7 +3016,6 @@ function renderProgress() {
         : `<button class="btn ghost mini" id="pg-vo2">Add reading</button>`}`;
     },
     css: () => {
-      if (!(doc.settings.activities?.swim || doc.settings.goal === "triathlon")) return "";
       const cssNow = E.estimateCSS(doc.logs, win.to);
       const cssPts = R((E.cssCurve(doc.logs, win.from, win.to) || []).map(c => ({ x: dnum(c.date), y: c.value, date: c.date })));
       const paces = cssNow ? E.swimPaces(cssNow.pacePer100) : null;
@@ -3022,8 +3032,7 @@ function renderProgress() {
       const sport = cardToggle.perfSport || "run";            // run | trail | bike | hike | swim
       const isSwim = sport === "swim";
       const type = (() => { const t = cardToggle.perfType || "speed"; return isSwim && t === "climb" ? "speed" : t; })(); // swim has no climbing
-      const swimTab = doc.settings.activities?.swim || doc.settings.goal === "triathlon";
-      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(swimTab ? [["swim", "Swim"]] : []), ["hike", "Hike"]], sport);
+      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["swim", "Swim"], ["hike", "Hike"]], sport);
       const typeRow = `<div class="perftypes">${cardTabs("perfType", isSwim ? [["speed", "Speed"], ["dist", "Distance"]] : [["speed", "Speed"], ["dist", "Distance"], ["climb", "Climbing"]], type)}</div>`;
       const sportLab = { run: "Run", trail: "Trail", bike: "Ride", hike: "Hike", swim: "Swim" }[sport];
       const col = SPORT_COLOR[sport];
@@ -3207,14 +3216,14 @@ function renderProgress() {
 
     bests: () => {
       const PB_SPORT = { run5k: "run", run10k: "run", runHalf: "run", runFull: "run", longestRun: "run",
-        bike40k: "bike", longestRide: "bike", longestTrail: "trail", longestHike: "hike" };
+        bike40k: "bike", longestRide: "bike", longestTrail: "trail", longestHike: "hike", longestSwim: "swim", swim100: "swim" };
       const pbSport = p => PB_SPORT[p.key] || (p.logId && doc.logs.find(l => l.id === p.logId)?.sport) || "bike";
       const head = `<div class="hd"><span class="eyebrow">Personal bests</span>`;
       if (!bests.length) return `${head}<button class="eyebrow tapx lk" id="pg-pb">add ＋</button></div>
         <p class="row-sub">Your records appear as you log — biggest climb, longest ride, fastest 5K/10K/half/marathon, 40K.</p>`;
       const bySport = {};
       for (const p of bests) { const sp = pbSport(p); (bySport[sp] = bySport[sp] || []).push(p); }
-      const avail = [["run", "Run"], ["bike", "Ride"], ["trail", "Trail"], ["hike", "Hike"]].filter(([sp]) => bySport[sp]);
+      const avail = [["run", "Run"], ["bike", "Ride"], ["swim", "Swim"], ["trail", "Trail"], ["hike", "Hike"]].filter(([sp]) => bySport[sp]);
       let cur = cardToggle.bests;
       if (!cur || !bySport[cur]) cur = bySport.run ? "run" : avail[0][0];
       const list = bySport[cur] || [];
@@ -3534,9 +3543,17 @@ function renderSettings() {
   const convS = { runPace: runPaceS, rideKmh: rideKmhS };
   const tBandsS = E.targetBands(currentWeek() || lastWeek(), st, convS);
   const reapplyTargets = () => { if (st.planFollowsTargets) { E.restorePlan(doc, st); E.applyTargetsToPlan(doc, st, todayISO(), convS); } };
-  const TGT_SPORTS = [["run", "Run", "km"], ["bike", "Ride", "km"], ["trail", "Trail", "km"], ["hike", "Hike", "km"], ["gym", "Gym", "min"]];
-  const tgtVal = (sp, unit) => { const ov = st.weeklyTargets[sp]; const shown = ov != null ? ov : (tBandsS[sp] ? tBandsS[sp].target : null); return shown == null ? "—" : (unit === "min" ? fmtDur(Math.round(shown)) : shown.toFixed(1) + " km"); };
-  const targetRows = TGT_SPORTS.map(([sp, lab, unit]) => `<button class="srow" data-tgt="${sp}" data-tunit="${unit}"><span class="l">${lab} target<span>${st.weeklyTargets[sp] != null ? "your target" : (tBandsS[sp] ? "auto from plan" : "tap to set")}</span></span><span class="v ${st.weeklyTargets[sp] != null ? "" : "add"}">${tgtVal(sp, unit)}</span><span class="chev">›</span></button>`).join("");
+  const TGT_SPORTS = [["run", "Run", "km"], ["bike", "Ride", "km"], ["swim", "Swim", "m"], ["trail", "Trail", "km"], ["hike", "Hike", "km"], ["gym", "Gym", "min"]];
+  const fmtTgt = (v, unit) => unit === "min" ? fmtDur(Math.round(v)) : unit === "m" ? `${Math.round(v).toLocaleString()} m` : `${(+v).toFixed(1)} km`;
+  const tgtVal = (sp, unit) => { const ov = st.weeklyTargets[sp]; const shown = ov != null ? ov : (tBandsS[sp] ? tBandsS[sp].target : null); return shown == null ? "—" : fmtTgt(shown, unit); };
+  const recTgt = {}; for (const [sp] of TGT_SPORTS) recTgt[sp] = E.recommendSportTarget(doc, sp, todayISO());
+  const targetRows = TGT_SPORTS.map(([sp, lab, unit]) => {
+    const rec = recTgt[sp];
+    const sub = st.weeklyTargets[sp] != null ? "your target"
+      : rec != null ? `recommended ~${fmtTgt(rec, unit)} from recent training`
+      : tBandsS[sp] ? "auto from plan" : "tap to set";
+    return `<button class="srow" data-tgt="${sp}" data-tunit="${unit}"><span class="l">${lab} target<span>${sub}</span></span><span class="v ${st.weeklyTargets[sp] != null ? "" : "add"}">${tgtVal(sp, unit)}</span><span class="chev">›</span></button>`;
+  }).join("");
 
   const vo2Source = st.vo2Source || "manual";
   const lastKg = doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : null;
@@ -3581,7 +3598,6 @@ function renderSettings() {
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "swim" ? "ls" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
-      <button class="srow tog" id="st-swim"><span class="l">Swimming<span>${st.activities?.swim ? "on — log swims, charts &amp; triathlon plans" : "off — turn on to log swims &amp; train for triathlon"}</span></span><span class="switch ${st.activities?.swim ? "on" : ""}"></span></button>
       <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
     </div>`,
     targets: `<div class="scard">
@@ -3597,6 +3613,7 @@ function renderSettings() {
     workouts: `<div class="scard">
       <div class="gh" style="margin:2px 4px 2px">Run</div>${RUN_BASE.map(togRow).join("")}
       <div class="gh" style="margin:12px 4px 2px">Ride</div>${RIDE_BASE.map(togRow).join("")}
+      <div class="gh" style="margin:12px 4px 2px">Swim</div>${SWIM_BASE.map(togRow).join("")}
       <div class="gh" style="margin:12px 4px 2px">Gym</div>${GYM_BASE.map(togRow).join("")}
     </div>`,
     equip: `<div class="scard">
@@ -3692,8 +3709,10 @@ function renderSettings() {
   page.querySelectorAll("[data-tgt]").forEach(btn => btn.addEventListener("click", () => {
     const sp = btn.dataset.tgt, unit = btn.dataset.tunit;
     openValueSheet({
-      title: `${SPORT_NAME[sp] || sp} weekly target`, label: "Per week", suffix: unit, step: unit === "min" ? "5" : "1",
-      value: st.weeklyTargets[sp] ?? "", min: 0, max: unit === "min" ? 2000 : 1000, allowClear: st.weeklyTargets[sp] != null,
+      title: `${SPORT_NAME[sp] || sp} weekly target`, label: "Per week", suffix: unit, step: unit === "min" ? "5" : unit === "m" ? "100" : "1",
+      value: st.weeklyTargets[sp] ?? "", min: 0, max: unit === "min" ? 2000 : unit === "m" ? 20000 : 1000, allowClear: st.weeklyTargets[sp] != null,
+      recommend: recTgt[sp] != null ? { value: recTgt[sp], reason: "from your recent training (median of the last ~6 weeks)" } : null,
+      recommendNote: recTgt[sp] != null ? "" : "Log a few weeks of this activity and we'll suggest a target.",
       onSave: v => { st.weeklyTargets[sp] = v ? +v : null; reapplyTargets(); },
     });
   }));
@@ -3701,10 +3720,6 @@ function renderSettings() {
     title: "Target range", label: "Band", suffix: "%", step: "1", value: st.targetRangePct || 15, min: 5, max: 40,
     onSave: v => { st.targetRangePct = Math.round(v); reapplyTargets(); },
   }));
-  $("#st-swim")?.addEventListener("click", () => {
-    persist(() => { doc.settings.activities = { ...doc.settings.activities, swim: !doc.settings.activities?.swim }; });
-    renderSettings();
-  });
   $("#st-followtargets")?.addEventListener("click", () => {
     const wasFollowing = st.planFollowsTargets;
     persist(() => { if (wasFollowing) E.restorePlan(doc, st); else E.applyTargetsToPlan(doc, st, todayISO(), convS); });

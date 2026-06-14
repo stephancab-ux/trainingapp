@@ -1361,6 +1361,28 @@ export function recommendClimbTarget(doc) {
   return Math.round(s[Math.floor(s.length / 2)] / 50) * 50;
 }
 
+/* Recommended weekly distance/volume target for a sport, from recent training:
+   the median of the last ~6 weeks' weekly total for that sport, nudged up ~8 %.
+   Unit: km (run/bike/trail/hike), metres (swim), minutes (gym). null if sparse. */
+export function recommendSportTarget(doc, sport, todayISO) {
+  const logs = doc.logs || [];
+  const unit = sport === "gym" ? "min" : sport === "swim" ? "m" : "km";
+  const val = l => unit === "min" ? (l.min || 0) : unit === "m" ? (l.m || 0) : (l.km || 0);
+  const match = sport === "run" ? isRunType : l => l.sport === sport;
+  const thisMon = addDays(todayISO, -dayIndex(todayISO));
+  const weeks = [];
+  for (let k = 1; k <= 6; k++) {
+    const start = addDays(thisMon, -7 * k), end = addDays(start, 6);
+    weeks.push(logs.filter(l => match(l) && l.date >= start && l.date <= end).reduce((a, l) => a + val(l), 0));
+  }
+  const nz = weeks.filter(v => v > 0).sort((a, b) => a - b);
+  if (nz.length < 3) return null;
+  const rec = nz[Math.floor(nz.length / 2)] * 1.08;
+  if (unit === "km") return Math.round(rec * 10) / 10;
+  if (unit === "m") return Math.round(rec / 100) * 100;
+  return Math.round(rec / 5) * 5;
+}
+
 /* Weekly growth % from recent consistency + last check-in feel. Returns { rate, reason } or null. */
 export function recommendGrowthRate(doc) {
   const logs = doc.logs || [], checkins = doc.checkins || [];
@@ -1400,10 +1422,10 @@ const PB_DISTANCES = [
   { key: "runFull", sport: "run",  std: 42.195,  band: [38, 46],     label: "Marathon" },
   { key: "bike40k", sport: "bike", std: 40,      band: [35, 50],     label: "40K ride" },
 ];
-export const PB_ORDER = ["run5k", "run10k", "runHalf", "runFull", "bike40k",
+export const PB_ORDER = ["run5k", "run10k", "runHalf", "runFull", "bike40k", "swim100",
                          "longestRun", "longestTrail", "longestRide", "longestHike", "longestSwim",
                          "biggestAscent", "biggestDescent", "longestSession"];
-export const PB_LOWER_BETTER = new Set(["run5k", "run10k", "runHalf", "runFull", "bike40k"]);
+export const PB_LOWER_BETTER = new Set(["run5k", "run10k", "runHalf", "runFull", "bike40k", "swim100"]);
 
 export function personalBests({ logs = [], manualBests = [] } = {}) {
   const rec = {};
@@ -1419,6 +1441,7 @@ export function personalBests({ logs = [], manualBests = [] } = {}) {
     if (l.sport === "bike" && l.km > 0) put("longestRide", l.km, l, { unit: "km" });
     if (l.sport === "hike" && l.km > 0) put("longestHike", l.km, l, { unit: "km" });
     if (l.sport === "swim" && l.m > 0) put("longestSwim", l.m, l, { unit: "m" });
+    if (l.sport === "swim" && l.m >= 200 && l.min > 0) put("swim100", (l.min * 60) / (l.m / 100), l, { unit: "pace100" });
     // biggest climb / descent across any climbing-capable sport
     if ((l.sport === "bike" || l.sport === "trail" || l.sport === "hike") && l.ascent > 0) put("biggestAscent", l.ascent, l, { unit: "m" });
     if ((l.sport === "bike" || l.sport === "trail" || l.sport === "hike") && l.descent > 0) put("biggestDescent", l.descent, l, { unit: "m" });
@@ -1440,6 +1463,7 @@ export function personalBests({ logs = [], manualBests = [] } = {}) {
   return PB_ORDER.filter(k => rec[k]).map(k => ({ label: pbLabel(k), ...rec[k] }));
 }
 function pbUnit(key) {
+  if (key === "swim100") return "pace100";
   if (PB_LOWER_BETTER.has(key)) return "time";
   if (key === "biggestAscent" || key === "biggestDescent" || key === "longestSwim") return "m";
   if (key === "longestSession") return "min";
@@ -1448,7 +1472,7 @@ function pbUnit(key) {
 function pbLabel(key) {
   const d = PB_DISTANCES.find(x => x.key === key);
   if (d) return d.label;
-  return { longestRun: "Longest run", longestTrail: "Longest trail run", longestRide: "Longest ride",
+  return { longestRun: "Longest run", longestTrail: "Longest trail run", longestRide: "Longest ride", swim100: "Best swim pace",
            longestHike: "Longest hike", longestSwim: "Longest swim", biggestAscent: "Biggest climb", biggestDescent: "Biggest descent",
            longestSession: "Longest session" }[key] || key;
 }
@@ -1456,6 +1480,7 @@ function pbLabel(key) {
 /* Plain-text value of a PB record (used by the coach + UI). */
 export function fmtBestValue(rec) {
   if (!rec) return "";
+  if (rec.unit === "pace100") return `${fmtPace(rec.value)} /100m`;
   if (rec.unit === "time") {
     const s = Math.round(rec.value), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`;
@@ -1777,9 +1802,9 @@ export function weekSummary(logs, bounds, from, to) {
   for (const l of logs) {
     if (l.date < from || l.date > to) continue;
     const sp = l.sport || "other";
-    const s = (by[sp] = by[sp] || { count: 0, min: 0, km: 0, ascent: 0, cal: 0, load: 0 });
+    const s = (by[sp] = by[sp] || { count: 0, min: 0, km: 0, m: 0, ascent: 0, cal: 0, load: 0 });
     const ld = sessionLoad(l, bounds);
-    s.count++; s.min += l.min || 0; s.km += l.km || 0; s.ascent += l.ascent || 0; s.cal += l.calories || 0; s.load += ld;
+    s.count++; s.min += l.min || 0; s.km += l.km || 0; s.m += l.m || 0; s.ascent += l.ascent || 0; s.cal += l.calories || 0; s.load += ld;
     total.count++; total.min += l.min || 0; total.km += l.km || 0; total.ascent += l.ascent || 0; total.cal += l.calories || 0; total.load += ld;
   }
   return { bySport: by, total };
@@ -1804,6 +1829,7 @@ export function targetBands(week, settings, conv = {}) {
   add("bike", (tm.bike / 60) * rideKmh, "km");
   add("gym", tm.gym, "min");
   for (const sp of ["trail", "hike", "other"]) if (ov[sp] > 0) out[sp] = { target: ov[sp], unit: "km", lo: ov[sp] * (1 - pct), hi: ov[sp] * (1 + pct), auto: false };
+  if (ov.swim > 0) out.swim = { target: ov.swim, unit: "m", lo: ov.swim * (1 - pct), hi: ov.swim * (1 + pct), auto: false };
   return out;
 }
 /* Flatten the current + future weeks' planned minutes to the effective targets

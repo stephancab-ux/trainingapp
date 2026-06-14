@@ -61,10 +61,9 @@ export function defaultSettings() {
     allowedTypes: {
       easyRun: true, runTempo: true, runIntervals: true, runHills: true, longRun: true, trailRun: true,
       easyRide: true, bikeIntervals: true, bikeSprint: true, bikeClimb: true, longRide: true,
+      easySwim: true, swimDrills: true, swimEndurance: true, swimThreshold: true, swimIntervals: true,
       gymStrength: true, gymCardio: true, gymMobility: true,
     },
-    // optional activities the user opts into (auto-on with a triathlon goal)
-    activities: { swim: false },
     // weekly mix — the source of truth that auto-schedules the plan; the
     // per-day layout above is derived from these (and hand-editable).
     weeklyCounts: { run: 3, bike: 3, gym: 0, swim: 0 },
@@ -281,7 +280,6 @@ export function migrate(doc) {
   d.settings.weeklyCounts = { ...defaultSettings().weeklyCounts, ...(d.settings.weeklyCounts || {}) };
   d.settings.equipment = { ...defaultSettings().equipment, ...(d.settings.equipment || {}) };
   d.settings.weeklyTargets = { ...defaultSettings().weeklyTargets, ...(d.settings.weeklyTargets || {}) };
-  d.settings.activities = { ...defaultSettings().activities, ...(d.settings.activities || {}) };
   d.settings.bannedExercises ||= [];
   d.settings.progressCards = normalizeProgressCards(d.settings.progressCards);
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
