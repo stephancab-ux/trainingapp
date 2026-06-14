@@ -83,6 +83,7 @@ const WORKOUT_TOGGLES = [
   ["trailRun", "Trail run", "off-road, with climbing"],
   ["easyRide", "Easy ride", "aerobic spin"],
   ["bikeIntervals", "Sweet spot", "Z3–Z4 ride intervals"],
+  ["bikeSprint", "Sprint ride", "all-out Z5 surges"],
   ["bikeClimb", "Climbing ride", "long sustained climbs"],
   ["longRide", "Long ride", "the weekend distance"],
   ["gymStrength", "Gym strength", "resistance + circuits"],
@@ -90,7 +91,7 @@ const WORKOUT_TOGGLES = [
   ["gymMobility", "Mobility", "warm-ups + cooldowns"],
 ];
 const RUN_BASE = ["easyRun", "runTempo", "runIntervals", "runHills", "longRun", "trailRun"];
-const RIDE_BASE = ["easyRide", "bikeIntervals", "bikeClimb", "longRide"];
+const RIDE_BASE = ["easyRide", "bikeIntervals", "bikeSprint", "bikeClimb", "longRide"];
 const GYM_BASE = ["gymStrength", "gymCardio", "gymMobility"];
 
 /* Workout-type tags on logs (v1.1). Purely descriptive — no plan math. */
@@ -1294,7 +1295,7 @@ function applyAllowedToCurrentWeek() {
   const idx = weekIndex(week);
   const famKeyOf = t => t.sport === "run"
     ? { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" }[t.family]
-    : { intervals: "bikeIntervals", climb: "bikeClimb" }[t.family];
+    : { intervals: "bikeIntervals", sprint: "bikeSprint", climb: "bikeClimb" }[t.family];
   for (const s of week.sessions) {
     if (s.kind !== "quality" || !s.qualityTemplate) continue;
     const t = E.QUALITY_TEMPLATES[s.qualityTemplate];
@@ -2815,6 +2816,7 @@ function openValueSheet({ title, label, suffix, step = "1", value = "", withDate
 const METHOD_LABEL = { pctmax: "% of max HR", karvonen: "Karvonen (HR reserve)", lthr: "Lactate threshold", custom: "Custom bounds" };
 
 let settingsOpen = new Set(); // collapsed Settings sections that are expanded (session-lifetime)
+let settingsPage = null; // active Settings drill-in page key (null = root menu)
 function renderSettings() {
   const page = $('[data-page="settings"]');
   const st = doc.settings;
@@ -2838,69 +2840,122 @@ function renderSettings() {
   const tgtVal = (sp, unit) => { const ov = st.weeklyTargets[sp]; const shown = ov != null ? ov : (tBandsS[sp] ? tBandsS[sp].target : null); return shown == null ? "—" : (unit === "min" ? fmtDur(Math.round(shown)) : shown.toFixed(1) + " km"); };
   const targetRows = TGT_SPORTS.map(([sp, lab, unit]) => `<button class="srow" data-tgt="${sp}" data-tunit="${unit}"><span class="l">${lab} target<span>${st.weeklyTargets[sp] != null ? "your target" : (tBandsS[sp] ? "auto from plan" : "tap to set")}</span></span><span class="v ${st.weeklyTargets[sp] != null ? "" : "add"}">${tgtVal(sp, unit)}</span><span class="chev">›</span></button>`).join("");
 
-  page.innerHTML = `
-    <h1 class="page">Settings</h1>
-    <div class="group"><div class="gh">Heart rate</div><div class="scard">
-      <button class="srow" id="st-max"><span class="l">Max HR<span>${st.maxHRAuto ? "auto-updates from your activities" : "set manually"}</span></span><span class="v">${st.maxHR} bpm</span><span class="chev">›</span></button>
-      <button class="srow tog" data-tog="maxHRAuto"><span class="l">Auto-update max HR<span>raise it when an activity goes higher</span></span><span class="switch ${st.maxHRAuto ? "on" : ""}"></span></button>
+  const vo2Source = st.vo2Source || "manual";
+  const lastKg = doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : null;
+  const bmi = (st.heightCm && lastKg) ? (lastKg / Math.pow(st.heightCm / 100, 2)).toFixed(1) : null;
+  const vo2Manual = doc.vo2History.length ? doc.vo2History[doc.vo2History.length - 1].value : null;
+  const vo2Now = vo2Source === "calc" ? E.estimateVo2FromRuns(doc.logs, todayISO()) : vo2Manual;
+  const recBurn = E.recommendBurnGoal(doc);
+  const recClimb = E.recommendClimbTarget(doc);
+  const recGrowth = E.recommendGrowthRate(doc);
+  const togRow = key => { const t = WORKOUT_TOGGLES.find(x => x[0] === key); return t
+    ? `<button class="srow tog" data-fam="${key}"><span class="l">${t[1]}<span>${t[2]}</span></span><span class="switch ${st.allowedTypes[key] !== false ? "on" : ""}"></span></button>` : ""; };
+
+  const BODY = {
+    personal: `<div class="scard">
       <button class="srow" id="st-age"><span class="l">Age<span>estimates max HR (208 − 0.7 × age)</span></span><span class="v ${st.age ? "" : "add"}">${st.age ? st.age + " yr" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-sex"><span class="l">Sex<span>rates your VO₂ max against age/sex norms</span></span><span class="v ${st.sex ? "" : "add"}">${st.sex ? (st.sex === "female" ? "Female" : "Male") : "Add"}</span><span class="chev">›</span></button>
+      <button class="srow" id="st-height"><span class="l">Height<span>for BMI and the burn-goal estimate</span></span><span class="v ${st.heightCm ? "" : "add"}">${st.heightCm ? st.heightCm + " cm" : "Add"}</span><span class="chev">›</span></button>
+      ${bmi ? `<div class="srow"><span class="l">BMI<span>from your height + latest weigh-in</span></span><span class="v">${bmi}</span></div>` : ""}
+    </div>`,
+    hr: `<div class="scard">
+      <button class="srow" id="st-max"><span class="l">Max HR<span>${st.maxHRAuto ? "auto-updates from your activities" : "set manually"}</span></span><span class="v">${st.maxHR} bpm</span><span class="chev">›</span></button>
+      <button class="srow tog" data-tog="maxHRAuto"><span class="l">Auto-update max HR<span>raise it when an activity goes higher</span></span><span class="switch ${st.maxHRAuto ? "on" : ""}"></span></button>
       <button class="srow" id="st-rhr"><span class="l">Resting HR<span>adding it switches zones to Karvonen</span></span><span class="v ${st.restingHR ? "" : "add"}">${st.restingHR ? st.restingHR + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lthr"><span class="l">Lactate threshold<span>optional — enables LTHR-based zones</span></span><span class="v ${st.lthr ? "" : "add"}">${st.lthr ? st.lthr + " bpm" : "Add"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-method"><span class="l">Zone method</span><span class="v">${METHOD_LABEL[st.zoneMethod] || st.zoneMethod}</span><span class="chev">›</span></button>
-    </div></div>
-    <div class="group"><div class="gh">Zones</div><div class="scard">
+    </div>`,
+    zones: `<div class="scard">
       ${b.map((z, i) => `<div class="zr"><span class="chip zc${z.z}">Z${z.z}</span><span class="what">${E.ZONE_NAMES[i]}</span><span class="range">${z.lo} – ${z.hi}</span></div>`).join("")}
       <button class="srow" id="st-custom" style="border-top:1px solid var(--line)"><span class="l" style="color:var(--cy)">Customize zones<span>your own bpm bounds — every plan and chart updates</span></span><span class="chev">›</span></button>
-    </div></div>
-    <div class="group ${sOpen("plan") ? "" : "collapsed"}">${ghBtn("plan", "Training plan", `${st.weeklyCounts.run}·${st.weeklyCounts.bike}·${st.weeklyCounts.gym}`)}<div class="scard">
+    </div>`,
+    fitness: `<div class="scard">
+      <div class="frow"><span class="l">VO₂ max source</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end">${[["manual", "Manual"], ["calc", "Calculated"]].map(([v, l]) => `<button data-vo2src="${v}" style="flex:0 0 96px" class="${vo2Source === v ? "on" : ""}">${l}</button>`).join("")}</span></div>
+      <div class="srow"><span class="l">VO₂ max<span>${vo2Source === "calc" ? "estimated from your runs" : "your entered readings"}</span></span><span class="v">${vo2Now != null ? vo2Now + " ml/kg/min" : "—"}</span></div>
+      ${vo2Source === "calc" ? `<button class="srow" id="st-vo2how"><span class="l" style="color:var(--cy)">How it's calculated<span>Daniels' VDOT from your best recent run</span></span><span class="chev">›</span></button>` : ""}
+      ${vo2Now == null ? `<div class="callout" style="margin:10px 6px 4px">No VO₂ yet — do a hard sustained run (an all-out ~5 km or a 20-min effort) and log it; we'll estimate it from your pace.<br><button class="btn ghost mini" id="st-vo2run" style="margin-top:9px">Propose a hard run →</button></div>` : ""}
+    </div>`,
+    plan: `<div class="scard">
       <button class="srow" id="st-mix"><span class="l">Weekly mix<span>runs · rides · gym per week</span></span><span class="v">${st.weeklyCounts.run} · ${st.weeklyCounts.bike} · ${st.weeklyCounts.gym}</span><span class="chev">›</span></button>
-      <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
-      <button class="srow" id="st-cal"><span class="l">Weekly burn goal<span>colours the calories-burned line</span></span><span class="v ${st.weeklyCalorieTarget ? "" : "add"}">${st.weeklyCalorieTarget ? st.weeklyCalorieTarget.toLocaleString() + " kcal" : "Add"}</span><span class="chev">›</span></button>
-      <button class="srow" id="st-gr"><span class="l">Weekly growth<span>also drives the “Coming weeks” projection</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
-      <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
       <button class="srow" id="st-rest"><span class="l">Rest day<span>the week reflows around your day off</span></span><span class="v">${DAY_LABEL[st.restDay] || "Sunday"}</span><span class="chev">›</span></button>
-      <button class="srow" id="st-climb"><span class="l">Climb target<span>base ascent for climbing rides</span></span><span class="v">${st.climbBaseAscent} m</span><span class="chev">›</span></button>
+      <button class="srow" id="st-dl"><span class="l">Deload</span><span class="v">every ${ordinal(st.deloadEvery)} week</span><span class="chev">›</span></button>
       <button class="srow" id="st-pace"><span class="l">Easy pace<span>your run pace hint until the app has learned</span></span><span class="v ${st.easyPace ? "" : "add"}">${st.easyPace ? `${E.fmtPace(st.easyPace.lo)}–${E.fmtPace(st.easyPace.hi)}` : "Auto"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
-      <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
+      <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
-      <div class="gh" style="margin:12px 4px 4px">Weekly targets</div>
+    </div>`,
+    targets: `<div class="scard">
+      <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
+      <button class="srow" id="st-cal"><span class="l">Weekly burn goal<span>${st.weeklyCalorieTarget ? "colours the calories-burned line" : (recBurn && recBurn.burn ? `recommended ~${recBurn.burn.toLocaleString()} kcal` : "colours the calories-burned line")}</span></span><span class="v ${st.weeklyCalorieTarget ? "" : "add"}">${st.weeklyCalorieTarget ? st.weeklyCalorieTarget.toLocaleString() + " kcal" : "Add"}</span><span class="chev">›</span></button>
+      <div class="gh" style="margin:12px 4px 4px">Weekly distance targets</div>
       ${targetRows}
       <button class="srow" id="st-tgtrange"><span class="l">Target range<span>band around each goal</span></span><span class="v">±${st.targetRangePct || 15}%</span><span class="chev">›</span></button>
       <button class="srow tog" id="st-followtargets"><span class="l">Follow my targets<span>${st.planFollowsTargets ? "plan set to your targets — tap to undo" : "rewrite the plan's minutes to hit your distances"}</span></span><span class="switch ${st.planFollowsTargets ? "on" : ""}"></span></button>
-    </div></div>
-    <div class="group ${sOpen("workouts") ? "" : "collapsed"}">${ghBtn("workouts", "Workouts allowed", `${workoutsOn}/${WORKOUT_TOGGLES.length} on`)}<div class="scard">
-      ${WORKOUT_TOGGLES.map(([key, label, sub]) => `
-        <button class="srow tog" data-fam="${key}"><span class="l">${label}<span>${sub}</span></span>
-          <span class="switch ${st.allowedTypes[key] !== false ? "on" : ""}"></span></button>`).join("")}
-    </div></div>
-    <div class="group ${sOpen("equip") ? "" : "collapsed"}">${ghBtn("equip", "Home equipment", `${equipOwned} owned`)}<div class="scard">
+      <button class="srow" id="st-climb"><span class="l">Climb target<span>${recClimb ? `recommended ~${recClimb} m from your rides` : "base ascent for climbing rides"}</span></span><span class="v">${st.climbBaseAscent} m</span><span class="chev">›</span></button>
+      <button class="srow" id="st-gr"><span class="l">Weekly growth<span>${recGrowth ? `recommended +${Math.round(recGrowth.rate * 100)}%` : "drives the “Coming weeks” projection"}</span></span><span class="v">+${Math.round(st.growthRate * 100)} %</span><span class="chev">›</span></button>
+    </div>`,
+    workouts: `<div class="scard">
+      <div class="gh" style="margin:2px 4px 2px">Run</div>${RUN_BASE.map(togRow).join("")}
+      <div class="gh" style="margin:12px 4px 2px">Ride</div>${RIDE_BASE.map(togRow).join("")}
+      <div class="gh" style="margin:12px 4px 2px">Gym</div>${GYM_BASE.map(togRow).join("")}
+    </div>`,
+    equip: `<div class="scard">
       <p class="row-sub" style="padding:6px 14px 2px">Switch on what you own — home workouts only pick exercises you can actually do.</p>
       ${Object.entries(W.EQUIPMENT_LABELS).filter(([k]) => W.HOME_EQUIPMENT.includes(k)).map(([key, label]) => `
         <button class="srow tog" data-equip="${key}"><span class="l">${label}</span>
           <span class="switch ${st.equipment[key] ? "on" : ""}"></span></button>`).join("")}
-    </div></div>
-    <div class="group"><div class="gh">Data — yours, on this phone</div><div class="scard">
+    </div>`,
+    data: `<div class="scard">
       <button class="srow" id="st-export"><span class="l">Export JSON<span>${exportDays == null ? "never exported yet" : exportDays === 0 ? "exported today" : `last export · ${exportDays} day${exportDays > 1 ? "s" : ""} ago`}</span></span><span class="v add">Export</span></button>
       <button class="srow" id="st-import"><span class="l">Import JSON</span><span class="chev">›</span></button>
       <button class="srow" id="st-csv"><span class="l">Import Garmin CSV<span>Garmin Connect → Activities → Export CSV</span></span><span class="chev">›</span></button>
-      <button class="srow" id="st-reset"><span class="l">Reset all data</span><span class="v danger">Reset…</span></button>
-    </div></div>
-    <p class="row-sub" style="text-align:center;padding:6px 0 2px">Remonte · offline · no accounts, no tracking</p>
-    <input type="file" id="st-file-json" accept="application/json,.json" hidden>
-    <input type="file" id="st-file-csv" accept=".csv,text/csv" hidden>`;
+      <button class="srow" id="st-reset"><span class="l">Reset or erase<span>factory reset, or wipe all data</span></span><span class="v danger">Open…</span></button>
+    </div>`,
+  };
+  const PAGES = [
+    ["personal", "Personal details", `${st.age ? st.age + " yr" : "—"} · ${st.sex ? (st.sex === "female" ? "F" : "M") : "—"}`],
+    ["hr", "Heart rate", `${st.maxHR} bpm`],
+    ["zones", "Zones", METHOD_LABEL[st.zoneMethod] || st.zoneMethod],
+    ["fitness", "Fitness", `VO₂ ${vo2Source === "calc" ? "calculated" : "manual"}`],
+    ["plan", "Training plan", `${st.weeklyCounts.run}·${st.weeklyCounts.bike}·${st.weeklyCounts.gym}`],
+    ["targets", "Targets", st.planFollowsTargets ? "following" : "auto + custom"],
+    ["workouts", "Workouts allowed", `${workoutsOn}/${WORKOUT_TOGGLES.length} on`],
+    ["equip", "Home equipment", `${equipOwned} owned`],
+    ["data", "Data & reset", exportDays == null ? "no backup yet" : exportDays === 0 ? "backed up today" : `backup ${exportDays}d ago`],
+  ];
+  const cur = PAGES.find(p => p[0] === settingsPage);
+  if (cur) {
+    page.innerHTML = `
+      <button class="sback" id="st-back">‹ Settings</button>
+      <h1 class="page">${cur[1]}</h1>
+      <div class="group">${BODY[settingsPage]}</div>
+      <input type="file" id="st-file-json" accept="application/json,.json" hidden>
+      <input type="file" id="st-file-csv" accept=".csv,text/csv" hidden>`;
+  } else {
+    page.innerHTML = `
+      <h1 class="page">Settings</h1>
+      <div class="group"><div class="scard">
+        ${PAGES.map(([key, title, sum]) => `<button class="srow snav" data-spage="${key}"><span class="l">${title}</span><span class="v sum">${sum}</span><span class="chev">›</span></button>`).join("")}
+      </div></div>
+      <p class="row-sub" style="text-align:center;padding:6px 0 2px">Remonte · offline · no accounts, no tracking</p>`;
+  }
 
-  $("#st-max").addEventListener("click", () => openValueSheet({
+  page.querySelectorAll("[data-spage]").forEach(b => b.addEventListener("click", () => { settingsPage = b.dataset.spage; renderSettings(); }));
+  $("#st-back")?.addEventListener("click", () => { settingsPage = null; renderSettings(); });
+  $("#st-max")?.addEventListener("click", () => openValueSheet({
     title: "Max HR", label: "Max HR", suffix: "bpm", value: st.maxHR, min: 120, max: 220,
     onSave: v => { st.maxHR = Math.round(v); toast("Zones updated"); },
   }));
-  page.querySelector('[data-tog="maxHRAuto"]').addEventListener("click", () => {
+  page.querySelector('[data-tog="maxHRAuto"]')?.addEventListener("click", () => {
     persist(() => { st.maxHRAuto = !st.maxHRAuto; });
   });
-  $("#st-age").addEventListener("click", openAgeSheet);
-  $("#st-sex").addEventListener("click", openSexSheet);
-  $("#st-rhr").addEventListener("click", () => openValueSheet({
+  $("#st-age")?.addEventListener("click", openAgeSheet);
+  $("#st-sex")?.addEventListener("click", openSexSheet);
+  $("#st-height")?.addEventListener("click", () => openValueSheet({
+    title: "Height", label: "Height", suffix: "cm", value: st.heightCm ?? "", min: 120, max: 220, allowClear: !!st.heightCm,
+    onSave: v => { st.heightCm = v ? Math.round(v) : null; },
+  }));
+  $("#st-rhr")?.addEventListener("click", () => openValueSheet({
     title: "Resting HR", label: "Resting HR", suffix: "bpm", value: st.restingHR ?? "", min: 30, max: 100, allowClear: !!st.restingHR,
     onSave: v => {
       st.restingHR = v ? Math.round(v) : null;
@@ -2908,7 +2963,7 @@ function renderSettings() {
       else if (!v && st.zoneMethod === "karvonen") { st.zoneMethod = "pctmax"; toast("Back to % of max"); }
     },
   }));
-  $("#st-lthr").addEventListener("click", () => openValueSheet({
+  $("#st-lthr")?.addEventListener("click", () => openValueSheet({
     title: "Lactate threshold HR", label: "LTHR", suffix: "bpm", value: st.lthr ?? "", min: 100, max: 210, allowClear: !!st.lthr,
     onSave: v => {
       st.lthr = v ? Math.round(v) : null;
@@ -2916,15 +2971,20 @@ function renderSettings() {
       if (!v && st.zoneMethod === "lthr") st.zoneMethod = "pctmax";
     },
   }));
-  $("#st-method").addEventListener("click", openMethodSheet);
-  $("#st-custom").addEventListener("click", openCustomZones);
-  $("#st-tw").addEventListener("click", () => openValueSheet({
+  $("#st-method")?.addEventListener("click", openMethodSheet);
+  $("#st-custom")?.addEventListener("click", openCustomZones);
+  page.querySelectorAll("[data-vo2src]").forEach(b => b.addEventListener("click", () => { persist(() => { st.vo2Source = b.dataset.vo2src; }); }));
+  $("#st-vo2how")?.addEventListener("click", () => openModal("How VO₂ max is estimated",
+    "With no Garmin reading, we estimate VO₂ max from your best recent run using Daniels' VDOT model — it turns the pace and duration of your strongest run in the last 8 weeks into a VO₂-max-equivalent. Log a hard run or a short time trial to sharpen it. It's marked “est”, and any reading you enter by hand always wins.",
+    [{ label: "Got it" }]));
+  $("#st-vo2run")?.addEventListener("click", () => openAdhocSession("run"));
+  $("#st-tw")?.addEventListener("click", () => openValueSheet({
     title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: st.targetWeightKg, min: 40, max: 150,
     onSave: v => { st.targetWeightKg = v; },
   }));
-  $("#st-cal").addEventListener("click", () => openValueSheet({
+  $("#st-cal")?.addEventListener("click", () => openValueSheet({
     title: "Weekly burn goal", label: "Per week", suffix: "kcal", step: "50",
-    value: st.weeklyCalorieTarget ?? "", min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
+    value: st.weeklyCalorieTarget ?? (recBurn && recBurn.burn ? recBurn.burn : ""), min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
     onSave: v => { st.weeklyCalorieTarget = v ? Math.round(v) : null; },
   }));
   page.querySelectorAll("[data-tgt]").forEach(btn => btn.addEventListener("click", () => {
@@ -2935,31 +2995,26 @@ function renderSettings() {
       onSave: v => { st.weeklyTargets[sp] = v ? +v : null; reapplyTargets(); },
     });
   }));
-  $("#st-tgtrange").addEventListener("click", () => openValueSheet({
+  $("#st-tgtrange")?.addEventListener("click", () => openValueSheet({
     title: "Target range", label: "Band", suffix: "%", step: "1", value: st.targetRangePct || 15, min: 5, max: 40,
     onSave: v => { st.targetRangePct = Math.round(v); reapplyTargets(); },
   }));
-  $("#st-followtargets").addEventListener("click", () => {
+  $("#st-followtargets")?.addEventListener("click", () => {
     const wasFollowing = st.planFollowsTargets;
     persist(() => { if (wasFollowing) E.restorePlan(doc, st); else E.applyTargetsToPlan(doc, st, todayISO(), convS); });
     toast(wasFollowing ? "Plan restored" : "Plan now follows your targets");
   });
-  $("#st-gr").addEventListener("click", openGrowthSheet);
-  $("#st-dl").addEventListener("click", () => openValueSheet({
+  $("#st-gr")?.addEventListener("click", openGrowthSheet);
+  $("#st-dl")?.addEventListener("click", () => openValueSheet({
     title: "Deload cadence", label: "Every Nth week", value: st.deloadEvery, min: 2, max: 8,
     onSave: v => { st.deloadEvery = Math.round(v); },
   }));
-  $("#st-rest").addEventListener("click", openRestDaySheet);
-  $("#st-climb").addEventListener("click", () => openValueSheet({
+  $("#st-rest")?.addEventListener("click", openRestDaySheet);
+  $("#st-climb")?.addEventListener("click", () => openValueSheet({
     title: "Climb target", label: "Base ascent", suffix: "m", step: "50", value: st.climbBaseAscent, min: 100, max: 3000,
     onSave: v => { st.climbBaseAscent = Math.round(v / 10) * 10; toast("Climb target updated"); },
   }));
-  $("#st-pace").addEventListener("click", openPaceSheet);
-  page.querySelectorAll(".ghtap").forEach(b => b.addEventListener("click", () => {
-    const g = b.dataset.grp;
-    if (settingsOpen.has(g)) settingsOpen.delete(g); else settingsOpen.add(g);
-    renderSettings();
-  }));
+  $("#st-pace")?.addEventListener("click", openPaceSheet);
   page.querySelectorAll("[data-fam]").forEach(b => b.addEventListener("click", () => {
     const key = b.dataset.fam;
     const turningOff = st.allowedTypes[key] !== false;
@@ -2978,7 +3033,7 @@ function renderSettings() {
     persist(() => { st.equipment = { ...st.equipment, [key]: !st.equipment[key] }; });
   }));
   $("#st-mix")?.addEventListener("click", () => openWeeklyMix(currentWeek()));
-  $("#st-quality").addEventListener("click", () => {
+  $("#st-quality")?.addEventListener("click", () => {
     const qs = qstate();
     if (st.qualityOverride) {
       openModal("Put the gate back?", "Interval sessions return behind the consistency gate (3 of the last 4 weeks ≥ 80 %). Already-planned sessions stay as they are.", [
@@ -2994,18 +3049,36 @@ function renderSettings() {
       ]);
     }
   });
-  $("#st-lay").addEventListener("click", openLayoutEditor);
-  $("#st-export").addEventListener("click", exportJSON);
-  $("#st-import").addEventListener("click", () => $("#st-file-json").click());
-  $("#st-csv").addEventListener("click", () => $("#st-file-csv").click());
-  $("#st-file-json").addEventListener("change", e => importJSON(e.target.files[0]));
-  $("#st-file-csv").addEventListener("change", e => importCSV(e.target.files[0]));
-  $("#st-reset").addEventListener("click", () =>
-    openModal("Reset all data?", "Everything on this phone is deleted — plan, logs, weigh-ins. Export first if in doubt.", [
-      { label: "Export, then decide", cls: "ghost", fn: exportJSON },
-      { label: "Delete everything", cls: "danger", fn: () => { S.wipe(); location.reload(); } },
-      { label: "Cancel", cls: "ghost" },
-    ]));
+  $("#st-lay")?.addEventListener("click", openLayoutEditor);
+  $("#st-export")?.addEventListener("click", exportJSON);
+  $("#st-import")?.addEventListener("click", () => $("#st-file-json").click());
+  $("#st-csv")?.addEventListener("click", () => $("#st-file-csv").click());
+  $("#st-file-json")?.addEventListener("change", e => importJSON(e.target.files[0]));
+  $("#st-file-csv")?.addEventListener("change", e => importCSV(e.target.files[0]));
+  $("#st-reset")?.addEventListener("click", () => {
+    const sheet = openSheet(`
+      <div class="sh-title">Reset</div>
+      <div class="sh-sub">Back up first if in doubt — erasing can't be undone.</div>
+      <button class="btn ghost" id="rs-export">Export a backup first</button>
+      <button class="btn" id="rs-factory">Reset settings to factory</button>
+      <button class="btn danger" id="rs-erase">Erase all data</button>
+    `);
+    sheet.querySelector("#rs-export").addEventListener("click", () => { closeOverlay(); exportJSON(); });
+    sheet.querySelector("#rs-factory").addEventListener("click", () => {
+      closeOverlay();
+      openModal("Reset settings to factory?", "Every setting returns to its default. Your activities, weigh-ins and history stay.", [
+        { label: "Reset settings", cls: "danger", fn: () => { persist(() => { doc.settings = S.defaultSettings(); }); toast("Settings reset to factory"); } },
+        { label: "Cancel", cls: "ghost" },
+      ]);
+    });
+    sheet.querySelector("#rs-erase").addEventListener("click", () => {
+      closeOverlay();
+      openModal("Erase all data?", "Everything is deleted — activities, weigh-ins, VO₂, weight and your plan. This can't be undone.", [
+        { label: "Erase everything", cls: "danger", fn: () => { S.wipe(); location.reload(); } },
+        { label: "Cancel", cls: "ghost" },
+      ]);
+    });
+  });
 }
 
 function openMethodSheet() {

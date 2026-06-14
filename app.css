@@ -228,6 +228,9 @@ svg text{font-family:inherit}
 .srow .v.add{color:var(--cy)}
 .srow .v.danger{color:var(--bad)}
 .srow .chev{color:var(--mut);font-size:17px;flex:none}
+.srow .v.sum{color:var(--mut);font-weight:600;font-size:14px}
+.srow.snav .l{font-weight:700}
+.sback{display:inline-flex;align-items:center;color:var(--cy);font-weight:700;font-size:15px;padding:2px 2px 8px;background:none;border:none}
 .zr{display:flex;align-items:center;gap:10px;min-height:42px;border-bottom:1px solid var(--line);font-size:14px}
 .zr:last-of-type{border-bottom:none}
 .zr .range{flex:1;font-weight:750;font-variant-numeric:tabular-nums}
@@ -260,6 +263,8 @@ svg text{font-family:inherit}
 .swipe-content{position:relative;z-index:1;background:var(--card);transition:transform .2s;touch-action:pan-y}
 .toast .undo{margin-left:12px;color:var(--cy);font-weight:800;background:none;border:none;font-size:14px}
 .stickybar{position:sticky;top:env(safe-area-inset-top);z-index:20;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line)}
+/* paint the iPhone status-bar strip opaque so scrolled content can't show behind the clock/battery */
+body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:var(--bg);z-index:25;pointer-events:none}
 
 [hidden]{display:none!important}
 
