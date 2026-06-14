@@ -631,6 +631,21 @@ test("swim: Garmin import maps to metres + venue, and longestSwim PB renders in 
   assert.equal(E.fmtBestValue(ls), "1800 m");
 });
 
+test("swim CSS: from efforts, estimate from history, derived paces, volume", () => {
+  // 200 m in 2:30 and 400 m in 6:00 → CSS = 100*(360-150)/(400-200) = 105 s/100m
+  assert.equal(E.cssFromEfforts(200, 150, 400, 360).pacePer100, 105);
+  assert.equal(E.cssFromEfforts(400, 360, 200, 150), null, "needs d2>d1");
+  assert.equal(E.estimateCSS([], "2026-06-10"), null, "no swims → null");
+  // a 1500 m swim in 27:00 → 1:48/100m sustained pace
+  const css = E.estimateCSS([{ sport: "swim", m: 1500, min: 27, date: "2026-06-05" }], "2026-06-10");
+  assert.ok(css && Math.abs(css.pacePer100 - 108) <= 1 && css.source === "sustained");
+  const p = E.swimPaces(108);
+  assert.ok(p.easy[0] > p.easy[1] && p.easy[1] > p.endurance && p.endurance > p.threshold && p.threshold > p.interval && p.interval > p.sprint, "paces monotonic");
+  assert.equal(p.threshold, 108, "threshold === CSS");
+  // volumeInRange tracks swim minutes
+  assert.equal(E.volumeInRange([{ sport: "swim", m: 1500, min: 30, date: "2026-06-05" }], "2026-06-01", "2026-06-10").swim, 30);
+});
+
 test("coachInsights fires categories with a why, stays quiet on no data, and carries actions", () => {
   assert.deepEqual(E.coachInsights({ doc: { logs: [], weeks: [], settings: SETTINGS }, todayISO: "2026-06-21" }), []);
 

@@ -933,6 +933,44 @@ export function vo2CalcCurve(logs, from, to) {
   return out;
 }
 
+/* ---- swim fitness: Critical Swim Speed (CSS), the swim analogue of VDOT ---- */
+/* CSS from two sustained efforts (e.g. 400 m & 200 m time-trials). d in metres,
+   t in seconds, d2>d1. Returns speed (m/s) + pace per 100 m (sec). */
+export function cssFromEfforts(d1, t1, d2, t2) {
+  if (!(d2 > d1) || !(t2 > t1)) return null;
+  const speed = (d2 - d1) / (t2 - t1);
+  return { speed, pacePer100: Math.round((100 * (t2 - t1)) / (d2 - d1)) };
+}
+/* Estimate CSS pace (sec/100 m) from recent swims: a hard sustained long swim
+   sits near CSS; with only short swims, nudge slightly slower. null if no swims. */
+export function estimateCSS(logs, asOfISO, windowDays = 56) {
+  const from = addDays(asOfISO, -windowDays);
+  const swims = (logs || []).filter(l => l.sport === "swim" && l.m >= 200 && l.min > 0 && l.date >= from && l.date <= asOfISO);
+  if (!swims.length) return null;
+  const pace = l => (l.min * 60) / (l.m / 100);
+  const longs = swims.filter(l => l.m >= 800);
+  const css = longs.length ? Math.min(...longs.map(pace)) : Math.min(...swims.map(pace)) * 1.06;
+  return { pacePer100: Math.round(css), speed: 100 / css, source: longs.length ? "sustained" : "short", n: swims.length };
+}
+/* Training paces (sec/100 m) from a CSS pace — Swim-Smooth-style zone offsets. */
+export function swimPaces(css) {
+  if (!(css > 0)) return null;
+  const p = f => Math.round(css * f);
+  return { easy: [p(1.18), p(1.10)], endurance: p(1.06), threshold: p(1), interval: p(0.94), sprint: p(0.88) };
+}
+/* Per-week CSS trend over a window (the swim fitness curve). */
+export function cssCurve(logs, from, to) {
+  const out = [];
+  const firstMon = addDays(from, -dayIndex(from));
+  for (let mon = firstMon; mon <= to; mon = addDays(mon, 7)) {
+    const wkEnd = addDays(mon, 6);
+    const asOf = wkEnd < to ? wkEnd : to;
+    const c = estimateCSS(logs, asOf);
+    if (c) out.push({ date: asOf, value: c.pacePer100 });
+  }
+  return out;
+}
+
 export function ema(values, alpha = 0.25) {
   const out = [];
   values.forEach((v, i) => out.push(i === 0 ? v : alpha * v + (1 - alpha) * out[i - 1]));
@@ -1558,6 +1596,7 @@ export function volumeInRange(logs, from, to) {
     bike: r.filter(l => l.sport === "bike").reduce((a, l) => a + (l.min || 0), 0),
     hike: r.filter(l => l.sport === "hike").reduce((a, l) => a + (l.min || 0), 0),
     gym: r.filter(l => l.sport === "gym").reduce((a, l) => a + (l.min || 0), 0),
+    swim: r.filter(l => l.sport === "swim").reduce((a, l) => a + (l.min || 0), 0),
   };
 }
 export function loadInRange(logs, bounds, from, to) {

@@ -15,6 +15,7 @@ export const PROGRESS_CARDS = [
   { id: "calories",    on: true },
   { id: "weight",      on: true },
   { id: "vo2",         on: true },
+  { id: "css",         on: true },
   { id: "pace",        on: true },
   { id: "coach",       on: true },
   { id: "bests",       on: true },

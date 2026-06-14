@@ -2594,9 +2594,9 @@ let ridgeSel = null;
 function ridgeDetail(vol) {
   if (ridgeSel == null || !vol[ridgeSel]) return "";
   const p = vol[ridgeSel];
-  const tot = p.run + p.bike + (p.hike || 0) + (p.gym || 0);
+  const tot = p.run + p.bike + (p.hike || 0) + (p.gym || 0) + (p.swim || 0);
   const parts = [];
-  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}${p.hike ? ` · hike ${fmtDur(p.hike)}` : ""}${p.gym ? ` · gym ${fmtDur(p.gym)}` : ""}` : "no activity logged");
+  parts.push(tot > 0 ? `<b>${fmtDur(tot)}</b> — run ${fmtDur(p.run)} · ride ${fmtDur(p.bike)}${p.swim ? ` · swim ${fmtDur(p.swim)}` : ""}${p.hike ? ` · hike ${fmtDur(p.hike)}` : ""}${p.gym ? ` · gym ${fmtDur(p.gym)}` : ""}` : "no activity logged");
   if (p.target) parts.push(`${Math.round(((p.run + p.bike) / p.target) * 100)} % of the ${fmtDur(p.target)} plan`);
   if (p.isDeload) parts.push(`<span style="color:var(--sand)">deload</span>`);
   const end = p.end || E.addDays(p.start, 6);
@@ -2630,7 +2630,7 @@ const CARD_LABEL = {
   volume: "Training volume", load: "Load & training load",
   calories: "Calories", weight: "Weight",
   pace: "Pace at easy HR", coach: "Coach summary", bests: "Personal bests",
-  vo2: "VO₂ max", balance: "Aerobic / anaerobic", perf: "Speed · climbing · distance",
+  vo2: "VO₂ max", css: "Critical swim speed", balance: "Aerobic / anaerobic", perf: "Speed · climbing · distance",
   paceVsRpe: "RPE & efficiency",
   consistency: "Consistency",
 };
@@ -2744,6 +2744,7 @@ function renderProgress() {
 
   const anyHike = vol.some(v => v.hike > 0);
   const anyGym = vol.some(v => v.gym > 0);
+  const anySwim = vol.some(v => v.swim > 0);
   const CARDS = {
     raceday: () => {
       const ev = doc.settings.goalEvent;
@@ -2807,9 +2808,9 @@ function renderProgress() {
       return `
       <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span>${tabs}</div>
       ${unit === "month"
-        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym"], colors: [SPORT_COLOR.bike, SPORT_COLOR.run, SPORT_COLOR.hike, SPORT_COLOR.gym], labelEvery: Math.max(1, Math.round(vol.length / 6)), fmtY: v => fmtDur(Math.round(v)) }))
-        : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel, colors: { run: SPORT_COLOR.run, bike: SPORT_COLOR.bike, hike: SPORT_COLOR.hike, gym: SPORT_COLOR.gym }, labelEvery: Math.max(1, Math.round(vol.length / 6)) }))}
-      <div class="legend2"><span><i style="background:${SPORT_COLOR.run}"></i>run</span><span><i style="background:${SPORT_COLOR.bike}"></i>ride</span>${anyHike ? `<span><i style="background:${SPORT_COLOR.hike}"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:${SPORT_COLOR.gym}"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
+        ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym", "swim"], colors: [SPORT_COLOR.bike, SPORT_COLOR.run, SPORT_COLOR.hike, SPORT_COLOR.gym, SPORT_COLOR.swim], labelEvery: Math.max(1, Math.round(vol.length / 6)), fmtY: v => fmtDur(Math.round(v)) }))
+        : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel, colors: { run: SPORT_COLOR.run, bike: SPORT_COLOR.bike, hike: SPORT_COLOR.hike, gym: SPORT_COLOR.gym, swim: SPORT_COLOR.swim }, labelEvery: Math.max(1, Math.round(vol.length / 6)) }))}
+      <div class="legend2"><span><i style="background:${SPORT_COLOR.run}"></i>run</span><span><i style="background:${SPORT_COLOR.bike}"></i>ride</span>${anySwim ? `<span><i style="background:${SPORT_COLOR.swim}"></i>swim</span>` : ""}${anyHike ? `<span><i style="background:${SPORT_COLOR.hike}"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:${SPORT_COLOR.gym}"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
       ${ridgeDetail(vol)}`;
     },
 
@@ -2940,20 +2941,35 @@ function renderProgress() {
                  : `<div class="callout">No VO₂ yet — do a hard sustained run (an all-out ~5 km or a 20-min effort) and log it; we'll estimate it from your pace.<br><button class="btn ghost mini" id="pg-vo2run" style="margin-top:9px">Propose a hard run →</button></div>`)
         : `<button class="btn ghost mini" id="pg-vo2">Add reading</button>`}`;
     },
+    css: () => {
+      if (!(doc.settings.activities?.swim || doc.settings.goal === "triathlon")) return "";
+      const cssNow = E.estimateCSS(doc.logs, win.to);
+      const cssPts = R((E.cssCurve(doc.logs, win.from, win.to) || []).map(c => ({ x: dnum(c.date), y: c.value, date: c.date })));
+      const paces = cssNow ? E.swimPaces(cssNow.pacePer100) : null;
+      return `
+      <div class="hd"><span class="eyebrow">Critical swim speed</span></div>
+      <div class="stat"><span class="midnum" style="color:var(--swim)">${cssNow ? E.fmtPace(cssNow.pacePer100) : "—"}</span><span class="unit">${cssNow ? "/100m · your swim threshold" : "add a few swims to estimate"}</span></div>
+      ${cssPts.length >= 2 ? wrap("css", C.lineChart(cssPts, { height: 104, axis: true, taps: true, invert: true, color: SPORT_COLOR.swim, fmtY: v => E.fmtPace(v), selected: lineSel.css, xLabels: [fmtShort(cssPts[0].date), fmtShort(cssPts[cssPts.length - 1].date)], xTicks: xTicksFor(cssPts) })) : ""}
+      ${cssPts.length >= 2 ? lineDetail("css", [{ points: cssPts }], p => `${E.fmtPace(p.y)} /100m`) : ""}
+      ${paces ? `<div class="callout">Training paces /100m — easy ${E.fmtPace(paces.easy[0])}–${E.fmtPace(paces.easy[1])} · endurance ${E.fmtPace(paces.endurance)} · threshold ${E.fmtPace(paces.threshold)} · interval ${E.fmtPace(paces.interval)}</div>`
+        : `<div class="callout">Log a few swims (or an all-out 400 m then 200 m time-trial) and we'll compute your Critical Swim Speed — the pace that sets your swim training zones.</div>`}`;
+    },
 
     perf: () => {
-      const type = cardToggle.perfType || "speed";          // speed | dist | climb
-      const sport = cardToggle.perfSport || "run";            // run | trail | bike | hike
-      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"]], sport);
-      const typeRow = `<div class="perftypes">${cardTabs("perfType", [["speed", "Speed"], ["dist", "Distance"], ["climb", "Climbing"]], type)}</div>`;
-      const sportLab = { run: "Run", trail: "Trail", bike: "Ride", hike: "Hike" }[sport];
+      const sport = cardToggle.perfSport || "run";            // run | trail | bike | hike | swim
+      const isSwim = sport === "swim";
+      const type = (() => { const t = cardToggle.perfType || "speed"; return isSwim && t === "climb" ? "speed" : t; })(); // swim has no climbing
+      const swimTab = doc.settings.activities?.swim || doc.settings.goal === "triathlon";
+      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(swimTab ? [["swim", "Swim"]] : []), ["hike", "Hike"]], sport);
+      const typeRow = `<div class="perftypes">${cardTabs("perfType", isSwim ? [["speed", "Speed"], ["dist", "Distance"]] : [["speed", "Speed"], ["dist", "Distance"], ["climb", "Climbing"]], type)}</div>`;
+      const sportLab = { run: "Run", trail: "Trail", bike: "Ride", hike: "Hike", swim: "Swim" }[sport];
       const col = SPORT_COLOR[sport];
-      const pace = sport !== "bike";                          // run/trail/hike → min/km, ride → km/h
-      const uLabel = pace ? "/km" : "km/h";
-      const mkSpeed = filter => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
-        .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
-      const mkKm = filter => R(doc.logs.filter(l => l.km > 0 && filter(l)).sort(byDate)
-        .map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id })));
+      const pace = sport !== "bike";                          // run/trail/hike/swim → pace, ride → km/h
+      const uLabel = isSwim ? "/100m" : pace ? "/km" : "km/h";
+      const mkSpeed = filter => R(doc.logs.filter(l => (isSwim ? l.m > 0 : l.km > 0) && l.min > 0 && filter(l)).sort(byDate)
+        .map(l => ({ x: dnum(l.date), y: isSwim ? -(l.min * 60 / (l.m / 100)) : pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
+      const mkKm = filter => R(doc.logs.filter(l => (isSwim ? l.m > 0 : l.km > 0) && filter(l)).sort(byDate)
+        .map(l => ({ x: dnum(l.date), y: isSwim ? l.m : l.km, date: l.date, id: l.id })));
       const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
       // Tap a legend word to isolate that one line (y-axis rescales); tap again to restore all.
       const sel = cardToggle.perfSeries;
@@ -2996,7 +3012,7 @@ function renderProgress() {
         ${avgLine(avgParts)}
         ${shown.some(s => s.points.length >= 2) ? wrap("perf", C.lineChart(null, { series: shown, axis: true, taps: true, avg: true, fmtY: pace ? (v => E.fmtPace(-v)) : (v => v.toFixed(0)), selected: lineSel.perf, xTicks: xTicksFor(flat), xLabels: xEndsFor(flat) })) : `<p class="row-sub">${empty}</p>`}
         ${ser.length ? (multi ? isoLegend(ser) : flatLegend(ser)) : ""}
-        ${lineDetail("perf", shown, p => pace ? `${E.fmtPace(-p.y)} /km` : `${p.y.toFixed(1)} km/h`)}`;
+        ${lineDetail("perf", shown, p => isSwim ? `${E.fmtPace(-p.y)} /100m` : pace ? `${E.fmtPace(-p.y)} /km` : `${p.y.toFixed(1)} km/h`)}`;
       }
 
       if (type === "climb") {
@@ -3039,10 +3055,10 @@ function renderProgress() {
       return `
       <div class="hd"><span class="eyebrow">${sportLab} distance</span>${sportTabs}</div>
       ${typeRow}
-      ${am != null ? avgLine([`${am.toFixed(1)} km average`, `${one.length} outing${one.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
+      ${am != null ? avgLine([isSwim ? `${Math.round(am)} m average` : `${am.toFixed(1)} km average`, `${one.length} outing${one.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
       ${one.length >= 2 ? wrap("perf", C.lineChart(null, { series: [{ points: one, color: col }], axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.perf, xTicks: xTicksFor(one), xLabels: xEndsFor(one) })) : `<p class="row-sub">Log ${sportLab.toLowerCase()} outings with distance to see them here.</p>`}
       <div class="legend2"><span><i style="background:${col}"></i>${sportLab}</span></div>
-      ${lineDetail("perf", [{ points: one }], p => `${p.y.toFixed(1)} km`)}`;
+      ${lineDetail("perf", [{ points: one }], p => isSwim ? `${Math.round(p.y)} m` : `${p.y.toFixed(1)} km`)}`;
     },
 
     balance: () => {
