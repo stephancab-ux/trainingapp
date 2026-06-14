@@ -376,7 +376,7 @@ function start() {
 }
 
 function renderFirstRun() {
-  const def = E.snapToMonday(todayISO());
+  const def = E.mondayOf(todayISO());
   document.body.insertAdjacentHTML("beforeend", `
     <div class="firstrun"><div class="wrap">
       <img class="fr-logo" src="./icons/logo-full.png" alt="Stephan Endurance — Plan. Perform. Progress.">
@@ -385,14 +385,14 @@ function renderFirstRun() {
         <div class="lab" style="margin-bottom:8px">Plan start</div>
         <div class="frow" style="border:none"><span class="l">Week 1 begins</span>
           <input type="date" id="fr-date" value="${def}"></div>
-        <p class="row-sub" style="margin-top:6px">Weeks run Monday–Sunday — your pick snaps to a Monday.</p>
+        <p class="row-sub" style="margin-top:6px">Weeks run Monday–Sunday. Defaults to <b>this week</b> so you can start today — pick a later date to begin fresh next Monday.</p>
       </div>
       <button class="btn" id="fr-go">Start week 1</button>
       <p class="row-sub">Pre-loaded with your Garmin history (weight, VO₂, recent activities). Everything is editable later.</p>
     </div></div>`);
   $("#fr-go").addEventListener("click", () => {
     const v = $("#fr-date").value || def;
-    doc = S.initDoc(E.snapToMonday(v), todayISO());
+    doc = S.initDoc(E.mondayOf(v), todayISO());
     S.save(doc);
     document.querySelector(".firstrun").remove();
     start();
@@ -1121,16 +1121,25 @@ function renderDiary() {
     hasDist ? stat(`${Math.round(sw.ascent).toLocaleString()} m`, "Elev gain") : "",
     stat(`${Math.round(sw.cal).toLocaleString()}`, "Calories"),
   ].filter(Boolean).join("");
+  const statCount = hasDist ? 4 : 2;
   const metricKey = gymish ? "min" : "km";
   const gpts = weeks.map(w => ({ x: dnum(w.start), y: w[metricKey], date: w.start }));
-  const sportTabs = `<span class="ctabs">${availSports.map(([sp, lab]) => `<button class="ctab ${diarySport === sp ? "on" : ""}" data-dsp="${sp}">${lab}</button>`).join("")}</span>`;
+  // one x-tick per month change (Apr / May / Jun)
+  const monthTicks = []; let lastM = "";
+  for (const w of weeks) { const m = w.start.slice(0, 7); if (m !== lastM) { monthTicks.push({ x: dnum(w.start), label: fmtDate(w.start, { month: "short" }) }); lastM = m; } }
+  // Strava-style sport pills (icon + label), active in the sport colour
+  const sportTabs = `<div class="dsptabs">${availSports.map(([sp, lab]) => {
+    const on = diarySport === sp;
+    return `<button class="dsptab ${on ? "on" : ""}" data-dsp="${sp}"${on ? ` style="color:${SPORT_COLOR[sp]};border-color:${SPORT_COLOR[sp]}"` : ""}><i>${ICONS[sp] || ICONS.other}</i>${lab}</button>`;
+  }).join("")}</div>`;
   const summaryCard = `
     <div class="card" style="padding:16px">
-      <div class="hd"><span class="eyebrow">${sel === N - 1 ? "This week" : "Week of " + fmtShort(sw.start)}</span>${sportTabs}</div>
-      <div class="actgrid" style="margin-top:12px">${stats}</div>
+      ${sportTabs}
+      <div class="eyebrow" style="margin:8px 2px 0">${sel === N - 1 ? "This week" : "Week of " + fmtShort(sw.start)}</div>
+      <div class="actgrid dstats" style="grid-template-columns:repeat(${statCount},1fr);margin-top:10px">${stats}</div>
       <div class="eyebrow" style="margin:16px 2px 4px">Past 12 weeks</div>
       ${gpts.some(p => p.y > 0)
-        ? `<div class="chartwrap" data-card="diary12">${C.lineChart(gpts, { axis: true, taps: true, color: SPORT_COLOR[diarySport] || SPORT_COLOR.other, selected: { si: 0, pi: sel }, fmtY: gymish ? (v => fmtDur(Math.round(v))) : (v => Math.round(v)), xTicks: xTicksFor(gpts) })}</div>`
+        ? `<div class="chartwrap" data-card="diary12">${C.lineChart(gpts, { axis: true, taps: true, color: SPORT_COLOR[diarySport] || SPORT_COLOR.other, selected: { si: 0, pi: sel }, fmtY: gymish ? (v => fmtDur(Math.round(v))) : (v => Math.round(v) + " km"), xTicks: monthTicks })}</div>`
         : `<p class="row-sub">No ${(SPORT_NAME[diarySport] || diarySport).toLowerCase()} logged in the last 12 weeks.</p>`}
     </div>`;
 
@@ -1548,8 +1557,12 @@ function openHistory() {
 function openCheckin(week) {
   if (checkinFor(week)) { toast("Already checked in"); return; }
   const completion = E.weekCompletion(week, doc.logs);
-  const state = { step: 1, weightKg: null, feel: null, hrv7d: null, sleep: null, chosenPct: null };
+  const state = { step: 1, weightKg: null, feel: null, hrv7d: null, sleep: null, chosenPct: null, grow: {} };
   const lastKg = doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : null;
+  const phC = E.paceHint(doc.logs, bounds(), 2, doc.settings.easyPace);
+  const ridesC = doc.logs.filter(l => l.sport === "bike" && l.km > 0 && l.min > 0).slice(-8);
+  const convC = { runPace: phC && phC.lo ? (phC.lo + phC.hi) / 2 / 60 : 5.5,
+                  rideKmh: ridesC.length ? ridesC.reduce((a, l) => a + l.km / (l.min / 60), 0) / ridesC.length : 25 };
 
   document.body.insertAdjacentHTML("beforeend", `<div class="checkin" id="checkin"><div class="wrap"></div></div>`);
   const el = $("#checkin");
@@ -1644,6 +1657,34 @@ function openCheckin(week) {
         <button class="btn ghost" id="ci-back">Back</button>`;
       el.querySelector("#ci-confirm").addEventListener("click", () => confirm2(rec, 0, nw));
       el.querySelector("#ci-back").addEventListener("click", () => go(3));
+      return;
+    }
+
+    // following your own targets — choose per sport to keep or grow +7%
+    if (doc.settings.planFollowsTargets) {
+      const bands = E.targetBands(week, doc.settings, convC);
+      const SPL = [["run", "Run"], ["bike", "Ride"], ["gym", "Gym"]].filter(([sp]) => bands[sp]);
+      const fmtT = (sp, v) => bands[sp].unit === "min" ? fmtDur(Math.round(v)) : v.toFixed(1) + " km";
+      el.querySelector(".wrap").innerHTML = head("Step 4 — next week. You're following your own targets.") + recap + `
+        <div class="card">
+          <div class="eyebrow" style="margin-bottom:8px">Keep or grow +7% per sport</div>
+          ${SPL.map(([sp, lab]) => `<div class="frow"><span class="l">${lab}<span>${fmtT(sp, bands[sp].target)} → ${fmtT(sp, bands[sp].target * 1.07)}</span></span>
+            <span class="unitseg" style="margin-left:auto"><button class="useg ${state.grow[sp] ? "" : "on"}" data-grow="${sp}" data-v="keep">Keep</button><button class="useg ${state.grow[sp] ? "on" : ""}" data-grow="${sp}" data-v="grow">+7%</button></span></div>`).join("")}
+        </div>
+        <button class="btn" id="ci-confirm">Lock in week ${nextNum}</button>
+        <button class="btn ghost" id="ci-back">Back</button>`;
+      el.querySelectorAll("[data-grow]").forEach(b => b.addEventListener("click", () => {
+        const sp = b.dataset.grow; state.grow[sp] = b.dataset.v === "grow";
+        el.querySelectorAll("[data-grow]").forEach(x => { if (x.dataset.grow === sp) x.classList.toggle("on", (x.dataset.v === "grow") === state.grow[sp]); });
+      }));
+      el.querySelector("#ci-back").addEventListener("click", () => go(3));
+      el.querySelector("#ci-confirm").addEventListener("click", () => {
+        for (const [sp] of SPL) if (state.grow[sp]) doc.settings.weeklyTargets[sp] = +(bands[sp].target * 1.07).toFixed(bands[sp].unit === "min" ? 0 : 2);
+        confirm2(rec, 0, build(0));
+        // re-flatten current + future weeks (incl. the new one) to the updated targets
+        E.restorePlan(doc, doc.settings); E.applyTargetsToPlan(doc, doc.settings, todayISO(), convC);
+        S.save(doc); render();
+      });
       return;
     }
 
@@ -2144,6 +2185,15 @@ function renderProgress() {
     return { x: dnum(l.date), y: vals.reduce((a, b) => a + b, 0) / vals.length, date: l.date };
   });
 
+  // ----- weekly targets (this week's distance/time vs a ±pct band) -----
+  const curWeek = currentWeek() || lastWeek();
+  const wkActual = E.weekSummary(doc.logs, B, E.mondayOf(t), t).bySport;
+  const phT = E.paceHint(doc.logs, B, 2, doc.settings.easyPace);
+  const runPaceT = phT && phT.lo ? (phT.lo + phT.hi) / 2 / 60 : 5.5;
+  const ridesT = doc.logs.filter(l => l.sport === "bike" && l.km > 0 && l.min > 0).slice(-8);
+  const rideKmhT = ridesT.length ? ridesT.reduce((a, l) => a + l.km / (l.min / 60), 0) / ridesT.length : 25;
+  const tBands = E.targetBands(curWeek, doc.settings, { runPace: runPaceT, rideKmh: rideKmhT });
+
   // ----- card renderers -----
   const wrap = (id, inner) => `<div class="chartwrap" data-card="${id}">${inner}</div>`;
   const tip = id => lineSel[id] ? "TAP AGAIN TO CLEAR" : "TAP A POINT";
@@ -2151,13 +2201,39 @@ function renderProgress() {
   const anyHike = vol.some(v => v.hike > 0);
   const anyGym = vol.some(v => v.gym > 0);
   const CARDS = {
-    volume: () => `
-      <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span><span class="eyebrow tapx">${ridgeSel == null ? "TAP A BAR" : "TAP AGAIN TO CLEAR"}</span></div>
+    volume: () => {
+      const view = cardToggle.volume || "targets";
+      const tabs = cardTabs("volume", [["targets", "Targets"], ["volume", "Volume"]], view);
+      if (view === "targets") {
+        const SPO = [["run", "Run"], ["bike", "Ride"], ["trail", "Trail"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
+        const rows = SPO.filter(([sp]) => tBands[sp]).map(([sp, lab]) => {
+          const b = tBands[sp], col = SPORT_COLOR[sp] || SPORT_COLOR.other;
+          const actual = b.unit === "min" ? (wkActual[sp]?.min || 0) : (wkActual[sp]?.km || 0);
+          const max = Math.max(b.hi, actual) * 1.08 || 1;
+          const optL = b.lo / max * 100, optR = b.hi / max * 100;
+          const over = actual > b.hi, inb = actual >= b.lo && actual <= b.hi;
+          const fmt = v => b.unit === "min" ? fmtDur(Math.round(v)) : v.toFixed(1) + " km";
+          return `<div class="lf-row">
+            <span class="lf-name"><i style="background:${col}"></i>${lab}</span>
+            <span class="lf-track"><i class="lf-fill ${over ? "over" : ""}" style="width:${Math.max(2, Math.min(100, actual / max * 100))}%;background:${col}"></i><i class="lf-opt" style="left:${optL}%;width:${Math.max(2, optR - optL)}%"></i></span>
+            <span class="lf-val ${inb ? "ok" : ""}">${fmt(actual)}<small>/ ${fmt(b.target)}</small></span>
+          </div>`;
+        }).join("");
+        return `
+        <div class="hd"><span class="eyebrow">Weekly targets</span>${tabs}</div>
+        ${rows
+          ? `<div class="lf">${rows}</div>
+             <div class="callout">This week's progress toward each goal (±${doc.settings.targetRangePct || 15}% band, in the activity's colour). Edit the goals in Settings → Training plan.</div>`
+          : `<p class="row-sub">Set weekly distance/time targets in Settings → Training plan to track your progress here.</p>`}`;
+      }
+      return `
+      <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span>${tabs}</div>
       ${unit === "month"
         ? wrap("volume", C.stackedBars(vol, { keys: ["bike", "run", "hike", "gym"], colors: [SPORT_COLOR.bike, SPORT_COLOR.run, SPORT_COLOR.hike, SPORT_COLOR.gym], labelEvery: 1, fmtY: v => fmtDur(Math.round(v)) }))
         : wrap("volume", C.ridgeChart(vol, { selected: ridgeSel, colors: { run: SPORT_COLOR.run, bike: SPORT_COLOR.bike, hike: SPORT_COLOR.hike, gym: SPORT_COLOR.gym } }))}
       <div class="legend2"><span><i style="background:${SPORT_COLOR.run}"></i>run</span><span><i style="background:${SPORT_COLOR.bike}"></i>ride</span>${anyHike ? `<span><i style="background:${SPORT_COLOR.hike}"></i>hike</span>` : ""}${anyGym ? `<span><i style="background:${SPORT_COLOR.gym}"></i>gym</span>` : ""}<span><i style="background:var(--sand);height:3px;border-radius:1px;width:12px;vertical-align:2px"></i>target</span></div>
-      ${ridgeDetail(vol)}`,
+      ${ridgeDetail(vol)}`;
+    },
 
     load: () => {
       const view = cardToggle.load || "trend";
@@ -2750,6 +2826,17 @@ function renderSettings() {
   const ghBtn = (grp, title, summary) => `<button class="gh ghtap" data-grp="${grp}"><span>${title}</span><span class="ghx"><span class="ghsum">${summary}</span><span class="chev">${sOpen(grp) ? "⌄" : "›"}</span></span></button>`;
   const equipOwned = Object.keys(W.EQUIPMENT_LABELS).filter(k => W.HOME_EQUIPMENT.includes(k) && st.equipment[k]).length;
   const workoutsOn = WORKOUT_TOGGLES.filter(([k]) => st.allowedTypes[k] !== false).length;
+  // weekly target conversion context (run pace / ride speed) + effective bands
+  const phS = E.paceHint(doc.logs, b, 2, st.easyPace);
+  const runPaceS = phS && phS.lo ? (phS.lo + phS.hi) / 2 / 60 : 5.5;
+  const ridesS = doc.logs.filter(l => l.sport === "bike" && l.km > 0 && l.min > 0).slice(-8);
+  const rideKmhS = ridesS.length ? ridesS.reduce((a, l) => a + l.km / (l.min / 60), 0) / ridesS.length : 25;
+  const convS = { runPace: runPaceS, rideKmh: rideKmhS };
+  const tBandsS = E.targetBands(currentWeek() || lastWeek(), st, convS);
+  const reapplyTargets = () => { if (st.planFollowsTargets) { E.restorePlan(doc, st); E.applyTargetsToPlan(doc, st, todayISO(), convS); } };
+  const TGT_SPORTS = [["run", "Run", "km"], ["bike", "Ride", "km"], ["trail", "Trail", "km"], ["hike", "Hike", "km"], ["gym", "Gym", "min"]];
+  const tgtVal = (sp, unit) => { const ov = st.weeklyTargets[sp]; const shown = ov != null ? ov : (tBandsS[sp] ? tBandsS[sp].target : null); return shown == null ? "—" : (unit === "min" ? fmtDur(Math.round(shown)) : shown.toFixed(1) + " km"); };
+  const targetRows = TGT_SPORTS.map(([sp, lab, unit]) => `<button class="srow" data-tgt="${sp}" data-tunit="${unit}"><span class="l">${lab} target<span>${st.weeklyTargets[sp] != null ? "your target" : (tBandsS[sp] ? "auto from plan" : "tap to set")}</span></span><span class="v ${st.weeklyTargets[sp] != null ? "" : "add"}">${tgtVal(sp, unit)}</span><span class="chev">›</span></button>`).join("");
 
   page.innerHTML = `
     <h1 class="page">Settings</h1>
@@ -2778,6 +2865,10 @@ function renderSettings() {
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>applies from the next generated week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
+      <div class="gh" style="margin:12px 4px 4px">Weekly targets</div>
+      ${targetRows}
+      <button class="srow" id="st-tgtrange"><span class="l">Target range<span>band around each goal</span></span><span class="v">±${st.targetRangePct || 15}%</span><span class="chev">›</span></button>
+      <button class="srow tog" id="st-followtargets"><span class="l">Follow my targets<span>${st.planFollowsTargets ? "plan set to your targets — tap to undo" : "rewrite the plan's minutes to hit your distances"}</span></span><span class="switch ${st.planFollowsTargets ? "on" : ""}"></span></button>
     </div></div>
     <div class="group ${sOpen("workouts") ? "" : "collapsed"}">${ghBtn("workouts", "Workouts allowed", `${workoutsOn}/${WORKOUT_TOGGLES.length} on`)}<div class="scard">
       ${WORKOUT_TOGGLES.map(([key, label, sub]) => `
@@ -2836,6 +2927,23 @@ function renderSettings() {
     value: st.weeklyCalorieTarget ?? "", min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
     onSave: v => { st.weeklyCalorieTarget = v ? Math.round(v) : null; },
   }));
+  page.querySelectorAll("[data-tgt]").forEach(btn => btn.addEventListener("click", () => {
+    const sp = btn.dataset.tgt, unit = btn.dataset.tunit;
+    openValueSheet({
+      title: `${SPORT_NAME[sp] || sp} weekly target`, label: "Per week", suffix: unit, step: unit === "min" ? "5" : "1",
+      value: st.weeklyTargets[sp] ?? "", min: 0, max: unit === "min" ? 2000 : 1000, allowClear: st.weeklyTargets[sp] != null,
+      onSave: v => { st.weeklyTargets[sp] = v ? +v : null; reapplyTargets(); },
+    });
+  }));
+  $("#st-tgtrange").addEventListener("click", () => openValueSheet({
+    title: "Target range", label: "Band", suffix: "%", step: "1", value: st.targetRangePct || 15, min: 5, max: 40,
+    onSave: v => { st.targetRangePct = Math.round(v); reapplyTargets(); },
+  }));
+  $("#st-followtargets").addEventListener("click", () => {
+    const wasFollowing = st.planFollowsTargets;
+    persist(() => { if (wasFollowing) E.restorePlan(doc, st); else E.applyTargetsToPlan(doc, st, todayISO(), convS); });
+    toast(wasFollowing ? "Plan restored" : "Plan now follows your targets");
+  });
   $("#st-gr").addEventListener("click", openGrowthSheet);
   $("#st-dl").addEventListener("click", () => openValueSheet({
     title: "Deload cadence", label: "Every Nth week", value: st.deloadEvery, min: 2, max: 8,
@@ -3178,12 +3286,37 @@ function importJSON(file) {
 const csvLog = r => ({ id: S.uid(), date: r.date, time: r.time, sport: r.sport, min: r.min,
                        km: r.km ?? undefined, avgHR: r.avgHR ?? undefined, maxHR: r.maxHR ?? undefined,
                        ascent: r.ascent ?? undefined, descent: r.descent ?? undefined,
-                       calories: r.calories ?? undefined, note: r.note || undefined, source: "csv" });
+                       calories: r.calories ?? undefined, aerobicTE: r.aerobicTE ?? undefined,
+                       note: r.note || undefined, source: "csv" });
+
+/* When a Garmin import has activity types we don't recognise (they'd be "Other"),
+   ask once per type whether it's gym, remember it, and re-map the rows. */
+function openGymClassifySheet(types, fresh, onDone) {
+  const state = {}; types.forEach(t => { state[t] = true; }); // default to gym
+  const sheet = openSheet(`
+    <div class="sh-title">Unrecognised activities</div>
+    <div class="sh-sub">These Garmin types aren't run / ride / hike. Which are gym? Remembered for next time.</div>
+    ${types.map(t => `<div class="frow"><span class="l">${esc(t)}</span>
+      <span class="unitseg" style="margin-left:auto"><button class="useg on" data-gt="${esc(t)}" data-v="gym">Gym</button><button class="useg" data-gt="${esc(t)}" data-v="other">Other</button></span></div>`).join("")}
+    <button class="btn" id="gc-done">Continue</button>`);
+  sheet.querySelectorAll("[data-gt]").forEach(b => b.addEventListener("click", () => {
+    const t = b.dataset.gt; state[t] = b.dataset.v === "gym";
+    sheet.querySelectorAll("[data-gt]").forEach(x => { if (x.dataset.gt === t) x.classList.toggle("on", x.dataset.v === b.dataset.v); });
+  }));
+  sheet.querySelector("#gc-done").addEventListener("click", () => {
+    closeOverlay();
+    doc.settings.importSportMap = doc.settings.importSportMap || {};
+    types.forEach(t => { doc.settings.importSportMap[t] = state[t] ? "gym" : "other"; });
+    S.save(doc);
+    for (const r of fresh) if (r.activityType && state[r.activityType]) { r.sport = "gym"; r.km = undefined; r.ascent = undefined; r.descent = undefined; }
+    onDone();
+  });
+}
 
 function importCSV(file) {
   if (!file) return;
   file.text().then(text => {
-    const parsed = E.parseGarminCSV(text);
+    const parsed = E.parseGarminCSV(text, doc.settings.importSportMap || {});
     if (parsed.error) { openModal("Can't import", esc(parsed.error), [{ label: "OK", cls: "ghost" }]); return; }
     const { fresh, enrich, unchanged } = E.classifyImport(parsed.rows, doc.logs);
     const c = parsed.counts;
@@ -3198,16 +3331,23 @@ function importCSV(file) {
       toast(`Added ${fresh.length}${enrich.length ? ` · updated ${enrich.length}` : ""}`);
     };
 
-    if (!fresh.length && !enrich.length) {
-      toast(unchanged.length ? `Already up to date (${unchanged.length} known)` : "Nothing to import");
-      $("#st-file-csv").value = ""; return;
-    }
-    const parts = [];
-    if (fresh.length) parts.push(`add <b>${fresh.length}</b> new ${fresh.length === 1 ? "activity" : "activities"}`);
-    if (enrich.length) parts.push(`fill in missing data (calories, HR, ascent…) on <b>${enrich.length}</b> existing`);
-    openModal("Import Garmin CSV",
-      `This will ${parts.join(" and ")}${unchanged.length ? `. ${unchanged.length} are already complete` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.`,
-      [{ label: "Import", fn: finish }, { label: "Cancel", cls: "ghost" }]);
+    const confirmStep = () => {
+      if (!fresh.length && !enrich.length) {
+        toast(unchanged.length ? `Already up to date (${unchanged.length} known)` : "Nothing to import"); return;
+      }
+      const parts = [];
+      if (fresh.length) parts.push(`add <b>${fresh.length}</b> new ${fresh.length === 1 ? "activity" : "activities"}`);
+      if (enrich.length) parts.push(`fill in missing data (calories, HR, ascent…) on <b>${enrich.length}</b> existing`);
+      openModal("Import Garmin CSV",
+        `This will ${parts.join(" and ")}${unchanged.length ? `. ${unchanged.length} are already complete` : ""}${c.bad ? ` · ${c.bad} unreadable` : ""}.`,
+        [{ label: "Import", fn: finish }, { label: "Cancel", cls: "ghost" }]);
+    };
+
+    // ask once per unrecognised Garmin type whether it's gym (remembered)
+    const overrides = doc.settings.importSportMap || {};
+    const unknownTypes = [...new Set(fresh.filter(r => r.sport === "other" && r.activityType && overrides[r.activityType] == null).map(r => r.activityType))];
+    if (unknownTypes.length) openGymClassifySheet(unknownTypes, fresh, confirmStep);
+    else confirmStep();
   });
   $("#st-file-csv").value = "";
 }

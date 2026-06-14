@@ -259,7 +259,7 @@ svg text{font-family:inherit}
 .swipe-del{position:absolute;top:0;right:0;height:100%;width:88px;border:none;background:var(--bad);color:#fff;font-weight:750;font-size:14px}
 .swipe-content{position:relative;z-index:1;background:var(--card);transition:transform .2s;touch-action:pan-y}
 .toast .undo{margin-left:12px;color:var(--cy);font-weight:800;background:none;border:none;font-size:14px}
-.stickybar{position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line)}
+.stickybar{position:sticky;top:env(safe-area-inset-top);z-index:20;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line)}
 
 [hidden]{display:none!important}
 
@@ -375,8 +375,10 @@ svg text{font-family:inherit}
 .lf-track{position:relative;flex:1;height:12px;background:#16202b;border-radius:6px}
 .lf-opt{position:absolute;top:-2px;bottom:-2px;background:rgba(255,255,255,.08);border-left:2px solid rgba(255,255,255,.55);border-right:2px solid rgba(255,255,255,.55);border-radius:2px;pointer-events:none}
 .lf-fill{position:absolute;top:0;bottom:0;left:0;border-radius:6px;opacity:.92}
-.lf-val{flex:none;width:38px;text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--mut)}
+.lf-fill.over{opacity:1;filter:brightness(1.45) saturate(1.1)}
+.lf-val{flex:none;width:58px;text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
 .lf-val.ok{color:var(--cy)}
+.lf-val small{display:block;font-size:9.5px;color:var(--mut);font-weight:600}
 .vo2top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .vo2cat{flex:none;text-align:center;width:116px}
 .vo2cat-lab{font-size:14px;font-weight:800;line-height:1.05;margin-top:-4px}
@@ -400,6 +402,12 @@ svg text{font-family:inherit}
 .actcell{background:#121b24;border:1px solid var(--line);border-radius:11px;padding:9px 8px;text-align:center}
 .actcell b{display:block;font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
 .actcell span{font-size:10px;color:var(--mut);display:block;margin-top:2px}
+.dstats .actcell{padding:9px 5px}
+.dstats .actcell b{font-size:14px}
+.dsptabs{display:flex;gap:8px;flex-wrap:wrap}
+.dsptab{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line);color:var(--sub);font-size:13px;font-weight:700}
+.dsptab i{display:inline-flex}
+.dsptab i svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .catbars{display:flex;flex-direction:column;gap:7px;margin-top:4px}
 .catbar{display:flex;align-items:center;gap:9px}
 .catbar .cl{flex:0 0 84px;font-size:12.5px;color:var(--sub);font-weight:600;text-transform:capitalize}
