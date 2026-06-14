@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as E from "./engine.js";
 import * as F from "./fit.js";
+import * as S from "./store.js";
 
 const LAYOUT = { mon: "run", tue: "bike", wed: "run", thu: "bike", fri: "run", sat: "bike-long", sun: "rest" };
 const SETTINGS = {
@@ -133,8 +134,9 @@ test("quality slot rotates intervals → tempo → hills; intervals still progre
   assert.equal(E.qualityTemplateFor(mk(3, "run"), "run"), "runQ1");  // back to intervals, < 4 done
   assert.equal(E.qualityTemplateFor(mk(6, "run"), "run"), "runQ2");  // interval slot upgraded
   assert.equal(E.qualityTemplateFor([], "bike"), "bikeQ1");
-  assert.equal(E.qualityTemplateFor(mk(1, "bike"), "bike"), "bikeClimb");
-  assert.equal(E.qualityTemplateFor(mk(4, "bike"), "bike"), "bikeQ2");
+  assert.equal(E.qualityTemplateFor(mk(1, "bike"), "bike"), "bikeSprint"); // bike cycle: intervals→sprint→climb
+  assert.equal(E.qualityTemplateFor(mk(2, "bike"), "bike"), "bikeClimb");
+  assert.equal(E.qualityTemplateFor(mk(6, "bike"), "bike"), "bikeQ2");     // interval slot upgraded
 });
 
 test("unlocked quality lands on Wednesday run / Thursday ride", () => {
@@ -477,7 +479,7 @@ test("rotation respects allowed families; null when none allowed", () => {
   // run cycle would be intervals→tempo→hills; with only intervals allowed it stays intervals
   assert.equal(E.qualityTemplateFor([], "run", noHills), "runQ1");
   assert.equal(E.qualityTemplateFor([{ sessions: [{ sport: "run", kind: "quality" }] }], "run", noHills), "runQ1");
-  const noBike = { bikeIntervals: false, bikeClimb: false };
+  const noBike = { bikeIntervals: false, bikeSprint: false, bikeClimb: false };
   assert.equal(E.qualityTemplateFor([], "bike", noBike), null);
 });
 
@@ -1014,4 +1016,59 @@ test("suggestSession adapts to recent history with sane fallbacks", () => {
   // empty history → defaults
   assert.equal(E.suggestSession([], "run", "easy", {}).targetMin, 35);
   assert.equal(E.suggestSession([], "bike", "long", {}).targetMin, 120);
+});
+
+/* ---------- v1.7.5: VO₂ VDOT, workout recommendation, recommended goals ---------- */
+
+test("estimateVo2FromRuns: VDOT from the best recent run, else null", () => {
+  const logs = [{ date: "2026-06-10", sport: "run", km: 5, min: 20 }];
+  const v = E.estimateVo2FromRuns(logs, "2026-06-12");
+  assert.ok(v >= 45 && v <= 55, `5k/20min ≈ ~50 (got ${v})`);
+  // a slower run doesn't beat the best
+  const logs2 = logs.concat([{ date: "2026-06-11", sport: "run", km: 5, min: 30 }]);
+  assert.equal(E.estimateVo2FromRuns(logs2, "2026-06-12"), v, "fastest run wins");
+  // out of window / non-run → null
+  assert.equal(E.estimateVo2FromRuns([{ date: "2020-01-01", sport: "run", km: 5, min: 20 }], "2026-06-12"), null);
+  assert.equal(E.estimateVo2FromRuns([{ date: "2026-06-10", sport: "bike", km: 20, min: 40 }], "2026-06-12"), null);
+});
+
+test("recommendWorkout: recovery-first, else fills the load-focus gap", () => {
+  const today = "2026-06-12";
+  const base = { settings: SETTINGS, weeks: [], checkins: [] };
+  // a hard session today → easy regardless of any gap
+  const tired = { ...base, logs: [{ date: today, sport: "run", type: "intervals", min: 50, avgHR: 175 }] };
+  assert.equal(E.recommendWorkout(tired, "run", today).kind, "easy");
+  // only easy aerobic this week → anaerobic shortage → intervals
+  const easyOnly = { ...base, logs: [
+    { date: "2026-06-08", sport: "run", min: 40, avgHR: 120 },
+    { date: "2026-06-09", sport: "bike", min: 60, avgHR: 120 },
+    { date: "2026-06-10", sport: "run", min: 40, avgHR: 122 },
+    { date: "2026-06-11", sport: "bike", min: 70, avgHR: 121 },
+  ] };
+  assert.equal(E.recommendWorkout(easyOnly, "run", today).kind, "intervals");
+  // nothing logged → build the base with a long effort
+  assert.equal(E.recommendWorkout({ ...base, logs: [] }, "run", today).kind, "long");
+  // hike / gym unsupported
+  assert.equal(E.recommendWorkout(base, "hike", today), null);
+});
+
+test("recommendBurnGoal / recommendClimbTarget / recommendGrowthRate suggest, with nulls", () => {
+  const fit = { heightCm: 180, age: 40, sex: "male", targetWeightKg: 80 };
+  const r = E.recommendBurnGoal({ settings: fit, weighIns: [{ date: "2026-06-10", kg: 88 }] });
+  assert.ok(r && r.burn > 0, "positive burn");
+  assert.ok(r.bmi > 26 && r.bmi < 28, `BMI ~27 (got ${r && r.bmi})`);
+  assert.equal(E.recommendBurnGoal({ settings: fit, weighIns: [{ kg: 78 }] }).burn, null, "at goal → no burn");
+  assert.equal(E.recommendBurnGoal({ settings: { age: 40, sex: "male", targetWeightKg: 80 }, weighIns: [{ kg: 88 }] }), null, "missing height → null");
+
+  const rides = [600, 800, 700].map((a, i) => ({ sport: "bike", ascent: a, date: `2026-06-0${i + 1}` }));
+  assert.equal(E.recommendClimbTarget({ logs: rides }), 700);
+  assert.equal(E.recommendClimbTarget({ logs: rides.slice(0, 1) }), null);
+});
+
+test("initDoc starts empty (no demo data) but with a generated week 1", () => {
+  const d = S.initDoc("2026-06-15", "2026-06-12");
+  assert.deepEqual(d.logs, []);
+  assert.deepEqual(d.weighIns, []);
+  assert.deepEqual(d.vo2History, []);
+  assert.equal(d.weeks.length, 1);
 });

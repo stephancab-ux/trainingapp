@@ -11,6 +11,7 @@ export const QUALITY_TEMPLATES = {
   bikeQ1:    { sport: "bike", family: "intervals", name: "Sweet spot",      zone: 3, label: "3 × 8 min @ Z3–Z4 sweet spot · 5 min easy between", set: { type: "intervals", reps: 3, workSec: 480, workZone: 3, restSec: 300, restZone: 2 } },
   bikeQ2:    { sport: "bike", family: "intervals", name: "Sweet spot",      zone: 3, label: "2 × 12 min @ Z3–Z4 sweet spot · 5 min easy between",set: { type: "intervals", reps: 2, workSec: 720, workZone: 3, restSec: 300, restZone: 2 } },
   bikeClimb: { sport: "bike", family: "climb",     name: "Climbing ride",   zone: 3, label: "Long climb @ Z3 — seated, steady; repeat to fill the session", set: { type: "block", blockMin: 30, zone: 3 } },
+  bikeSprint:{ sport: "bike", family: "sprint",    name: "Sprint ride",     zone: 5, label: "6 × 30 s all-out @ Z5 · 4 min easy spin between",     set: { type: "intervals", reps: 6, workSec: 30,  workZone: 5, restSec: 240, restZone: 1 } },
 };
 export const QUALITY_WARMUP = "15 min warm-up / 10 min cool-down inside the planned time";
 
@@ -453,11 +454,11 @@ export function qualityState(history) {
    itself still progresses Q1 → Q2 after 4 planned quality sessions (§7.5). */
 const QUALITY_ROTATION = {
   run:  ["intervals", "tempo", "hills"],
-  bike: ["intervals", "climb"],
+  bike: ["intervals", "sprint", "climb"],
 };
 
 const FAMILY_KEY = { run: { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" },
-                     bike: { intervals: "bikeIntervals", climb: "bikeClimb" } };
+                     bike: { intervals: "bikeIntervals", sprint: "bikeSprint", climb: "bikeClimb" } };
 
 /* Allowed-family aware (v1.2). `allowed` is settings.allowedFamilies or null
    (= everything). Returns null when no family is allowed for the sport. */
@@ -471,6 +472,7 @@ export function qualityTemplateFor(weeks, sport, allowed = null) {
   if (family === "tempo") return "runTempo";
   if (family === "hills") return "runHills";
   if (family === "climb") return "bikeClimb";
+  if (family === "sprint") return "bikeSprint";
   return sport === "run" ? (count >= 4 ? "runQ2" : "runQ1")
                          : (count >= 4 ? "bikeQ2" : "bikeQ1");
 }
@@ -747,6 +749,36 @@ export function vo2AtTargetWeight(vo2, weightKg, targetKg) {
   return Math.round((vo2 * weightKg / targetKg) * 10) / 10;
 }
 
+/* VO₂max estimate from your best recent run (Daniels' VDOT, running only).
+   Returns the highest VDOT among qualifying runs in the window, or null. */
+export function estimateVo2FromRuns(logs, asOfISO, windowDays = 56, minKm = 1.5) {
+  const from = addDays(asOfISO, -windowDays);
+  let best = null;
+  for (const l of logs) {
+    if (!isRunType(l) || !(l.km >= minKm) || !(l.min > 0)) continue;
+    if (l.date < from || l.date > asOfISO) continue;
+    const v = (l.km * 1000) / l.min; // metres per minute
+    const vo2 = -4.60 + 0.182258 * v + 0.000104 * v * v;
+    const pct = 0.8 + 0.1894393 * Math.exp(-0.012778 * l.min) + 0.2989558 * Math.exp(-0.1932605 * l.min);
+    const vdot = vo2 / pct;
+    if (vdot > 0 && (best == null || vdot > best)) best = vdot;
+  }
+  return best == null ? null : Math.round(best * 10) / 10;
+}
+
+/* Per-week rolling-best VDOT over a window — the VO₂ trend in "calculated" mode. */
+export function vo2CalcCurve(logs, from, to) {
+  const out = [];
+  const firstMon = addDays(from, -dayIndex(from));
+  for (let mon = firstMon; mon <= to; mon = addDays(mon, 7)) {
+    const wkEnd = addDays(mon, 6);
+    const asOf = wkEnd < to ? wkEnd : to;
+    const v = estimateVo2FromRuns(logs, asOf);
+    if (v != null) out.push({ date: asOf, value: v });
+  }
+  return out;
+}
+
 export function ema(values, alpha = 0.25) {
   const out = [];
   values.forEach((v, i) => out.push(i === 0 ? v : alpha * v + (1 - alpha) * out[i - 1]));
@@ -1018,6 +1050,47 @@ export function climbTargetAscent({ logs = [], weekNum = 1, settings = {} }) {
   const recent = logs.filter(l => l.sport === "bike" && l.ascent > 0).slice(-8).map(l => l.ascent);
   if (recent.length) target = Math.max(target, Math.max(...recent) * 0.8);
   return Math.round(target / 50) * 50;
+}
+
+/* ---- recommended-but-editable goals (Targets page): suggest, never auto-fill ---- */
+
+/* Weekly exercise-burn target to lose weight toward your goal (Mifflin-St Jeor).
+   Returns { burn, bmi, reason } or null when inputs are missing. */
+export function recommendBurnGoal(doc, lossKgPerWeek = 0.5) {
+  const s = doc.settings || {};
+  const wi = doc.weighIns || [];
+  const kg = wi.length ? wi[wi.length - 1].kg : null;
+  const { heightCm: cm, age, sex, targetWeightKg: target } = s;
+  if (!kg || !cm || !age || !sex || !target) return null;
+  const bmi = Math.round((kg / Math.pow(cm / 100, 2)) * 10) / 10;
+  if (kg <= target) return { burn: null, bmi, reason: "You're at or below your target weight — maintain with your current routine." };
+  const bmr = 10 * kg + 6.25 * cm - 5 * age + (sex === "female" ? -161 : 5);
+  const maxDailyDeficit = bmr * 0.4; // keep intake ≥ BMR (maintenance ≈ BMR × 1.4)
+  const dailyDeficit = Math.min((lossKgPerWeek * 7700) / 7, maxDailyDeficit);
+  const burn = Math.round((dailyDeficit * 7 * 0.5) / 100) * 100; // ~half from training
+  return { burn, bmi, reason: `To lose ~${lossKgPerWeek} kg/week toward ${target} kg — about half from training, half from diet.` };
+}
+
+/* Climb target (m of ascent) from recent rides — median of the last ~6, or null. */
+export function recommendClimbTarget(doc) {
+  const asc = (doc.logs || []).filter(l => l.sport === "bike" && l.ascent > 0).slice(-6).map(l => l.ascent);
+  if (asc.length < 2) return null;
+  const s = [...asc].sort((a, b) => a - b);
+  return Math.round(s[Math.floor(s.length / 2)] / 50) * 50;
+}
+
+/* Weekly growth % from recent consistency + last check-in feel. Returns { rate, reason } or null. */
+export function recommendGrowthRate(doc) {
+  const logs = doc.logs || [], checkins = doc.checkins || [];
+  const recent = (doc.weeks || []).slice(-4).filter(w => loggedMinutes(w, logs) > 0).slice(-3);
+  if (!recent.length) return null;
+  const avgC = recent.reduce((a, w) => a + weekCompletion(w, logs), 0) / recent.length;
+  const lastFeel = checkins.length ? checkins[checkins.length - 1].feel : null;
+  let rate, reason;
+  if (avgC >= 0.9 && (lastFeel == null || lastFeel >= 4)) { rate = 0.08; reason = "You've hit your weeks and felt strong — you can push growth."; }
+  else if (avgC >= 0.75) { rate = 0.05; reason = "Solid consistency — a moderate build fits."; }
+  else { rate = 0.03; reason = "Recent weeks were patchy — grow gently."; }
+  return { rate, reason };
 }
 
 /* ---- personal bests, auto from logs merged with manual entries ---- */
@@ -1518,6 +1591,38 @@ export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1
   }
   const easyB = lastN(l => l.sport === "bike" && (!l.type || l.type === "easy") && (l.min || 0) >= 30, 8);
   return { targetMin: round5(med(easyB) || 60), zone: 2, note: "Easy aerobic spin." };
+}
+
+/* Recommend a one-off workout type from the last 7 days (run/trail/ride only).
+   Recovery first: under fatigue, recommend easy regardless of any gap. Returns
+   { kind: "easy"|"tempo"|"intervals"|"long", reason } or null for hike/gym. */
+export function recommendWorkout(doc, sport, todayISO) {
+  if (sport !== "run" && sport !== "trail" && sport !== "bike") return null;
+  const bounds = zoneBounds(doc.settings);
+  const logs = doc.logs || [];
+  const from = addDays(todayISO, -6), yest = addDays(todayISO, -1);
+  const tl = trainingLoad({ logs, bounds, todayISO });
+  const hardRecent = logs.some(l => (l.date === todayISO || l.date === yest) &&
+    ["intervals", "hills", "tempo", "long", "climb"].includes(l.type));
+  // only trust the acute:chronic ratio once there's a real chronic base
+  if ((tl.status === "overreaching" || tl.status === "high-risk") && tl.chronic >= 80)
+    return { kind: "easy", reason: "Your training load is running high — keep it easy today to absorb it." };
+  if (hardRecent)
+    return { kind: "easy", reason: "You went hard in the last day — an easy session lets it settle." };
+  const lf = loadFocus(logs, bounds, from, todayISO);
+  if (lf.focus === "Anaerobic shortage")
+    return { kind: "intervals", reason: "Light on intensity this week — intervals add the punch you're missing." };
+  if (lf.focus === "Aerobic shortage")
+    return { kind: "tempo", reason: "Short on tempo work — a steady Z3 effort fills the high-aerobic gap." };
+  if (lf.focus === "Too much anaerobic")
+    return { kind: "easy", reason: "Plenty of hard work banked — go easy and aerobic to balance it." };
+  const ws = weekSummary(logs, bounds, from, todayISO);
+  const ride = sport === "bike";
+  const vol = ride ? (ws.bySport.bike?.min || 0)
+                   : ((ws.bySport.run?.min || 0) + (ws.bySport.trail?.min || 0));
+  if (vol < (ride ? 120 : 80))
+    return { kind: "long", reason: "Your easy volume is low this week — a longer steady effort builds the base." };
+  return { kind: "easy", reason: "You're well balanced — an easy aerobic session keeps it ticking over." };
 }
 
 /* ---- the offline AI coach: deterministic, ranked, explained ---- */
