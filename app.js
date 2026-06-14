@@ -2792,6 +2792,29 @@ function renderProgress() {
       const days = Math.max(0, Math.round((E.parseISO(ev.date) - E.parseISO(todayISO())) / 864e5));
       const wo = E.weeksToEvent(doc.settings, todayISO());
       const phase = wo === 0 ? "Race week" : wo <= 2 ? "Taper" : "Build";
+      const startWk = doc.weeks[0] ? doc.weeks[0].startDate : todayISO();
+      const totWk = (E.weeksToEvent(doc.settings, startWk) || 0) + 1;
+      const curWk = (currentWeek() || lastWeek())?.weekNum || 1;
+      const rdcol = pct => pct >= 0.8 ? "#41c98b" : pct >= 0.55 ? "#e6a13c" : "#ff7a66";
+      if (ev.kind === "triathlon") {
+        const tr = E.triReadiness(doc, todayISO()) || { legs: { swim: { ready: 0, longest: 0 }, bike: { ready: 0, longest: 0 }, run: { ready: 0, longest: 0 } }, overall: 0, weakest: "swim" };
+        const overall = Math.round(tr.overall * 100);
+        const triLab = (TRI_DIST.find(([k]) => k === ev.tri) || [])[1] || "Triathlon";
+        const legRow = (k, lab) => { const lg = tr.legs[k], target = ev.legs[k].m;
+          const txt = k === "swim" ? `${lg.longest} / ${target} m` : `${(lg.longest / 1000).toFixed(1)} / ${(target / 1000).toFixed(1)} km`;
+          return `<div class="rd-line"><span>${lab} ${txt}</span><b style="color:${rdcol(lg.ready)}">${Math.round(lg.ready * 100)}%</b></div>`; };
+        return `<div class="raceday">
+          <div class="rd-ring">${C.progressRing({ pct: overall / 100, color: rdcol(tr.overall) })}
+            <div class="rd-center"><span class="rd-trophy">🏆</span><b>${days}</b><small>days</small></div></div>
+          <div class="rd-info">
+            <div class="rd-title">Triathlon · ${triLab}</div>
+            <div class="rd-sub">${fmtDate(ev.date)}<span class="rd-phase">${phase}</span></div>
+            <div class="rd-line"><span>Readiness</span><b style="color:${rdcol(tr.overall)}">${overall}%</b></div>
+            ${legRow("swim", "Swim")}${legRow("bike", "Bike")}${legRow("run", "Run")}
+            <div class="rd-line"><span>Focus</span><b style="text-transform:capitalize;color:var(--sand)">${tr.weakest} — your limiter</b></div>
+            <div class="rd-line"><span>Training</span><b>Week ${curWk} of ${totWk}</b></div>
+          </div></div>`;
+      }
       const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: todayISO() }).adherence;
       const isRide = doc.settings.goal === "cycling";
       const pbs = E.personalBests({ logs: doc.logs, manualBests: doc.manualBests || [] });

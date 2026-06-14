@@ -1024,6 +1024,38 @@ export function cssCurve(logs, from, to) {
   return out;
 }
 
+/* Triathlon readiness — per-leg (swim/bike/run) and overall. Each leg blends
+   distance-readiness (your longest single session vs the race leg) with recent
+   volume-vs-target; the overall is weighted by each leg's estimated race time
+   (so the bike dominates a long course). Returns null for a non-triathlon goal. */
+export function triReadiness(doc, todayISO) {
+  const ev = doc.settings && doc.settings.goalEvent;
+  if (!ev || ev.kind !== "triathlon" || !ev.legs) return null;
+  const logs = doc.logs || [];
+  const longest = (pred, val) => logs.filter(pred).reduce((m, l) => Math.max(m, val(l) || 0), 0);
+  const from = addDays(todayISO, -21);
+  const vol = volumeInRange(logs, from, todayISO);
+  const c = doc.settings.weeklyCounts || {};
+  const tgt = { swim: (c.swim || 0) * 35 * 3, bike: (c.bike || 0) * 60 * 3, run: (c.run || 0) * 35 * 3 };
+  const clamp = x => Math.max(0, Math.min(1, x));
+  const leg = (longM, legM, volMin, tgtMin) => {
+    const distPct = legM > 0 ? clamp(longM / legM) : 0;
+    const volPct = tgtMin > 0 ? clamp(volMin / tgtMin) : distPct;
+    return { ready: clamp(0.6 * distPct + 0.4 * volPct), distPct, volPct, longest: Math.round(longM) };
+  };
+  const legs = {
+    swim: leg(longest(l => l.sport === "swim", l => l.m), ev.legs.swim.m, vol.swim, tgt.swim),
+    bike: leg(longest(l => l.sport === "bike", l => (l.km || 0) * 1000), ev.legs.bike.m, vol.bike, tgt.bike),
+    run:  leg(longest(l => isRunType(l), l => (l.km || 0) * 1000), ev.legs.run.m, vol.run, tgt.run),
+  };
+  // estimate each leg's race time (s) for time-share weighting: swim 2:00/100m, bike 28 km/h, run 5:30/km
+  const dur = { swim: ev.legs.swim.m / 100 * 120, bike: ev.legs.bike.m / 1000 / 28 * 3600, run: ev.legs.run.m / 1000 * 330 };
+  const tot = dur.swim + dur.bike + dur.run || 1;
+  const overall = (legs.swim.ready * dur.swim + legs.bike.ready * dur.bike + legs.run.ready * dur.run) / tot;
+  const weakest = ["swim", "bike", "run"].reduce((a, b) => legs[b].ready < legs[a].ready ? b : a, "swim");
+  return { legs, overall, weakest };
+}
+
 export function ema(values, alpha = 0.25) {
   const out = [];
   values.forEach((v, i) => out.push(i === 0 ? v : alpha * v + (1 - alpha) * out[i - 1]));
@@ -1997,12 +2029,20 @@ export function coachInsights({ doc, todayISO }) {
     if (ev && ev.date && ev.date >= todayISO) {
       const wo = weeksToEvent(doc.settings, todayISO);
       if (wo != null && wo >= 0) {
-        const what = doc.settings.goal === "cycling" ? "event" : "race";
+        const what = doc.settings.goal === "cycling" ? "event" : doc.settings.goal === "triathlon" ? "triathlon" : "race";
         add({ id: "event-countdown", category: wo <= 2 ? "recommendation" : "trend",
               title: wo === 0 ? "It's race week!" : `${wo} week${wo > 1 ? "s" : ""} to your ${what}`,
               body: wo === 0 ? "Keep it short and easy, rest up, then enjoy it." : wo <= 2 ? "You're tapering now — lower volume, stay sharp, arrive fresh." : "Stay consistent and keep building steadily toward it.",
               why: ev.distanceKm ? `${ev.distanceKm} km on ${ev.date}.` : `Target ${what} on ${ev.date}.`,
               impact: wo <= 2 ? 0.85 : 0.6, confidence: 0.9 });
+        if (ev.kind === "triathlon") {
+          const tr = triReadiness(doc, todayISO);
+          if (tr) add({ id: "tri-readiness", category: "trend",
+            title: `${Math.round(tr.overall * 100)}% ready for your ${ev.tri ? ev.tri.toUpperCase() : "triathlon"}`,
+            body: `Your ${tr.weakest} is the limiter right now — give it a little extra focus across the coming weeks.`,
+            why: `Swim ${Math.round(tr.legs.swim.ready * 100)}% · Bike ${Math.round(tr.legs.bike.ready * 100)}% · Run ${Math.round(tr.legs.run.ready * 100)}% (longest vs each leg + recent volume).`,
+            impact: 0.7, confidence: 0.75 });
+        }
       }
     }
   }

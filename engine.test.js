@@ -1143,6 +1143,26 @@ test("triathlon: 4-sport mix, swim scheduling, bricks, week build", () => {
   assert.ok(!plain.sessions.some(s => s.sport === "swim" || s.sport === "brick"));
 });
 
+test("triReadiness: per-leg + overall + weakest, and a coach insight", () => {
+  const ev = { kind: "triathlon", tri: "olympic", date: "2026-09-20",
+    legs: { swim: { m: 1500 }, bike: { m: 40000 }, run: { m: 10000 } }, distanceKm: 51.5 };
+  const settings = { goal: "triathlon", goalEvent: ev, weeklyCounts: { run: 3, bike: 3, gym: 0, swim: 2 } };
+  // strong bike/run, weak swim
+  const logs = [
+    { sport: "swim", m: 600, min: 14, date: "2026-09-01" },
+    { sport: "bike", km: 38, min: 80, date: "2026-09-02" },
+    { sport: "run", km: 9, min: 50, date: "2026-09-03" },
+  ];
+  const tr = E.triReadiness({ settings, logs }, "2026-09-10");
+  assert.ok(tr && tr.legs.swim.ready < tr.legs.bike.ready, "swim less ready than bike");
+  assert.equal(tr.weakest, "swim", "swim is the limiter");
+  assert.ok(tr.overall > 0 && tr.overall <= 1);
+  assert.equal(E.triReadiness({ settings: { goal: "race", goalEvent: { distanceKm: 10 } }, logs }, "2026-09-10"), null);
+  // coach surfaces the readiness insight
+  const ins = E.coachInsights({ doc: { settings, logs, weeks: [E.generateWeek1("2026-09-07")], checkins: [], vo2History: [], manualBests: [] }, todayISO: "2026-09-07" });
+  assert.ok(ins.some(i => i.id === "tri-readiness"));
+});
+
 test("recommendBurnGoal / recommendClimbTarget / recommendGrowthRate suggest, with nulls", () => {
   const fit = { heightCm: 180, age: 40, sex: "male", targetWeightKg: 80 };
   const r = E.recommendBurnGoal({ settings: fit, weighIns: [{ date: "2026-06-10", kg: 88 }] });
