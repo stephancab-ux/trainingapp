@@ -383,7 +383,7 @@ function start() {
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   document.querySelectorAll("nav .tab").forEach(b =>
     b.addEventListener("click", () => setTab(b.dataset.tab)));
-  $("#fab").addEventListener("click", openUnplannedLog);
+  $("#fab").addEventListener("click", openTodayPlus);
   // remember the Diary scroll position within the session
   window.addEventListener("scroll", () => { if (tab === "week") diaryScroll = window.scrollY; }, { passive: true });
   setTab("today");
@@ -452,13 +452,14 @@ function openPlanFunnel() {
       ${isRaceish() ? `<div class="card" style="margin-top:12px">
         <div class="lab" style="margin-bottom:8px">Target ${state.goal === "cycling" ? "ride" : "race"} <span class="row-sub">· optional</span></div>
         <div class="wpg-chips">${dists.map(([v, l]) => `<button class="fchip ${String(state.eventDist) === v ? "on" : ""}" data-dist="${v}">${l}</button>`).join("")}</div>
-        <div class="frow" style="border:none;margin-top:8px"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
+        <div class="frow" style="margin-top:6px"><span class="l">Or distance</span><input type="text" inputmode="decimal" id="fn-distx" placeholder="km" value="${state.eventDist && !dists.some(([v]) => +v === state.eventDist) ? state.eventDist : ""}"><span class="suffix">km</span></div>
+        <div class="frow" style="border:none"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
       </div>` : ""}
       ${nav()}`;
-    const grabDate = () => { const d = el.querySelector("#fn-date"); if (d) state.eventDate = d.value; };
-    el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grabDate(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal).mix }; render(); }));
-    el.querySelectorAll("[data-dist]").forEach(b => b.addEventListener("click", () => { grabDate(); state.eventDist = state.eventDist === +b.dataset.dist ? null : +b.dataset.dist; render(); }));
-    wireNav(() => { grabDate(); go(2); });
+    const grab = () => { const d = el.querySelector("#fn-date"); if (d) state.eventDate = d.value; const dx = el.querySelector("#fn-distx"); if (dx) { const v = num(dx.value); if (v != null) state.eventDist = v; } };
+    el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grab(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal).mix }; render(); }));
+    el.querySelectorAll("[data-dist]").forEach(b => b.addEventListener("click", () => { grab(); state.eventDist = state.eventDist === +b.dataset.dist ? null : +b.dataset.dist; render(); }));
+    wireNav(() => { grab(); go(2); });
   }
   function renderAbout() {
     el.querySelector(".wrap").innerHTML = head("About you", "Sizes your zones and rates your fitness.") + `
@@ -625,7 +626,7 @@ function setTab(name) {
 }
 
 function render() {
-  $("#fab").hidden = tab !== "week"; // the log-activity FAB lives on the Diary tab
+  $("#fab").hidden = !(tab === "week" || tab === "today"); // the + FAB lives on Today + This Week
   const cd = $("#coachbadge");
   if (cd) { const n = coachUnread(); cd.textContent = n > 9 ? "9+" : String(n); cd.hidden = n === 0; }
   renderBanner();
@@ -857,7 +858,7 @@ function renderToday() {
     const log = doc.logs.find(l => l.id === b.dataset.lid); if (log) openLogSheet({ date: log.date, sport: log.sport, log, title: logTitle(log) });
   }));
 
-  let head = `<div class="phead"><div><div class="eyebrow">${doc.settings.name ? esc(doc.settings.name) + " · " : ""}${fmtDate(t)}${week ? ` · <span class="cyt">Week ${week.weekNum}</span>` : ""}</div><h1 class="page">Today</h1></div><button class="iconbtn" id="td-plus" aria-label="Do a workout">＋</button></div>`;
+  let head = `<div class="phead"><div><div class="eyebrow">${doc.settings.name ? esc(doc.settings.name) + " · " : ""}${fmtDate(t)}${week ? ` · <span class="cyt">Week ${week.weekNum}</span>` : ""}</div><h1 class="page">Today</h1></div></div>`;
 
   if (!week) {
     if (!doc.weeks.length) {
@@ -983,7 +984,7 @@ function renderToday() {
 
 /* ---------------- logging ---------------- */
 
-function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null }) {
+function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null, linkSession = null }) {
   const isEdit = !!log;
   let min = isEdit ? log.min : prefillMin;
   let rpe = isEdit ? (log.rpe || null) : null;
@@ -1063,13 +1064,15 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
                              rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined,
                              venue: isGym ? venue : undefined });
       } else {
-        doc.logs.push({ id: S.uid(), date, sport, min, km: km ?? undefined,
+        const id = S.uid();
+        doc.logs.push({ id, date, sport, min, km: km ?? undefined,
                         avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined,
                         descent: desc ?? undefined, calories: cal ?? undefined, rpe: rpe ?? undefined,
                         aerobicTE: te ?? undefined,
                         note: note || undefined, type: typ ?? undefined,
                         venue: isGym ? venue : undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
+        if (linkSession) linkSession.linkedLogId = id;
       }
     });
     toast(isEdit ? "Updated ✓" : "Logged ✓");
@@ -2291,7 +2294,29 @@ function openTodayPlus() {
     <button class="btn ghost" id="tp-log">Log an activity</button>
   `);
   sheet.querySelector("#tp-propose").addEventListener("click", () => { closeOverlay(); openAdhocWorkout(); });
-  sheet.querySelector("#tp-log").addEventListener("click", () => { closeOverlay(); openUnplannedLog(); });
+  sheet.querySelector("#tp-log").addEventListener("click", () => { closeOverlay(); openLogActivity(); });
+}
+
+/* Log an activity — pick one of this week's unlogged planned sessions, or an extra one. */
+function openLogActivity() {
+  const week = currentWeek() || lastWeek();
+  const unlogged = week ? week.sessions.filter(s => s.sport !== "rest" && sessionStatus(week, s).kind !== "done") : [];
+  const sheet = openSheet(`
+    <div class="sh-title">Log an activity</div>
+    <div class="sh-sub">From this week's plan, or an extra activity.</div>
+    ${unlogged.length ? `<div class="lg-plan">${unlogged.map(s => {
+      const di = week.sessions.indexOf(s);
+      return `<button class="srow" data-plan="${di}"><span class="ic ${sportClass(s.sport)}">${ICONS[s.sport]}</span><span class="l" style="flex:1">${kindLabel(s)}${s.targetMin ? ` · ${s.targetMin} min` : ""}<span>${s.day.toUpperCase()} · planned</span></span><span class="chev">›</span></button>`;
+    }).join("")}</div>` : `<p class="row-sub">No planned sessions left in this week.</p>`}
+    <button class="btn ghost" id="lg-extra" style="margin-top:8px">＋ Extra activity</button>
+  `);
+  sheet.querySelectorAll("[data-plan]").forEach(b => b.addEventListener("click", () => {
+    const s = week.sessions[+b.dataset.plan];
+    closeOverlay();
+    if (s.sport === "gym") { openWorkoutPage(week, s, E.dateOfDay(week, s.day)); return; }
+    openLogSheet({ date: todayISO(), sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s), linkSession: s });
+  }));
+  sheet.querySelector("#lg-extra").addEventListener("click", () => { closeOverlay(); openUnplannedLog(); });
 }
 
 function openAdhocWorkout() {
