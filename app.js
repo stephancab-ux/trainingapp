@@ -56,6 +56,19 @@ const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp 
 const SPORT_COLOR = { run: "#ff7a66", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", other: "#8b97a4" };
 const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", other: "Other" };
 
+/* Exercise icons — one consistent line-figure per movement pattern (matches the
+   approved mock-up). Keyed by exercise category; a small monochrome pictograph. */
+const EX_ICON = {
+  upperPush: `<svg viewBox="0 0 24 24"><circle cx="5" cy="8" r="2"/><path d="M7 9 18 12 M7 9 9 15 M3 17H21"/></svg>`,
+  upperPull: `<svg viewBox="0 0 24 24"><path d="M4 4H20 M9 4l1 5 M15 4l-1 5"/><circle cx="12" cy="11" r="2"/><path d="M12 13v5 M12 18l-2 3 M12 18l2 3"/></svg>`,
+  lower: `<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 7v5 M12 8l4 1 M12 12l-4 3v5 M12 12l4 3v5"/></svg>`,
+  core: `<svg viewBox="0 0 24 24"><circle cx="5" cy="9" r="2"/><path d="M7 10 19 14 M7 11v5h5 M3 17H21"/></svg>`,
+  cardio: `<svg viewBox="0 0 24 24"><circle cx="13" cy="5" r="2"/><path d="M13 7l-2 6 M13 9l-4 1 M13 9l4-1 M11 13l-3 5 M11 13l4 3-1 4"/></svg>`,
+  warmup: `<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 8 7 5 M12 8l5-3 M12 8v6 M12 14l-4 6 M12 14l4 6"/></svg>`,
+  mobility: `<svg viewBox="0 0 24 24"><circle cx="8" cy="6" r="2"/><path d="M8 8l2 5 M10 13h4v6 M10 13 5 19 M8 8V4"/></svg>`,
+};
+const exIcon = cat => EX_ICON[cat] ? `<span class="exi">${EX_ICON[cat]}</span>` : "";
+
 const ICONS_UI = {
   sliders: `<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></svg>`,
   coach: `<svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.5-3.2 7.3-8 9-4.8-1.7-8-4.5-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>`,
@@ -1802,12 +1815,12 @@ function workoutSteps(workout) {
     const label = W.CATEGORY_LABELS[b.category] || b.category;
     if (b.mode === "reps") {
       for (let n = 1; n <= b.sets; n++) {
-        steps.push({ kind: "reps", name: b.name, instr: b.instr, label, setNo: n, sets: b.sets, reps: b.reps, uni: b.unilateral });
+        steps.push({ kind: "reps", name: b.name, cat: b.category, instr: b.instr, label, setNo: n, sets: b.sets, reps: b.reps, uni: b.unilateral });
         if (n < b.sets) steps.push({ kind: "rest", name: "Rest", sec: 45, label });
       }
     } else {
       for (let r = 0; r < b.rounds; r++) {
-        steps.push({ kind: "work", name: b.name, instr: b.instr, sec: b.work, label, round: r + 1, rounds: b.rounds, uni: b.unilateral });
+        steps.push({ kind: "work", name: b.name, cat: b.category, instr: b.instr, sec: b.work, label, round: r + 1, rounds: b.rounds, uni: b.unilateral });
         if (b.rest > 0 && r < b.rounds - 1) steps.push({ kind: "rest", name: "Rest", sec: b.rest, label });
       }
     }
@@ -1856,7 +1869,7 @@ function openWorkoutPage(week, session, dateISO) {
       <div class="wpg-blocks">${workout.blocks.map(b => `
         <div class="wblock"><div class="wblock-hd"><b>${W.CATEGORY_LABELS[b.category] || b.category}</b><span>${blockMeta(b)}</span></div>
           <div class="wex">
-            <span class="wex-n">${esc(b.name)}${b.unilateral ? " <i class='uni'>each side</i>" : ""}</span>
+            <span class="wex-n">${exIcon(b.category)}${esc(b.name)}${b.unilateral ? " <i class='uni'>each side</i>" : ""}</span>
             <span class="wex-i">${esc(b.instr)}</span>
             <span class="wex-act"><button class="lk" data-swap="${b.bi}">swap</button><button class="lk bad" data-ban="${b.id}">ban</button></span>
           </div></div>`).join("")}</div>
@@ -1931,7 +1944,7 @@ function openWorkoutPage(week, session, dateISO) {
     wrap.innerHTML = `<div class="wtimer ${cls}">
       <button class="iconbtn wtimer-x" id="wt-quit" aria-label="Close">✕</button>
       <div class="wt-stage">${stage}</div>
-      <div class="wt-name">${esc(s.name)}${s.uni && s.kind === "work" ? " <i class='uni'>each side</i>" : ""}</div>
+      <div class="wt-name">${exIcon(s.cat)}${esc(s.name)}${s.uni && s.kind === "work" ? " <i class='uni'>each side</i>" : ""}</div>
       ${mid}
       ${(s.kind === "work" || s.kind === "reps") && s.instr ? `<div class="wt-instr">${esc(s.instr)}</div>` : ""}
       <div class="wt-next">${nx ? "Next · " + esc(nx.name) : "Final effort!"}</div>
