@@ -1191,11 +1191,11 @@ function improvingEasyPace(log, logs) {
 }
 
 /* ---- climb prescription target (metres), ramps with load ---- */
-export function climbTargetAscent({ logs = [], weekNum = 1, settings = {} }) {
+export function climbTargetAscent({ logs = [], weekNum = 1, settings = {}, sport = "bike" }) {
   const base = settings.climbBaseAscent || 500;
   const block = Math.floor((weekNum - 1) / 4);
   let target = base * Math.pow(1.05, block);
-  const recent = logs.filter(l => l.sport === "bike" && l.ascent > 0).slice(-8).map(l => l.ascent);
+  const recent = logs.filter(l => l.sport === sport && l.ascent > 0).slice(-8).map(l => l.ascent);
   if (recent.length) target = Math.max(target, Math.max(...recent) * 0.8);
   return Math.round(target / 50) * 50;
 }
@@ -1749,6 +1749,11 @@ export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1
     }
     const longs = logs.filter(l => l.sport === "bike" && (l.type === "long" || (l.km || 0) > 40)).slice(-4).map(l => l.min);
     return { targetMin: round5(avg(longs) || 120), zone: 2, note: "Long steady ride — build endurance." };
+  }
+  if (typeId === "trailHilly") {
+    const easy = logs.filter(l => l.sport === "trail" && (l.min || 0) >= 20).slice(-8).map(l => l.min);
+    return { targetMin: round5(med(easy) || 50), zone: 2, note: "A hilly trail run — steady effort, hike the steep climbs.",
+             targetAscent: climbTargetAscent({ logs, weekNum, settings, sport: "trail" }) };
   }
   if (runish) {
     const easy = lastN(l => isRunType(l) && (!l.type || l.type === "easy") && (l.min || 0) >= 20, 8);

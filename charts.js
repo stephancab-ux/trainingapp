@@ -14,7 +14,7 @@ const svg = (w, h, inner) =>
    weeks render faded, as cols between peaks. vol: engine.weeklyVolume().
    Pass `selected` to highlight one column; transparent hit rects carry
    data-wi for tap-to-inspect. */
-export function ridgeChart(vol, { width = 352, height = 158, selected = null, colors = {} } = {}) {
+export function ridgeChart(vol, { width = 352, height = 158, selected = null, colors = {}, labelEvery = 0 } = {}) {
   if (!vol.length) return "";
   const RUN = colors.run || CY, RIDE = colors.bike || BIKE, HIKE = colors.hike || "#7fd6c0", GYM = colors.gym || "#c98bdb";
   const T = p => p.run + p.bike + (p.hike || 0) + (p.gym || 0);
@@ -42,6 +42,11 @@ export function ridgeChart(vol, { width = 352, height = 158, selected = null, co
     if (selected === i) s += `<rect x="${x - 1.5}" y="${Math.min(y(Math.max(tot, p.target || 0, 30))) - 3}" width="${bw + 3}" height="${base - Math.min(y(Math.max(tot, p.target || 0, 30))) + 3}" rx="3" fill="none" stroke="rgba(86,219,232,.8)" stroke-width="1.5"/>`;
   });
   s += `<line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="${LINE}"/>`;
+  // x-axis date labels (evenly spaced; skip deload columns which show the "col" marker)
+  if (labelEvery) vol.forEach((p, i) => {
+    if (i % labelEvery === 0 && p.label && !p.isDeload)
+      s += `<text x="${((i + 0.5) * (bw + gap)).toFixed(1)}" y="${H - 3}" fill="${MUT}" font-size="9" text-anchor="middle">${p.label}</text>`;
+  });
   const peak = Math.max(...vol.map(T));
   if (peak > 0 && selected == null) {
     const hh = Math.floor(peak / 60), mm = Math.round(peak % 60);

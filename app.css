@@ -264,6 +264,9 @@ input[type=range]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;bac
 .pc .stat{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .legend2{display:flex;gap:14px;flex-wrap:wrap;color:var(--mut);font-size:11.5px;font-weight:650}
 .legend2 i{display:inline-block;width:9px;height:9px;border-radius:2.5px;margin-right:5px;vertical-align:-1px}
+.legend2 .leg-int{cursor:pointer;user-select:none}
+.legend2 .leg-int.is-dim{opacity:.4}
+.legend2 .leg-int.is-active{color:var(--cy)}
 .callout{background:rgba(86,219,232,.07);border:1px solid rgba(86,219,232,.22);border-radius:14px;padding:10px 12px;font-size:13.5px;color:var(--sub);line-height:1.45}
 .callout b{color:var(--cy)}
 .cells{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;margin-top:4px}

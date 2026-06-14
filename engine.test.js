@@ -521,6 +521,14 @@ test("climbTargetAscent ramps with load and rounds to 50 m", () => {
   assert.equal(floored, 800, "floored at 80% of a recent big climb");
 });
 
+test("climbTargetAscent sport param reads trail history and ignores other sports", () => {
+  const s = { climbBaseAscent: 500 };
+  const logs = [{ sport: "trail", ascent: 900 }, { sport: "bike", ascent: 2000 }];
+  assert.equal(E.climbTargetAscent({ weekNum: 1, settings: s, sport: "trail", logs }), 700, "80% of the 900 m trail climb");
+  assert.equal(E.climbTargetAscent({ weekNum: 1, settings: s, logs }), 1600, "default bike still reads bike (80% of 2000)");
+  assert.equal(E.climbTargetAscent({ weekNum: 1, settings: s, sport: "trail", logs: [{ sport: "bike", ascent: 2000 }] }), 500, "no trail history → base");
+});
+
 /* ---------- v1.2: intensity, load, efficiency, RPE ---------- */
 
 test("intensityOfLog by HR zone, falling back to type", () => {
@@ -1013,6 +1021,11 @@ test("suggestSession adapts to recent history with sane fallbacks", () => {
   // climb carries an ascent target
   const climb = E.suggestSession([], "bike", "bikeClimb", { settings: { climbBaseAscent: 500 }, weekNum: 1 });
   assert.ok(climb.targetAscent > 0);
+  // a hilly trail proposal carries an ascent target (from trail history); plain run does not
+  const hilly = E.suggestSession([{ date: "2026-06-01", sport: "trail", min: 70, km: 12, ascent: 800 }], "trail", "trailHilly", { settings: { climbBaseAscent: 500 }, weekNum: 1 });
+  assert.ok(hilly.targetAscent > 0, "hilly trail has a climb target");
+  assert.equal(E.suggestSession([], "run", "easy", {}).targetAscent, undefined, "plain run has no ascent target");
+  assert.equal(E.suggestSession([], "trail", "trailHilly", { settings: { climbBaseAscent: 500 } }).targetAscent, 500, "no trail history → base ascent");
   // empty history → defaults
   assert.equal(E.suggestSession([], "run", "easy", {}).targetMin, 35);
   assert.equal(E.suggestSession([], "bike", "long", {}).targetMin, 120);
