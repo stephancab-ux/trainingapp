@@ -247,7 +247,9 @@ function buildDurationWheel(el, { min = 1, max = 300, value = 45, onChange } = {
       if (m !== cur) { cur = m; setHi(); onChange && onChange(cur); }
     });
   });
-  return () => cur;
+  const read = () => cur;
+  read.set = v => { cur = Math.max(min, Math.min(max, Math.round(v))); el.scrollTop = (cur - min) * WHEEL_IH; setHi(); };
+  return read;
 }
 function openModal(title, body, buttons) {
   overlayRoot().innerHTML =
@@ -658,7 +660,7 @@ function renderToday() {
       page.innerHTML = head + `<div class="card">
         <div class="t-chips"><span class="chip restc">BEFORE WEEK 1</span></div>
         <p class="note-sub">Week 1 starts <b>${fmtDate(doc.weeks[0].startDate)}</b>. Until then anything counts — tap ＋ to do a workout, or log it from the Diary.</p></div>` + activities;
-      $("#td-plus")?.addEventListener("click", openAdhocWorkout);
+      $("#td-plus")?.addEventListener("click", openTodayPlus);
       wireActs();
       return;
     }
@@ -667,7 +669,7 @@ function renderToday() {
       <p class="note-sub">Pick up where you left off — close out your last week and the next one appears, starting this Monday.</p>
       <div class="t-actions"><button class="btn" id="td-checkin">Do the check-in</button></div></div>` + activities;
     $("#td-checkin")?.addEventListener("click", () => openCheckin(due || lastWeek()));
-    $("#td-plus")?.addEventListener("click", openAdhocWorkout);
+    $("#td-plus")?.addEventListener("click", openTodayPlus);
     wireActs();
     return;
   }
@@ -756,7 +758,7 @@ function renderToday() {
     openLogSheet({ date: t, sport: s.sport, log: st.log, title: kindLabel(s) }));
   $("#td-edit-s")?.addEventListener("click", () => openSessionEditor(week, s, st));
   $("#td-workout")?.addEventListener("click", () => openWorkoutPage(week, s, t));
-  $("#td-plus")?.addEventListener("click", openAdhocWorkout);
+  $("#td-plus")?.addEventListener("click", openTodayPlus);
   $("#td-skip")?.addEventListener("click", () => openSkip(week, s));
   $("#td-checkin")?.addEventListener("click", () => openCheckin(due || week));
   $("#td-yest")?.addEventListener("click", () => {
@@ -1558,7 +1560,7 @@ function openHistory() {
 function openCheckin(week) {
   if (checkinFor(week)) { toast("Already checked in"); return; }
   const completion = E.weekCompletion(week, doc.logs);
-  const state = { step: 1, weightKg: null, feel: null, hrv7d: null, sleep: null, chosenPct: null, grow: {} };
+  const state = { step: 1, weightKg: null, vo2: null, feel: null, hrv7d: null, sleep: null, chosenPct: null, grow: {} };
   const lastKg = doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : null;
   const phC = E.paceHint(doc.logs, bounds(), 2, doc.settings.easyPace);
   const ridesC = doc.logs.filter(l => l.sport === "bike" && l.km > 0 && l.min > 0).slice(-8);
@@ -1579,11 +1581,17 @@ function openCheckin(week) {
      <button class="btn ghost" id="ci-back">${state.step === 1 ? "Not now" : "Back"}</button>`;
 
   function render1() {
-    el.querySelector(".wrap").innerHTML = head("Step 1 — weight. Optional, but the trend is half the goal.") + `
-      <div class="card"><div class="frow" style="border:none"><span class="l">Weight today</span>
-        <input type="text" step="0.1" inputmode="decimal" id="ci-kg" placeholder="${lastKg ?? "—"}" value="${state.weightKg ?? ""}"><span class="suffix">kg</span></div></div>
+    const vo2Src = doc.settings.vo2Source || "manual";
+    const vo2Est = vo2Src === "calc" ? E.estimateVo2FromRuns(doc.logs, todayISO()) : null;
+    el.querySelector(".wrap").innerHTML = head("Step 1 — weight & VO₂. Optional, but the trend is half the goal.") + `
+      <div class="card"><div class="frow"><span class="l">Weight today</span>
+        <input type="text" step="0.1" inputmode="decimal" id="ci-kg" placeholder="${lastKg ?? "—"}" value="${state.weightKg ?? ""}"><span class="suffix">kg</span></div>
+        ${vo2Src === "calc"
+          ? `<div class="frow" style="border:none"><span class="l">VO₂ max<span class="row-sub">estimated from your runs</span></span><span class="suffix">${vo2Est != null ? vo2Est + " est" : "—"}</span></div>`
+          : `<div class="frow" style="border:none"><span class="l">VO₂ max</span><input type="text" inputmode="decimal" id="ci-vo2" placeholder="optional" value="${state.vo2 ?? ""}"><span class="suffix">ml/kg/min</span></div>`}
+      </div>
       ${navBtns("Continue", true)}`;
-    wire(() => { state.weightKg = num(el.querySelector("#ci-kg").value); go(2); }, () => go(2));
+    wire(() => { state.weightKg = num(el.querySelector("#ci-kg").value); const vv = el.querySelector("#ci-vo2"); state.vo2 = vv ? num(vv.value) : null; go(2); }, () => go(2));
   }
   function render2() {
     el.querySelector(".wrap").innerHTML = head("Step 2 — how did the week feel?") + `
@@ -1625,6 +1633,7 @@ function openCheckin(week) {
       <span class="chip"><b>${Math.round(completion * 100)} %</b>&nbsp;complete</span>
       <span class="chip">felt&nbsp;<b>${state.feel} / 5</b></span>
       ${state.weightKg ? `<span class="chip"><b>${state.weightKg}</b>&nbsp;kg</span>` : ""}
+      ${state.vo2 ? `<span class="chip">VO₂&nbsp;<b>${state.vo2}</b></span>` : ""}
       ${state.hrv7d ? `<span class="chip">HRV&nbsp;<b>${state.hrv7d}</b>&nbsp;ms</span>` : ""}</div>`;
 
     const allow = doc.settings.allowedTypes;
@@ -1734,6 +1743,11 @@ function openCheckin(week) {
         doc.weighIns = doc.weighIns.filter(w => w.date !== todayISO());
         doc.weighIns.push({ date: todayISO(), kg: state.weightKg });
         doc.weighIns.sort((a, b) => (a.date < b.date ? -1 : 1));
+      }
+      if ((doc.settings.vo2Source || "manual") !== "calc" && state.vo2) {
+        doc.vo2History = doc.vo2History.filter(v => v.date !== todayISO());
+        doc.vo2History.push({ date: todayISO(), value: state.vo2 });
+        doc.vo2History.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
       doc.weeks.push(newWeek);
     });
@@ -1972,6 +1986,18 @@ function openWorkoutPage(week, session, dateISO) {
 /* ---------------- AD-HOC WORKOUT (Today ＋) ---------------- */
 
 /* A one-off workout to do today that isn't in the program. */
+/* The Today "+" — choose to get a workout proposed, or log what you did. */
+function openTodayPlus() {
+  const sheet = openSheet(`
+    <div class="sh-title">Add</div>
+    <div class="sh-sub">Get a workout proposed for today, or log something you've done.</div>
+    <button class="btn" id="tp-propose">Propose a workout</button>
+    <button class="btn ghost" id="tp-log">Log an activity</button>
+  `);
+  sheet.querySelector("#tp-propose").addEventListener("click", () => { closeOverlay(); openAdhocWorkout(); });
+  sheet.querySelector("#tp-log").addEventListener("click", () => { closeOverlay(); openUnplannedLog(); });
+}
+
 function openAdhocWorkout() {
   // every activity is offered — the "Workouts allowed" toggles are for the PLAN,
   // not for spontaneously doing a workout today (the two are independent)
@@ -2003,12 +2029,18 @@ const ADHOC_TYPES = {
 };
 function openAdhocSession(sport) {
   const opts = ADHOC_TYPES[sport] || ADHOC_TYPES.run;
-  let chosen = opts[0];
+  const rec = E.recommendWorkout(doc, sport, todayISO());
+  const prefFor = kind => kind === "long" ? ["long", "easy"]
+    : kind === "tempo" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runTempo", "runQ1", "long", "easy"])
+    : kind === "intervals" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runQ1", "runTempo", "long", "easy"])
+    : ["easy"];
+  let chosen = (rec && prefFor(rec.kind).map(id => opts.find(o => o.id === id)).find(Boolean)) || opts[0];
   const presc = () => E.suggestSession(doc.logs, sport, chosen.id, { settings: doc.settings, weekNum: currentWeek()?.weekNum || 1 });
   let p = presc(), dur = p.targetMin, zone = p.zone;
   const sheet = openSheet(`
     <div class="sh-title">${SPORT_NAME[sport]} today</div>
     <div class="sh-sub">A suggestion sized from your recent training — adjust anything, then do it.</div>
+    ${rec ? `<div class="callout" id="ah-rec" style="border-color:rgba(86,219,232,.32)">Recommended · <b>${chosen.label}</b> — ${rec.reason}</div>` : ""}
     <div class="type-row"><span class="l">Type</span><span class="opts" id="ah-types">${opts.map(o =>
       `<button data-ah="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
     <div class="frow frow-wheel"><span class="l">Duration</span>
@@ -2038,7 +2070,7 @@ function openAdhocSession(sport) {
   sheet.querySelectorAll("[data-ah]").forEach(b => b.addEventListener("click", () => {
     chosen = opts.find(o => o.id === b.dataset.ah);
     sheet.querySelectorAll("[data-ah]").forEach(x => x.classList.toggle("on", x === b));
-    p = presc(); dur = p.targetMin; zone = p.zone; minInput.value = dur;
+    p = presc(); dur = p.targetMin; zone = p.zone; readMin.set(dur);
     sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", +x.dataset.z === zone));
     refresh();
   }));
@@ -2123,7 +2155,11 @@ function renderProgress() {
   const B = bounds();
 
   const wi = doc.weighIns, lastW = wi.length ? wi[wi.length - 1] : null;
-  const vo2 = doc.vo2History, lastV = vo2.length ? vo2[vo2.length - 1] : null;
+  const vo2Src = doc.settings.vo2Source || "manual";
+  const vo2 = vo2Src === "calc"
+    ? E.vo2CalcCurve(doc.logs, doc.logs.length ? doc.logs.map(l => l.date).sort()[0] : todayISO(), todayISO())
+    : doc.vo2History;
+  const lastV = vo2.length ? vo2[vo2.length - 1] : null;
   const vo2AtTarget = lastW && lastV ? E.vo2AtTargetWeight(lastV.value, lastW.kg, doc.settings.targetWeightKg) : null;
 
   // ----- time-range window -----
@@ -2349,7 +2385,7 @@ function renderProgress() {
              <div class="vo2cat-lab" style="color:${vo2Cat.color}">${vo2Cat.label}<small>${doc.settings.sex === "female" ? "women" : "men"} ${vo2Cat.bracketLabel}</small></div></div>`
         : "";
       return `
-      <div class="hd"><span class="eyebrow">VO₂ max · Garmin</span>${!vo2Cat && lastV ? `<button class="eyebrow tapx lk" id="vo2-setcat">rate it →</button>` : ""}</div>
+      <div class="hd"><span class="eyebrow">VO₂ max${vo2Src === "calc" ? " · estimated" : ""}</span>${!vo2Cat && lastV ? `<button class="eyebrow tapx lk" id="vo2-setcat">rate it →</button>` : ""}</div>
       <div class="vo2top">
         <div class="stat"><span class="midnum">${lastV ? lastV.value : "—"}</span><span class="unit">${lastV ? fmtShort(lastV.date) : "add your first reading"}</span></div>
         ${cat}
@@ -2358,48 +2394,56 @@ function renderProgress() {
         ? C.lineChart(null, { series: [{ points: vPts, color: "#8e9df8", segColors: vSeg }], height: 104, axis: true, taps: true, fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })
         : C.lineChart(vPts, { height: 104, axis: true, taps: true, color: "#8e9df8", fmtY: v => v.toFixed(0), selected: lineSel.vo2, xLabels: [fmtShort(vPts[0].date), fmtShort(vPts[vPts.length - 1].date)], xTicks: xTicksFor(vPts) })) : (vo2.length >= 2 ? `<p class="row-sub">No readings in this range — widen it or check All time.</p>` : "")}
       ${lineDetail("vo2", [{ points: vPts }], p => `${p.y} ml/kg/min`)}
-      <button class="btn ghost mini" id="pg-vo2">Add reading</button>`;
+      ${vo2Src === "calc"
+        ? (lastV ? `<button class="btn ghost mini" id="pg-vo2how">How it's calculated</button>`
+                 : `<div class="callout">No VO₂ yet — do a hard sustained run (an all-out ~5 km or a 20-min effort) and log it; we'll estimate it from your pace.<br><button class="btn ghost mini" id="pg-vo2run" style="margin-top:9px">Propose a hard run →</button></div>`)
+        : `<button class="btn ghost mini" id="pg-vo2">Add reading</button>`}`;
     },
 
     perf: () => {
-      const type = cardToggle.perfType || "speed";   // speed | climb | dist
-      const sport = cardToggle.perfSport || "run";     // run | bike
-      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["bike", "Ride"]], sport);
-      const typeRow = `<div class="perftypes">${cardTabs("perfType", [["speed", "Speed"], ["climb", "Climbing"], ["dist", "Distance"]], type)}</div>`;
-      const sportLab = sport === "run" ? "Run" : "Ride";
+      const type = cardToggle.perfType || "speed";          // speed | dist | climb
+      const sport = cardToggle.perfSport || "run";            // run | trail | bike | hike
+      const sportTabs = cardTabs("perfSport", [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"]], sport);
+      const typeRow = `<div class="perftypes">${cardTabs("perfType", [["speed", "Speed"], ["dist", "Distance"], ["climb", "Climbing"]], type)}</div>`;
+      const sportLab = { run: "Run", trail: "Trail", bike: "Ride", hike: "Hike" }[sport];
+      const col = SPORT_COLOR[sport];
+      const pace = sport !== "bike";                          // run/trail/hike → min/km, ride → km/h
+      const uLabel = pace ? "/km" : "km/h";
+      const mkSpeed = filter => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
+        .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
+      const mkKm = filter => R(doc.logs.filter(l => l.km > 0 && filter(l)).sort(byDate)
+        .map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id })));
+      const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
 
       if (type === "speed") {
-        const pace = sport === "run"; // run → min/km, ride → km/h
-        const mk = (filter) => R(doc.logs.filter(l => l.km > 0 && l.min > 0 && filter(l)).sort(byDate)
-          .map(l => ({ x: dnum(l.date), y: pace ? -(l.min * 60 / l.km) : l.km * 60 / l.min, date: l.date, id: l.id })));
-        const avgVal = pts => pace ? E.fmtPace(-seriesAvg(pts)) : seriesAvg(pts).toFixed(1);
-        const uLabel = pace ? "/km" : "km/h";
-        let ser = [], avgParts, legend, empty;
+        let ser = [], avgParts = [], legend = "", empty = "";
         if (sport === "run") {
           const longIds = new Set(E.distanceSplit(doc.logs, "run", win.from, win.to).long.map(x => x.id));
           const hardT = l => ["tempo", "intervals", "hills"].includes(l.type);
-          const easy = mk(l => l.sport === "run" && !longIds.has(l.id) && !hardT(l));
-          const long = mk(l => l.sport === "run" && longIds.has(l.id));
-          const hard = mk(l => l.sport === "run" && !longIds.has(l.id) && hardT(l));
-          const trail = mk(l => l.sport === "trail");
+          const easy = mkSpeed(l => l.sport === "run" && !longIds.has(l.id) && !hardT(l));
+          const hard = mkSpeed(l => l.sport === "run" && !longIds.has(l.id) && hardT(l));
+          const long = mkSpeed(l => l.sport === "run" && longIds.has(l.id));
           if (easy.length) ser.push({ points: easy, color: SPORT_COLOR.run });
+          if (hard.length) ser.push({ points: hard, color: "#e6d3a3" });
           if (long.length) ser.push({ points: long, color: "#a78bfa" });
-          if (hard.length) ser.push({ points: hard, color: "var(--sand)" });
-          if (trail.length) ser.push({ points: trail, color: SPORT_COLOR.trail });
-          avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", trail.length ? `trail ${avgVal(trail)}` : "", uLabel];
-          legend = `<span><i style="background:${SPORT_COLOR.run}"></i>easy</span><span><i style="background:#a78bfa"></i>long</span><span><i style="background:var(--sand)"></i>tempo/hard</span><span><i style="background:${SPORT_COLOR.trail}"></i>trail</span>`;
-          empty = "Log runs with distance to compare easy, long, hard and trail pace over time.";
-        } else {
+          avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", hard.length ? `hard ${avgVal(hard)}` : "", long.length ? `long ${avgVal(long)}` : "", uLabel];
+          legend = `<span><i style="background:${SPORT_COLOR.run}"></i>easy</span><span><i style="background:#e6d3a3"></i>tempo/hard</span><span><i style="background:#a78bfa"></i>long</span>`;
+          empty = "Log runs with distance to compare easy, hard and long pace.";
+        } else if (sport === "bike") {
           const longIds = new Set(E.distanceSplit(doc.logs, "bike", win.from, win.to).long.map(x => x.id));
-          const easy = mk(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
-          const climb = mk(l => l.sport === "bike" && l.type === "climb");
-          const longRide = mk(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
+          const easy = mkSpeed(l => l.sport === "bike" && l.type !== "climb" && !longIds.has(l.id));
+          const long = mkSpeed(l => l.sport === "bike" && l.type !== "climb" && longIds.has(l.id));
           if (easy.length) ser.push({ points: easy, color: "#8e9df8" });
-          if (climb.length) ser.push({ points: climb, color: "var(--sand)" });
-          if (longRide.length) ser.push({ points: longRide, color: "#7fd6c0" });
-          avgParts = [easy.length ? `easy ${avgVal(easy)}` : "", climb.length ? `climb ${avgVal(climb)}` : "", longRide.length ? `long ${avgVal(longRide)}` : "", uLabel];
-          legend = `<span><i style="background:#8e9df8"></i>easy/int</span><span><i style="background:var(--sand)"></i>climb</span><span><i style="background:#7fd6c0"></i>long</span>`;
-          empty = "Log rides with distance — easy/interval, climbing and long-ride speeds are tracked separately.";
+          if (long.length) ser.push({ points: long, color: "#7fd6c0" });
+          avgParts = [easy.length ? `regular ${avgVal(easy)}` : "", long.length ? `long ${avgVal(long)}` : "", uLabel];
+          legend = `<span><i style="background:#8e9df8"></i>regular</span><span><i style="background:#7fd6c0"></i>long</span>`;
+          empty = "Log rides with distance — regular and long-ride speed track separately (climbing rides live in Climbing).";
+        } else {
+          const one = mkSpeed(l => l.sport === sport);
+          if (one.length) ser.push({ points: one, color: col });
+          avgParts = [one.length ? avgVal(one) : "", uLabel];
+          legend = `<span><i style="background:${col}"></i>${sportLab}</span>`;
+          empty = `Log ${sportLab.toLowerCase()} outings with distance to track pace over time.`;
         }
         return `
         <div class="hd"><span class="eyebrow">${sportLab} speed</span>${sportTabs}</div>
@@ -2411,35 +2455,48 @@ function renderProgress() {
       }
 
       if (type === "climb") {
-        const pts = sport === "run"
-          ? R(doc.logs.filter(l => l.ascent > 0 && (l.sport === "trail" || l.sport === "hike")).sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })))
-          : R(doc.logs.filter(l => l.ascent > 0 && l.sport === "bike" && l.type === "climb").sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })));
+        const filt = sport === "bike" ? (l => l.ascent > 0 && l.sport === "bike" && l.type === "climb")
+                                      : (l => l.ascent > 0 && l.sport === sport);
+        const ccol = sport === "bike" ? "#e6d3a3" : col;
+        const pts = R(doc.logs.filter(filt).sort(byDate).map(l => ({ x: dnum(l.date), y: l.ascent, date: l.date, id: l.id })));
         const am = seriesAvg(pts);
         return `
         <div class="hd"><span class="eyebrow">${sportLab} climbing</span>${sportTabs}</div>
         ${typeRow}
         ${am != null ? avgLine([`${Math.round(am).toLocaleString()} m per outing`, `${pts.length} outing${pts.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
-        ${pts.length >= 2 ? wrap("perf", C.lineChart(pts, { axis: true, taps: true, avg: true, color: "var(--sand)", fmtY: v => Math.round(v), selected: lineSel.perf, xTicks: xTicksFor(pts) })) : `<p class="row-sub">${sport === "run" ? "Trail runs and hikes" : "Climbing rides"} with ascent logged appear here.</p>`}
+        ${pts.length >= 2 ? wrap("perf", C.lineChart(pts, { axis: true, taps: true, avg: true, color: ccol, fmtY: v => Math.round(v), selected: lineSel.perf, xTicks: xTicksFor(pts) })) : `<p class="row-sub">${sport === "bike" ? "Climbing rides" : sportLab + " outings"} with ascent logged appear here.</p>`}
         ${lineDetail("perf", [{ points: pts }], p => `${Math.round(p.y)} m climbed`)}`;
       }
 
       // distance
-      const label = sport === "run" ? "run" : "ride";
-      const regCol = sport === "run" ? SPORT_COLOR.run : "#8e9df8";
-      const d = E.distanceSplit(doc.logs, sport === "run" ? "run" : "bike", win.from, win.to);
-      const long = d.long.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
-      const reg = d.regular.map(l => ({ x: dnum(l.date), y: l.km, date: l.date, id: l.id }));
-      const ser = [];
-      if (reg.length) ser.push({ points: reg, color: regCol });
-      if (long.length) ser.push({ points: long, color: "var(--sand)" });
-      const al = seriesAvg(long), ar = seriesAvg(reg);
+      if (sport === "run" || sport === "bike") {
+        const label = sport === "run" ? "run" : "ride";
+        const regCol = sport === "run" ? SPORT_COLOR.run : "#8e9df8";
+        const longCol = sport === "run" ? "#a78bfa" : "#7fd6c0";
+        const longIds = new Set(E.distanceSplit(doc.logs, sport, win.from, win.to).long.map(x => x.id));
+        const reg = mkKm(l => l.sport === sport && !longIds.has(l.id));
+        const long = mkKm(l => l.sport === sport && longIds.has(l.id));
+        const ser = [];
+        if (reg.length) ser.push({ points: reg, color: regCol });
+        if (long.length) ser.push({ points: long, color: longCol });
+        const al = seriesAvg(long), ar = seriesAvg(reg);
+        return `
+        <div class="hd"><span class="eyebrow">${sportLab} distance</span>${sportTabs}</div>
+        ${typeRow}
+        ${avgLine([ar != null ? `regular ${ar.toFixed(1)}` : "", al != null ? `long ${al.toFixed(1)}` : "", "km"])}
+        ${ser.some(s => s.points.length >= 2) ? wrap("perf", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.perf, xTicks: xTicksFor([...reg, ...long]) })) : `<p class="row-sub">Log ${label}s with distance — long ones track apart from regular.</p>`}
+        <div class="legend2"><span><i style="background:${regCol}"></i>regular</span><span><i style="background:${longCol}"></i>long ${label}</span></div>
+        ${lineDetail("perf", ser, p => `${p.y.toFixed(1)} km`)}`;
+      }
+      const one = mkKm(l => l.sport === sport);
+      const am = seriesAvg(one);
       return `
       <div class="hd"><span class="eyebrow">${sportLab} distance</span>${sportTabs}</div>
       ${typeRow}
-      ${avgLine([al != null ? `long ${al.toFixed(1)}` : "", ar != null ? `regular ${ar.toFixed(1)}` : "", "km"])}
-      ${ser.some(s => s.points.length >= 2) ? wrap("perf", C.lineChart(null, { series: ser, axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.perf, xTicks: xTicksFor([...reg, ...long]) })) : `<p class="row-sub">Log ${label}s with distance — long ones are tracked apart from regular, so you can watch the long ${label} grow.</p>`}
-      <div class="legend2"><span><i style="background:var(--sand)"></i>long ${label}</span><span><i style="background:${regCol}"></i>regular</span></div>
-      ${lineDetail("perf", ser, p => `${p.y.toFixed(1)} km`)}`;
+      ${am != null ? avgLine([`${am.toFixed(1)} km average`, `${one.length} outing${one.length === 1 ? "" : "s"} in ${win.label.toLowerCase()}`]) : ""}
+      ${one.length >= 2 ? wrap("perf", C.lineChart(null, { series: [{ points: one, color: col }], axis: true, taps: true, avg: true, fmtY: v => v.toFixed(0), selected: lineSel.perf, xTicks: xTicksFor(one) })) : `<p class="row-sub">Log ${sportLab.toLowerCase()} outings with distance to see them here.</p>`}
+      <div class="legend2"><span><i style="background:${col}"></i>${sportLab}</span></div>
+      ${lineDetail("perf", [{ points: one }], p => `${p.y.toFixed(1)} km`)}`;
     },
 
     balance: () => {
@@ -2647,6 +2704,10 @@ function renderProgress() {
     value: lastV ? lastV.value : "", withDate: true,
     onSave: (v, date) => { doc.vo2History = doc.vo2History.filter(x => x.date !== date); doc.vo2History.push({ date, value: v }); doc.vo2History.sort(byDate); },
   }));
+  page.querySelector("#pg-vo2how")?.addEventListener("click", () => openModal("How VO₂ max is estimated",
+    "We estimate VO₂ max from your best recent run using Daniels' VDOT model — it turns the pace and duration of your strongest run in the last 8 weeks into a VO₂-max-equivalent. Log a hard run or a short time trial to sharpen it. Switch to Manual in Settings → Fitness to enter watch readings instead.",
+    [{ label: "Got it" }]));
+  page.querySelector("#pg-vo2run")?.addEventListener("click", () => openAdhocSession("run"));
   page.querySelector("#pg-tw")?.addEventListener("click", () => openValueSheet({
     title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: doc.settings.targetWeightKg, min: 40, max: 150,
     onSave: v => { doc.settings.targetWeightKg = v; },
