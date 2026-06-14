@@ -50,11 +50,12 @@ const ICONS = {
   trail: `<svg viewBox="0 0 24 24"><circle cx="14" cy="5" r="2"/><path d="M11.5 20l2-5-3-3 3.5-4 2.5 3h3M8 12l2-3M7 20l2.5-4"/><path d="M2 22l4-4 3 2 4-5"/></svg>`,
   hike: `<svg viewBox="0 0 24 24"><path d="M4 22l5-9 3 3 3-7 5 13M11 7a2 2 0 1 0 0-.01"/></svg>`,
   gym: `<svg viewBox="0 0 24 24"><path d="M4 9v6M7 7v10M20 9v6M17 7v10M7 12h10"/></svg>`,
+  swim: `<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="2"/><path d="M5 11l4-2.5 3.5 2.5-2.5 2 4 2.5"/><path d="M2 18c1.5 1.2 3 1.2 4.5 0s3-1.2 4.5 0 3 1.2 4.5 0 3-1.2 4.5 0"/></svg>`,
 };
-const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : "restc";
+const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : sp === "swim" ? "swimc" : "restc";
 // canonical per-sport colour (categorical) — single source of truth for charts/legends
-const SPORT_COLOR = { run: "#ff7a66", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", other: "#8b97a4" };
-const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", other: "Other" };
+const SPORT_COLOR = { run: "#ff7a66", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", swim: "#46c7e6", other: "#8b97a4" };
+const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", swim: "Swim", other: "Other" };
 
 /* Exercise icons — one consistent line-figure per movement pattern (matches the
    approved mock-up). Keyed by exercise category; a small monochrome pictograph. */
@@ -113,12 +114,14 @@ const LOG_TYPES = {
   trail: [["easy", "Easy"], ["long", "Long"], ["intervals", "Intervals"]],
   bike:  [["easy", "Easy"], ["climb", "Climbing"], ["intervals", "Intervals"], ["long", "Long"]],
   hike:  [["easy", "Hike"], ["long", "Big day"]],
+  swim:  [["easy", "Easy"], ["drills", "Technique"], ["endurance", "Endurance"], ["intervals", "Intervals"], ["threshold", "Threshold"]],
 };
 const TYPE_NAME = {
   run:   { easy: "Easy run", tempo: "Tempo run", intervals: "Interval run", hills: "Hill run", long: "Long run" },
   trail: { easy: "Trail run", long: "Long trail run", intervals: "Trail intervals" },
   bike:  { easy: "Easy ride", climb: "Climbing ride", intervals: "Interval ride", long: "Long ride" },
   hike:  { easy: "Hike", long: "Big hike" },
+  swim:  { easy: "Easy swim", drills: "Technique/drills", endurance: "Endurance swim", intervals: "Swim intervals", threshold: "Threshold swim" },
 };
 function logTitle(l) {
   return TYPE_NAME[l.sport]?.[l.type] || SPORT_NAME[l.sport] || (l.sport[0].toUpperCase() + l.sport.slice(1));
@@ -1102,14 +1105,21 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="type-row"><span class="l">Type</span><span class="opts">${LOG_TYPES[sport].map(([k, lab]) =>
       `<button data-ty="${k}" class="${typ === k ? "on" : ""}">${lab}</button>`).join("")}</span></div>` : "";
   const isGym = sport === "gym";
+  const isSwim = sport === "swim";
   // edit mode: let the user fix a mis-entered sport (any sport; fields adapt)
+  const swimOn = doc.settings.activities?.swim || doc.settings.goal === "triathlon";
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(swimOn || isSwim ? [["swim", "Swim"]] : []), ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
   const activityRow = isEdit ? `
-    <div class="type-row"><span class="l">Activity</span><span class="opts">${[["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]].map(([v, l]) =>
+    <div class="type-row"><span class="l">Activity</span><span class="opts">${acts.map(([v, l]) =>
       `<button data-lgsp="${v}" class="${sport === v ? "on" : ""}">${l}</button>`).join("")}</span></div>` : "";
-  let venue = isEdit ? (log.venue || "home") : "home";
+  const defVenue = isGym ? "home" : isSwim ? "pool" : "home";
+  let venue = isEdit ? (log.venue || defVenue) : defVenue;
   const venueRow = isGym ? `
     <div class="frow"><span class="l">Where</span>
-      <span class="unitseg" style="margin-left:auto"><button class="useg ${venue === "home" ? "on" : ""}" data-venue="home">Home</button><button class="useg ${venue === "gym" ? "on" : ""}" data-venue="gym">Gym</button></span></div>` : "";
+      <span class="unitseg" style="margin-left:auto"><button class="useg ${venue === "home" ? "on" : ""}" data-venue="home">Home</button><button class="useg ${venue === "gym" ? "on" : ""}" data-venue="gym">Gym</button></span></div>`
+    : isSwim ? `
+    <div class="frow"><span class="l">Where</span>
+      <span class="unitseg" style="margin-left:auto"><button class="useg ${venue === "pool" ? "on" : ""}" data-venue="pool">Pool</button><button class="useg ${venue === "open" ? "on" : ""}" data-venue="open">Open water</button></span></div>` : "";
   const elev = sport === "bike" || sport === "trail" || sport === "hike";
   const elevRows = elev ? `
     <div class="frow"><span class="l">Ascent</span><input type="text" inputmode="numeric" id="lg-asc" placeholder="—" value="${isEdit && log.ascent != null ? log.ascent : ""}"><span class="suffix">m ↑</span></div>
@@ -1122,7 +1132,10 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
       <div class="dwheel" id="lg-min-wheel"></div></div>
     ${typeRow}
     ${venueRow}
-    ${isGym ? "" : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>`}
+    ${isGym ? "" : isSwim
+      ? `<div class="frow"><span class="l">Distance</span><input type="text" inputmode="numeric" id="lg-m" placeholder="optional" value="${isEdit && log.m != null ? log.m : ""}"><span class="suffix">m</span></div>
+         <div class="goalpace" id="lg-pace"></div>`
+      : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>`}
     ${elevRows}
     <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
@@ -1134,7 +1147,14 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 300, value: min });
+  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 300, value: min, onChange: () => { if (isSwim) showSwimPace(); } });
+  // swim: live pace per 100 m readout under the metres field
+  const showSwimPace = () => {
+    const pl = sheet.querySelector("#lg-pace"); if (!pl) return;
+    const m = num(sheet.querySelector("#lg-m")?.value), mins = readMin();
+    pl.innerHTML = m && mins ? `≈ <b>${E.fmtPace(mins * 60 / (m / 100))}</b> /100m` : "";
+  };
+  if (isSwim) { showSwimPace(); sheet.querySelector("#lg-m")?.addEventListener("input", showSwimPace); }
   sheet.querySelectorAll("[data-lgsp]").forEach(b => b.addEventListener("click", () => {
     if (b.dataset.lgsp === sport) return;
     closeOverlay();
@@ -1156,6 +1176,8 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     min = readMin();
     const kmEl = sheet.querySelector("#lg-km");
     const km = kmEl ? num(kmEl.value) : null;
+    const mEl = sheet.querySelector("#lg-m");
+    const swimM = mEl ? num(mEl.value) : null;
     const hr = num(sheet.querySelector("#lg-hr").value);
     const mhr = num(sheet.querySelector("#lg-maxhr").value);
     const asc = sheet.querySelector("#lg-asc") ? num(sheet.querySelector("#lg-asc").value) : null;
@@ -1167,19 +1189,20 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     closeOverlay();
     persist(() => {
       if (isEdit) {
-        Object.assign(log, { sport, min, km: km ?? undefined, avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
+        Object.assign(log, { sport, min, km: isSwim ? undefined : (km ?? undefined), m: isSwim ? (swimM ?? undefined) : undefined,
+                             avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
                              ascent: asc ?? undefined, descent: desc ?? undefined, calories: cal ?? undefined,
                              aerobicTE: te ?? undefined,
                              rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined,
-                             venue: isGym ? venue : undefined });
+                             venue: (isGym || isSwim) ? venue : undefined });
       } else {
         const id = S.uid();
-        doc.logs.push({ id, date, sport, min, km: km ?? undefined,
+        doc.logs.push({ id, date, sport, min, km: isSwim ? undefined : (km ?? undefined), m: isSwim ? (swimM ?? undefined) : undefined,
                         avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined,
                         descent: desc ?? undefined, calories: cal ?? undefined, rpe: rpe ?? undefined,
                         aerobicTE: te ?? undefined,
                         note: note || undefined, type: typ ?? undefined,
-                        venue: isGym ? venue : undefined, source: "manual" });
+                        venue: (isGym || isSwim) ? venue : undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
         if (linkSession) linkSession.linkedLogId = id;
       }
@@ -1201,7 +1224,7 @@ function openUnplannedLog() {
     <div class="sh-title">Log an activity</div>
     <div class="sh-sub">Unplanned sessions count too — "other" stays out of the plan math</div>
     <div class="seg" id="ul-sport" style="flex-wrap:wrap">
-      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button><button data-sp="hike">Hike</button><button data-sp="gym">Gym</button><button data-sp="other">Other</button></div>
+      <button data-sp="run" class="on">Run</button><button data-sp="trail">Trail</button><button data-sp="bike">Ride</button>${doc.settings.activities?.swim || doc.settings.goal === "triathlon" ? `<button data-sp="swim">Swim</button>` : ""}<button data-sp="hike">Hike</button><button data-sp="gym">Gym</button><button data-sp="other">Other</button></div>
     <div class="frow"><span class="l">Date</span><input type="date" id="ul-date" value="${todayISO()}" max="${todayISO()}"></div>
     <button class="btn" id="ul-next">Continue</button>
   `);
@@ -3479,6 +3502,7 @@ function renderSettings() {
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
+      <button class="srow tog" id="st-swim"><span class="l">Swimming<span>${st.activities?.swim ? "on — log swims, charts &amp; triathlon plans" : "off — turn on to log swims &amp; train for triathlon"}</span></span><span class="switch ${st.activities?.swim ? "on" : ""}"></span></button>
       <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
     </div>`,
     targets: `<div class="scard">
@@ -3598,6 +3622,10 @@ function renderSettings() {
     title: "Target range", label: "Band", suffix: "%", step: "1", value: st.targetRangePct || 15, min: 5, max: 40,
     onSave: v => { st.targetRangePct = Math.round(v); reapplyTargets(); },
   }));
+  $("#st-swim")?.addEventListener("click", () => {
+    persist(() => { doc.settings.activities = { ...doc.settings.activities, swim: !doc.settings.activities?.swim }; });
+    renderSettings();
+  });
   $("#st-followtargets")?.addEventListener("click", () => {
     const wasFollowing = st.planFollowsTargets;
     persist(() => { if (wasFollowing) E.restorePlan(doc, st); else E.applyTargetsToPlan(doc, st, todayISO(), convS); });

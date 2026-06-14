@@ -719,6 +719,7 @@ const SPORT_MAP = {
   "Trail Running": "trail",
   "Cycling": "bike", "Road Cycling": "bike", "Mountain Biking": "bike", "Virtual Cycling": "bike", "Gravel/Unpaved Cycling": "bike",
   "Hiking": "hike",
+  "Pool Swim": "swim", "Pool Swimming": "swim", "Lap Swimming": "swim", "Open Water Swimming": "swim", "Open Water": "swim", "Swimming": "swim",
 };
 
 /* Trail runs count as runs for plan fulfilment; hiking does not. */
@@ -752,17 +753,22 @@ export function parseGarminCSV(text, overrides = {}) {
   }
   const pint = (i, r) => i >= 0 ? (parseInt((r[i] ?? "").replace(/[^\d]/g, ""), 10) || null) : null;
   const pfloat = (i, r) => { if (i < 0) return null; const v = parseFloat((r[i] ?? "").replace(/[^\d.]/g, "")); return Number.isFinite(v) ? v : null; };
-  const out = [], counts = { run: 0, bike: 0, trail: 0, hike: 0, other: 0, bad: 0 };
+  const out = [], counts = { run: 0, bike: 0, trail: 0, hike: 0, swim: 0, other: 0, bad: 0 };
   for (const r of rows.slice(1)) {
     const type = (r[iType] || "").trim();
     const sport = overrides[type] || SPORT_MAP[type] || "other";
     const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/.exec((r[iDate] || "").trim());
     const min = hmsToMin((r[iTime] || "").trim());
     if (!m || !min) { counts.bad++; continue; }
-    const km = parseFloat((r[iDist] ?? "").replace(/[",]/g, "")) || null;
+    const rawDist = parseFloat((r[iDist] ?? "").replace(/[",]/g, "")) || null;
+    // swim distance is metres (export it as km sometimes, e.g. "1.50"); keep it in `m`, never `km`
+    const isSwim = sport === "swim";
+    const swimM = isSwim && rawDist != null ? Math.round(rawDist < 50 ? rawDist * 1000 : rawDist) : undefined;
     out.push({
       date: m[1], time: `${m[2]}:${m[3]}`, sport, min,
-      km, avgHR: pint(iHR, r) ?? undefined, maxHR: pint(iMaxHR, r) ?? undefined,
+      km: isSwim ? undefined : (rawDist ?? undefined), m: swimM,
+      venue: isSwim ? (/open/i.test(type) ? "open" : "pool") : undefined,
+      avgHR: pint(iHR, r) ?? undefined, maxHR: pint(iMaxHR, r) ?? undefined,
       ascent: pint(iAsc, r) ?? undefined, descent: pint(iDesc, r) ?? undefined,
       calories: pint(iCal, r) ?? undefined,
       aerobicTE: pfloat(iTE, r) ?? undefined,
@@ -808,7 +814,7 @@ export function dedupeImports(rows, logs) {
 
 /* Fields a Garmin row can fill in on an existing log — only where the log is
    missing them (never overwrites your own data, e.g. notes/RPE/type). */
-const IMPORT_FILL_FIELDS = ["km", "avgHR", "maxHR", "ascent", "descent", "calories", "time", "aerobicTE"];
+const IMPORT_FILL_FIELDS = ["km", "m", "venue", "avgHR", "maxHR", "ascent", "descent", "calories", "time", "aerobicTE"];
 export function fillableFields(log, row) {
   const out = {};
   for (const f of IMPORT_FILL_FIELDS) if (log[f] == null && row[f] != null) out[f] = row[f];
@@ -1267,7 +1273,7 @@ const PB_DISTANCES = [
   { key: "bike40k", sport: "bike", std: 40,      band: [35, 50],     label: "40K ride" },
 ];
 export const PB_ORDER = ["run5k", "run10k", "runHalf", "runFull", "bike40k",
-                         "longestRun", "longestTrail", "longestRide", "longestHike",
+                         "longestRun", "longestTrail", "longestRide", "longestHike", "longestSwim",
                          "biggestAscent", "biggestDescent", "longestSession"];
 export const PB_LOWER_BETTER = new Set(["run5k", "run10k", "runHalf", "runFull", "bike40k"]);
 
@@ -1284,6 +1290,7 @@ export function personalBests({ logs = [], manualBests = [] } = {}) {
     if (l.sport === "trail" && l.km > 0) put("longestTrail", l.km, l, { unit: "km" });
     if (l.sport === "bike" && l.km > 0) put("longestRide", l.km, l, { unit: "km" });
     if (l.sport === "hike" && l.km > 0) put("longestHike", l.km, l, { unit: "km" });
+    if (l.sport === "swim" && l.m > 0) put("longestSwim", l.m, l, { unit: "m" });
     // biggest climb / descent across any climbing-capable sport
     if ((l.sport === "bike" || l.sport === "trail" || l.sport === "hike") && l.ascent > 0) put("biggestAscent", l.ascent, l, { unit: "m" });
     if ((l.sport === "bike" || l.sport === "trail" || l.sport === "hike") && l.descent > 0) put("biggestDescent", l.descent, l, { unit: "m" });
@@ -1306,7 +1313,7 @@ export function personalBests({ logs = [], manualBests = [] } = {}) {
 }
 function pbUnit(key) {
   if (PB_LOWER_BETTER.has(key)) return "time";
-  if (key === "biggestAscent" || key === "biggestDescent") return "m";
+  if (key === "biggestAscent" || key === "biggestDescent" || key === "longestSwim") return "m";
   if (key === "longestSession") return "min";
   return "km";
 }
@@ -1314,7 +1321,7 @@ function pbLabel(key) {
   const d = PB_DISTANCES.find(x => x.key === key);
   if (d) return d.label;
   return { longestRun: "Longest run", longestTrail: "Longest trail run", longestRide: "Longest ride",
-           longestHike: "Longest hike", biggestAscent: "Biggest climb", biggestDescent: "Biggest descent",
+           longestHike: "Longest hike", longestSwim: "Longest swim", biggestAscent: "Biggest climb", biggestDescent: "Biggest descent",
            longestSession: "Longest session" }[key] || key;
 }
 
@@ -1331,7 +1338,7 @@ export function fmtBestValue(rec) {
 }
 
 /* ---- calories ---- */
-const SPORT_LABEL = { run: "running", trail: "trail running", bike: "cycling", hike: "hiking", gym: "gym", other: "other" };
+const SPORT_LABEL = { run: "running", trail: "trail running", bike: "cycling", hike: "hiking", gym: "gym", swim: "swimming", other: "other" };
 export function caloriesInRange(logs, from, to) {
   return logs.filter(l => l.date >= from && l.date <= to && l.calories > 0)
              .reduce((a, l) => a + l.calories, 0);

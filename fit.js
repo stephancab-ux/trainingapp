@@ -4,7 +4,7 @@
    Steps come from engine.workoutSteps(). HR targets use FIT's custom HR
    convention: value = bpm + 100. */
 
-const SPORT_FIT = { run: 1, trail: 1, bike: 2, hike: 1 }; // running / cycling
+const SPORT_FIT = { run: 1, trail: 1, bike: 2, hike: 1, swim: 5 }; // running / cycling / swimming
 const INTENSITY = { active: 0, rest: 1, warmup: 2, cooldown: 3 };
 const U8_INVALID = 0xFF, U16_INVALID = 0xFFFF, U32_INVALID = 0xFFFFFFFF;
 

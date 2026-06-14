@@ -327,7 +327,7 @@ test("acceptance 9: CSV parses, maps sports, strips quoted thousands, dedupes vs
 
   const parsed = E.parseGarminCSV(csv);
   assert.equal(parsed.error, undefined);
-  assert.deepEqual(parsed.counts, { run: 2, bike: 1, trail: 0, hike: 0, other: 1, bad: 0 });
+  assert.deepEqual(parsed.counts, { run: 2, bike: 1, trail: 0, hike: 0, swim: 0, other: 1, bad: 0 });
   const ride = parsed.rows.find(r => r.sport === "bike");
   assert.equal(ride.km, 1034.56, "thousands separator stripped");
   assert.equal(ride.min, 91, "HH:MM:SS → minutes");
@@ -613,6 +613,22 @@ test("personalBests auto-derives records and manual entries win only when better
   assert.equal(withManual.find(p => p.key === "biggestAscent").value, 1500);
   const worse = E.personalBests({ logs, manualBests: [{ key: "biggestAscent", value: 100, date: "2024-01-01" }] });
   assert.equal(worse.find(p => p.key === "biggestAscent").value, 800, "a worse manual entry doesn't override");
+});
+
+test("swim: Garmin import maps to metres + venue, and longestSwim PB renders in m", () => {
+  const csv = "Activity Type,Date,Time,Distance,Avg HR\n" +
+    "Pool Swim,2026-06-01 07:00:00,00:35:00,1.50,132\n" +
+    "Open Water Swimming,2026-06-08 08:00:00,00:40:00,1800,140\n";
+  const rows = E.parseGarminCSV(csv).rows;
+  const pool = rows.find(r => r.activityType === "Pool Swim");
+  const ow = rows.find(r => r.activityType === "Open Water Swimming");
+  assert.equal(pool.sport, "swim"); assert.equal(pool.m, 1500, "1.50 km → 1500 m"); assert.equal(pool.km, undefined);
+  assert.equal(pool.venue, "pool");
+  assert.equal(ow.m, 1800, "1800 already in metres"); assert.equal(ow.venue, "open");
+  const pbs = E.personalBests({ logs: [{ id: "s1", date: "2026-06-01", sport: "swim", m: 1500, min: 35 }, { id: "s2", date: "2026-06-08", sport: "swim", m: 1800, min: 40 }] });
+  const ls = pbs.find(p => p.key === "longestSwim");
+  assert.ok(ls && ls.value === 1800 && ls.unit === "m");
+  assert.equal(E.fmtBestValue(ls), "1800 m");
 });
 
 test("coachInsights fires categories with a why, stays quiet on no data, and carries actions", () => {
