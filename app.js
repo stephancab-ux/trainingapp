@@ -51,11 +51,12 @@ const ICONS = {
   hike: `<svg viewBox="0 0 24 24"><path d="M4 22l5-9 3 3 3-7 5 13M11 7a2 2 0 1 0 0-.01"/></svg>`,
   gym: `<svg viewBox="0 0 24 24"><path d="M4 9v6M7 7v10M20 9v6M17 7v10M7 12h10"/></svg>`,
   swim: `<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="2"/><path d="M5 11l4-2.5 3.5 2.5-2.5 2 4 2.5"/><path d="M2 18c1.5 1.2 3 1.2 4.5 0s3-1.2 4.5 0 3 1.2 4.5 0 3-1.2 4.5 0"/></svg>`,
+  brick: `<svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-6.5h4.5L18 17"/><path d="M13 4l1.5 3"/></svg>`,
 };
-const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : sp === "swim" ? "swimc" : "restc";
+const sportClass = sp => sp === "run" ? "runc" : sp === "trail" ? "trailc" : sp === "bike" ? "bikec" : sp === "hike" ? "hikec" : sp === "gym" ? "gymc" : sp === "swim" ? "swimc" : sp === "brick" ? "bikec" : "restc";
 // canonical per-sport colour (categorical) — single source of truth for charts/legends
 const SPORT_COLOR = { run: "#ff7a66", trail: "#8fe06a", bike: "#8e9df8", hike: "#e0a24a", gym: "#c98bdb", swim: "#46c7e6", other: "#8b97a4" };
-const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", swim: "Swim", other: "Other" };
+const SPORT_NAME = { run: "Run", trail: "Trail run", bike: "Ride", hike: "Hike", gym: "Gym", swim: "Swim", brick: "Brick", other: "Other" };
 
 /* Exercise icons — one consistent line-figure per movement pattern (matches the
    approved mock-up). Keyed by exercise category; a small monochrome pictograph. */
@@ -142,7 +143,9 @@ function evalChip(log, plannedSession = null) {
 function kindLabel(s) {
   if (s.sport === "rest") return "Rest";
   if (s.sport === "gym") return s.venue === "gym" ? "Gym workout" : "Home workout";
-  if (s.kind === "long") return "Long ride";
+  if (s.sport === "brick") return "Brick · bike → run";
+  if (s.sport === "swim") return s.kind === "quality" ? "Threshold swim" : s.type === "endurance" ? "Endurance swim" : "Easy swim";
+  if (s.kind === "long") return E.isRunType(s) ? "Long run" : "Long ride";
   if (s.kind === "quality") {
     const t = E.QUALITY_TEMPLATES[s.qualityTemplate];
     if (t) return t.name;
@@ -437,13 +440,21 @@ function renderFirstRun() {
 const GOALS = [
   ["race", "Run a race", "5K → marathon"],
   ["cycling", "Cycling event", "a distance or sportive"],
+  ["triathlon", "Triathlon", "sprint → Ironman"],
   ["weight", "Lose weight", "toward a target weight"],
   ["strength", "Get stronger", "gym-focused"],
   ["general", "General fitness", "a balanced base"],
 ];
-const GOAL_LABEL = { race: "Run a race", cycling: "Cycling event", weight: "Lose weight", strength: "Get stronger", general: "General fitness" };
+const GOAL_LABEL = { race: "Run a race", cycling: "Cycling event", triathlon: "Triathlon", weight: "Lose weight", strength: "Get stronger", general: "General fitness" };
 const RACE_DIST = [["5", "5K"], ["10", "10K"], ["21.1", "Half"], ["42.2", "Marathon"]];
 const RIDE_DIST = [["40", "40K"], ["80", "80K"], ["100", "100K"], ["160", "160K"]];
+// triathlon distances: swim metres / bike km / run km per leg
+const TRI_DIST = [
+  ["sprint",  "Sprint",  { swim: 750,  bike: 20,  run: 5 }],
+  ["olympic", "Olympic", { swim: 1500, bike: 40,  run: 10 }],
+  ["70.3",    "70.3",    { swim: 1900, bike: 90,  run: 21.1 }],
+  ["ironman", "Ironman", { swim: 3800, bike: 180, run: 42.2 }],
+];
 
 /* The guided plan-building funnel — goal → profile → body → training, then builds
    Week 1 from the chosen mix. Reused by first-run, Today, Coach and Settings. */
@@ -453,10 +464,11 @@ function openPlanFunnel(opts = {}) {
     step: 1, goal: cs.goal || "general",
     eventDist: cs.goalEvent?.distanceKm ?? null, eventDate: cs.goalEvent?.date ?? "",
     eventTime: cs.goalEvent?.targetSec ? Math.round(cs.goalEvent.targetSec / 60) : null,
+    triDist: cs.goalEvent?.kind === "triathlon" ? cs.goalEvent.tri : null,
     lossRate: cs.lossRateKgPerWeek || 0.5,
     name: cs.name ?? "", age: cs.age ?? "", sex: cs.sex ?? null,
     height: cs.heightCm ?? "", weight: doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : "",
-    target: cs.targetWeightKg ?? 80, mix: { ...(cs.weeklyCounts || { run: 3, bike: 3, gym: 0 }) },
+    target: cs.targetWeightKg ?? 80, mix: { ...(cs.weeklyCounts || { run: 3, bike: 3, gym: 0, swim: 0 }) },
     restDay: cs.restDay || "sun", start: E.mondayOf(todayISO()), mixTouched: false,
     layout: null, layoutKey: "", swapSel: null, allowed: null,
   };
@@ -469,6 +481,8 @@ function openPlanFunnel(opts = {}) {
   const head = (title, sub) => `<div><div class="eyebrow">Build your plan</div><h1 class="page">${title}</h1>${stepsBar()}${sub ? `<p class="row-sub" style="margin-top:8px">${sub}</p>` : ""}</div>`;
   const nav = (label = "Continue") => `<button class="btn" id="fn-next">${label}</button><button class="btn ghost" id="fn-back">${state.step === 1 ? "Not now" : "Back"}</button>`;
   const isRaceish = () => state.goal === "race" || state.goal === "cycling";
+  const isTri = () => state.goal === "triathlon";
+  const triLegs = k => (TRI_DIST.find(([key]) => key === k) || [])[2];
   const go = n => { state.step = n; render(); };
   const wireNav = onNext => {
     el.querySelector("#fn-next").addEventListener("click", onNext);
@@ -480,6 +494,12 @@ function openPlanFunnel(opts = {}) {
     const isBike = state.goal === "cycling";
     el.querySelector(".wrap").innerHTML = head("Your goal", "We'll suggest a starting mix — you can tweak everything.") + `
       <div class="goalgrid">${GOALS.map(([v, l, sub]) => `<button data-goal="${v}" class="${state.goal === v ? "on" : ""}"><b>${l}</b>${sub}</button>`).join("")}</div>
+      ${isTri() ? `<div class="card" style="margin-top:12px">
+        <div class="lab" style="margin-bottom:8px">Triathlon distance</div>
+        <div class="wpg-chips">${TRI_DIST.map(([k, l]) => `<button class="fchip ${state.triDist === k ? "on" : ""}" data-tri="${k}">${l}</button>`).join("")}</div>
+        ${state.triDist ? `<p class="row-sub" style="margin-top:7px">${triLegs(state.triDist).swim} m swim · ${triLegs(state.triDist).bike} km bike · ${triLegs(state.triDist).run} km run</p>` : ""}
+        <div class="frow" style="border:none;margin-top:4px"><span class="l">Event date</span><input type="date" id="fn-date" value="${state.eventDate}"></div>
+      </div>` : ""}
       ${isRaceish() ? `<div class="card" style="margin-top:12px">
         <div class="lab" style="margin-bottom:8px">Target ${isBike ? "ride" : "race"} <span class="row-sub">· optional</span></div>
         <div class="wpg-chips">${dists.map(([v, l]) => `<button class="fchip ${String(state.eventDist) === v ? "on" : ""}" data-dist="${v}">${l}</button>`).join("")}</div>
@@ -522,6 +542,7 @@ function openPlanFunnel(opts = {}) {
     }
     el.querySelectorAll("[data-goal]").forEach(b => b.addEventListener("click", () => { grab(); state.goal = b.dataset.goal; if (!state.mixTouched) state.mix = { ...E.goalDefaults(state.goal, { lossKg: state.lossRate }).mix }; render(); }));
     el.querySelectorAll("[data-dist]").forEach(b => b.addEventListener("click", () => { grab(); state.eventDist = state.eventDist === +b.dataset.dist ? null : +b.dataset.dist; render(); }));
+    el.querySelectorAll("[data-tri]").forEach(b => b.addEventListener("click", () => { grab(); state.triDist = state.triDist === b.dataset.tri ? null : b.dataset.tri; render(); }));
     const dx = el.querySelector("#fn-distx");
     if (dx) {
       dx.addEventListener("input", () => { const v = num(dx.value); state.eventDist = v; showPace(); showRealism(); });
@@ -582,11 +603,14 @@ function openPlanFunnel(opts = {}) {
     wireNav(() => { state.height = num(el.querySelector("#fn-h").value); state.weight = num(el.querySelector("#fn-w").value); state.target = num(el.querySelector("#fn-tw").value) || state.target; go(4); });
   }
   function renderMix() {
-    const total = () => state.mix.run + state.mix.bike + state.mix.gym;
+    state.mix.swim = state.mix.swim || 0;
+    const showSwim = state.goal === "triathlon" || doc.settings.activities?.swim || state.mix.swim > 0;
+    const total = () => state.mix.run + state.mix.bike + state.mix.gym + (state.mix.swim || 0);
     el.querySelector(".wrap").innerHTML = head("Your weekly mix", E.goalDefaults(state.goal, { lossKg: state.lossRate }).reason) + `
       <div class="card">
         <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="fn-run">${state.mix.run}</b><button data-d="1">+</button></span></div>
         <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="fn-bike">${state.mix.bike}</b><button data-d="1">+</button></span></div>
+        ${showSwim ? `<div class="mixrow" data-k="swim"><span class="l">Swims</span><span class="ud"><button data-d="-1">−</button><b id="fn-swim">${state.mix.swim}</b><button data-d="1">+</button></span></div>` : ""}
         <div class="mixrow" data-k="gym" style="border:none"><span class="l">Gym</span><span class="ud"><button data-d="-1">−</button><b id="fn-gym">${state.mix.gym}</b><button data-d="1">+</button></span></div>
       </div>
       <div class="card">
@@ -614,9 +638,9 @@ function openPlanFunnel(opts = {}) {
   }
   function renderLayout() {
     const key = JSON.stringify([state.mix, state.restDay]);
-    if (state.layoutKey !== key) { state.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay }); state.layoutKey = key; }
+    if (state.layoutKey !== key) { state.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, swim: state.mix.swim || 0, restDay: state.restDay }); state.layoutKey = key; }
     for (const d of E.DAYS) state.layout[d] = (Array.isArray(state.layout[d]) ? state.layout[d] : [state.layout[d]]).filter(x => x && x !== "rest").map(x => x === "bike-long" ? "bike" : x);
-    const budget = { run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym };
+    const budget = { run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, swim: state.mix.swim || 0 };
     el.querySelector(".wrap").innerHTML = head("Weekly layout", "Tap + to place each activity on a day — two on one day is fine, capped by your mix.") + `
       <div class="card"><div class="frow" style="border:none"><span class="l">Rest day</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end;gap:3px">${E.DAYS.map(d => `<button data-rest="${d}" style="flex:0 0 36px;padding:0" class="${state.restDay === d ? "on" : ""}">${d[0].toUpperCase()}${d[1]}</button>`).join("")}</span></div></div>
       ${layoutEditorBody(state.layout, budget, state.restDay)}
@@ -660,10 +684,18 @@ function openPlanFunnel(opts = {}) {
       if (state.height) s.heightCm = Math.round(state.height);
       if (state.target) s.targetWeightKg = state.target;
       s.goal = state.goal;
-      s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null, targetSec: (state.eventDist && state.eventTime) ? Math.round(state.eventTime * 60) : null } : null;
+      if (state.goal === "triathlon" && state.triDist) {
+        const lg = TRI_DIST.find(([k]) => k === state.triDist)[2];
+        s.goalEvent = { kind: "triathlon", tri: state.triDist, date: state.eventDate || null,
+          legs: { swim: { m: lg.swim }, bike: { m: Math.round(lg.bike * 1000) }, run: { m: Math.round(lg.run * 1000) } },
+          distanceKm: Math.round((lg.swim / 1000 + lg.bike + lg.run) * 10) / 10 };
+        s.activities = { ...s.activities, swim: true };
+      } else {
+        s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null, targetSec: (state.eventDist && state.eventTime) ? Math.round(state.eventTime * 60) : null } : null;
+      }
       s.weeklyCounts = { ...state.mix };
       s.restDay = state.restDay;
-      s.layout = state.layout || E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay });
+      s.layout = state.layout || E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, swim: state.mix.swim || 0, restDay: state.restDay });
       if (state.allowed) s.allowedTypes = { ...state.allowed };
       if (state.weight) {
         doc.weighIns = doc.weighIns.filter(w => w.date !== todayISO());
@@ -1828,6 +1860,7 @@ function comingWeeksCard() {
 /* The planned session's workout type, used to prefill the log sheet. */
 function typeOfSession(s) {
   if (!s || s.sport === "rest") return null;
+  if (s.sport === "swim") return s.kind === "quality" ? "threshold" : (s.type || "endurance");
   if (s.kind === "long") return "long";
   if (s.kind === "quality") return E.QUALITY_TEMPLATES[s.qualityTemplate]?.family || "intervals";
   return "easy";
@@ -1844,6 +1877,12 @@ function sessionTypeOptions(sport) {
     a.runHills !== false && { id: "runHills", label: "Hills", kind: "quality", tpl: "runHills" },
     a.longRun !== false && { id: "long", label: "Long", kind: "long" },
   ].filter(Boolean);
+  if (sport === "swim") return [
+    { id: "easy", label: "Easy", kind: "easy" },
+    { id: "endurance", label: "Endurance", kind: "easy" },
+    { id: "threshold", label: "Threshold", kind: "quality" },
+    { id: "intervals", label: "Intervals", kind: "quality" },
+  ];
   return [
     a.easyRide !== false && { id: "easy", label: "Easy", kind: "easy" },
     a.bikeIntervals !== false && { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" },
@@ -2500,7 +2539,7 @@ function openLogActivity() {
 function openAdhocWorkout() {
   // every activity is offered — the "Workouts allowed" toggles are for the PLAN,
   // not for spontaneously doing a workout today (the two are independent)
-  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["hike", "Hike"], ["gym", "Gym"]];
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ...(doc.settings.activities?.swim || doc.settings.goal === "triathlon" ? [["swim", "Swim"]] : []), ["hike", "Hike"], ["gym", "Gym"]];
   const sheet = openSheet(`
     <div class="sh-title">Do a workout</div>
     <div class="sh-sub">A one-off for today — not part of your program. We'll suggest one sized to your training.</div>
@@ -2525,6 +2564,7 @@ const ADHOC_TYPES = {
   trail: [{ id: "easy", label: "Easy", kind: "easy" }, { id: "long", label: "Long", kind: "long" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "trailHilly", label: "Hilly", kind: "easy" }],
   bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
   hike:  [{ id: "short", label: "Short", kind: "easy" }, { id: "day", label: "Day hike", kind: "easy" }, { id: "bigday", label: "Big day", kind: "long" }],
+  swim:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "endurance", label: "Endurance", kind: "easy" }, { id: "threshold", label: "Threshold", kind: "quality" }, { id: "intervals", label: "Intervals", kind: "quality" }],
 };
 function openAdhocSession(sport, opts = {}) {
   const vo2 = !!opts.vo2;
@@ -3517,7 +3557,7 @@ function renderSettings() {
       <button class="srow" id="st-pace"><span class="l">Easy pace<span>your run pace hint until the app has learned</span></span><span class="v ${st.easyPace ? "" : "add"}">${st.easyPace ? `${E.fmtPace(st.easyPace.lo)}–${E.fmtPace(st.easyPace.hi)}` : "Auto"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-quality"><span class="l">Intervals<span>${st.qualityOverride ? "manually unlocked — the gate is off" : "earned after 3 consistent weeks"}</span></span><span class="v ${st.qualityOverride ? "add" : ""}">${st.qualityOverride ? "Unlocked" : qstate().run ? "Earned" : "Locked"}</span><span class="chev">›</span></button>
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
-        <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
+        <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "swim" ? "ls" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
       <button class="srow tog" id="st-swim"><span class="l">Swimming<span>${st.activities?.swim ? "on — log swims, charts &amp; triathlon plans" : "off — turn on to log swims &amp; train for triathlon"}</span></span><span class="switch ${st.activities?.swim ? "on" : ""}"></span></button>
       <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
     </div>`,
@@ -3897,13 +3937,13 @@ function openGrowthSheet() {
 }
 
 /* ---- shared budget-capped layout editor (funnel + Settings) ---- */
-const LY_SP = { run: ["lr", "Run"], bike: ["lb", "Ride"], "bike-long": ["lb", "Long ride"], gym: ["lg", "Gym"] };
+const LY_SP = { run: ["lr", "Run"], bike: ["lb", "Ride"], "bike-long": ["lb", "Long ride"], gym: ["lg", "Gym"], swim: ["ls", "Swim"] };
 function layPlaced(lay, sp) {
   return E.DAYS.reduce((n, d) => n + (lay[d] || []).filter(x => x === sp || (sp === "bike" && x === "bike-long")).length, 0);
 }
 /* day rows of placed-activity chips + per-sport add buttons, capped by `budget`. */
 function layoutEditorBody(lay, budget, restDay) {
-  const sports = [["run", "+ run"], ["bike", "+ ride"], ["gym", "+ gym"]].filter(([k]) => budget[k] > 0);
+  const sports = [["run", "+ run"], ["bike", "+ ride"], ["swim", "+ swim"], ["gym", "+ gym"]].filter(([k]) => budget[k] > 0);
   const header = `<div class="lybudget">${sports.map(([k]) => `<span>${LY_SP[k][1]} <b>${layPlaced(lay, k)}/${budget[k]}</b></span>`).join("")}</div>`;
   const rows = E.DAYS.filter(d => d !== restDay).map(d => {
     const arr = (lay[d] || []).filter(v => v !== "rest");
@@ -3928,7 +3968,7 @@ function bindLayoutEditor(root, lay, budget, restDay, rerender) {
 function finalizeLayout(lay, budget, restDay) {
   const out = {}; for (const d of E.DAYS) out[d] = (lay[d] || []).filter(v => v !== "rest").map(v => v === "bike-long" ? "bike" : v);
   const active = E.DAYS.filter(d => d !== restDay);
-  for (const sp of ["run", "bike", "gym"]) {
+  for (const sp of ["run", "bike", "gym", "swim"]) {
     while (layPlaced(out, sp) < (budget[sp] || 0) && active.length) {
       const d = active.slice().sort((a, b) => out[a].length - out[b].length)[0]; out[d].push(sp);
     }
@@ -3978,11 +4018,11 @@ function openLayoutEditor() {
     persist(() => {
       doc.settings.layout = final;
       const idx = weekIndex(w), qs = qstate(), allow = doc.settings.allowedTypes, di = E.dayIndex(todayISO());
-      const { week: nw } = E.relayoutWeek({ week: w, runCount: budget.run, bikeCount: budget.bike, gymCount: budget.gym, restDay, layout: final,
+      const { week: nw } = E.relayoutWeek({ week: w, runCount: budget.run, bikeCount: budget.bike, gymCount: budget.gym, swimCount: budget.swim || 0, restDay, layout: final,
         quality: { run: qs.run, bike: qs.bike }, runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow), bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
         climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: w.weekNum, settings: doc.settings }), gymVenue: doc.settings.gymVenueDefault || "home", gymHard: allow.gymStrength !== false });
       w.sessions = [...w.sessions.filter(s => E.DAYS.indexOf(s.day) <= di), ...nw.sessions.filter(s => E.DAYS.indexOf(s.day) > di)];
-      w.targetMin = { run: E.sumSessions(w.sessions, "run"), bike: E.sumSessions(w.sessions, "bike"), gym: E.sumSessions(w.sessions, "gym") };
+      w.targetMin = E.sportTargets(w.sessions);
     });
     toast("Applied to this week");
   };

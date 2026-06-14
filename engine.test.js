@@ -42,7 +42,7 @@ test("acceptance 1: week 1 plan matches the spec table", () => {
     const [day, sport, kind, min, zone] = expect[i];
     assert.deepEqual([s.day, s.sport, s.kind, s.targetMin, s.zone], [day, sport, kind, min, zone]);
   });
-  assert.deepEqual(w.targetMin, { run: 105, bike: 255, gym: 0 });
+  assert.deepEqual(w.targetMin, { run: 105, bike: 255, gym: 0, swim: 0 });
 });
 
 /* ---------- 2. +7 % recommendation, +10 % override, run cap ---------- */
@@ -1115,6 +1115,32 @@ test("recommendWorkout: recovery-first, else fills the load-focus gap", () => {
   assert.equal(E.recommendWorkout({ ...base, logs: [] }, "run", today).kind, "long");
   // hike / gym unsupported
   assert.equal(E.recommendWorkout(base, "hike", today), null);
+});
+
+test("triathlon: 4-sport mix, swim scheduling, bricks, week build", () => {
+  // goalDefaults triathlon → bike-led 4-sport mix
+  assert.deepEqual(E.goalDefaults("triathlon").mix, { run: 3, bike: 3, gym: 0, swim: 2 });
+  // placeLayout places swims (stacking allowed)
+  const lay = E.placeLayout({ run: 3, bike: 3, gym: 0, swim: 2, restDay: "sun" });
+  const swims = E.DAYS.reduce((n, d) => n + (lay[d] || []).filter(x => x === "swim").length, 0);
+  assert.equal(swims, 2, "two swims placed");
+  // buildSessions emits swim sessions; sumSessions counts them
+  const ss = E.buildSessions(105, 180, 0, lay, { swimMin: 70 });
+  assert.equal(ss.filter(s => s.sport === "swim").length, 2);
+  assert.equal(E.sumSessions(ss, "swim"), 70, "swim minutes total");
+  // a brick is one session whose legs count into bike + run
+  const withBrick = E.buildSessions(105, 180, 0, lay, { swimMin: 70, brick: true });
+  const brick = withBrick.find(s => s.sport === "brick");
+  assert.ok(brick && brick.legs.length === 2, "one brick with two legs");
+  assert.equal(brick.targetMin, brick.legs[0].targetMin + brick.legs[1].targetMin);
+  assert.ok(E.sumSessions(withBrick, "run") > E.sumSessions(ss, "run"), "brick adds a run leg to the run total");
+  // firstWeekFromMix for a triathlon includes swims, a brick, and swim in targetMin
+  const wk = E.firstWeekFromMix("2026-06-15", { goal: "triathlon", weeklyCounts: { run: 3, bike: 3, gym: 0, swim: 2 }, restDay: "sun" });
+  assert.ok(wk.targetMin.swim > 0 && wk.sessions.some(s => s.sport === "swim"));
+  assert.ok(wk.sessions.some(s => s.sport === "brick"), "triathlon week has a brick");
+  // existing 3-sport build is unchanged (no swim, no brick) when swim:0
+  const plain = E.firstWeekFromMix("2026-06-15", { weeklyCounts: { run: 3, bike: 2, gym: 0 }, restDay: "sun" });
+  assert.ok(!plain.sessions.some(s => s.sport === "swim" || s.sport === "brick"));
 });
 
 test("recommendBurnGoal / recommendClimbTarget / recommendGrowthRate suggest, with nulls", () => {

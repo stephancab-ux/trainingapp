@@ -299,6 +299,7 @@ svg text{font-family:inherit}
 .lb{background:rgba(142,157,248,.16);color:var(--bike)}
 .lx{background:#1a242f;color:var(--mut)}
 .lg{background:rgba(201,139,219,.18);color:#c98bdb}
+.ls{background:rgba(70,199,230,.18);color:#46c7e6}
 
 /* ---------- first run & recovery ---------- */
 .firstrun{position:fixed;inset:0;z-index:55;background:var(--bg);overflow-y:auto}

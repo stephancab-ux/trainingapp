@@ -3,7 +3,7 @@
 import { generateWeek1 } from "./engine.js";
 
 export const KEY = "remonte.v1";
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /* The Progress cards in their default order; `on` = shown out of the box.
    v1.6 merged pairs behind a toggle: load (focus/daily), speedByType (run/ride),
@@ -67,7 +67,7 @@ export function defaultSettings() {
     activities: { swim: false },
     // weekly mix — the source of truth that auto-schedules the plan; the
     // per-day layout above is derived from these (and hand-editable).
-    weeklyCounts: { run: 3, bike: 3, gym: 0 },
+    weeklyCounts: { run: 3, bike: 3, gym: 0, swim: 0 },
     gymVenueDefault: "home",
     // home equipment the user owns — gates which home exercises can be picked
     equipment: {
@@ -245,18 +245,22 @@ const MIGRATIONS = {
     }
     return { ...d, settings: { ...d.settings, progressCards: merged }, schemaVersion: 8 };
   },
+  // v9: swim becomes a first-class activity — settings.activities + weeklyCounts.swim
+  // + targetMin.swim all default via the merges/backfills below. No reshaping needed.
+  8: d => ({ ...d, schemaVersion: 9 }),
 };
 
 /* Count run / bike / gym sessions in a day→sport layout map (handles arrays
    and the bike-long token) so an upgrading user keeps their current mix. */
 function deriveCountsFromLayout(layout) {
-  const counts = { run: 0, bike: 0, gym: 0 };
+  const counts = { run: 0, bike: 0, gym: 0, swim: 0 };
   for (const day of Object.keys(layout || {})) {
     const v = layout[day];
     for (const tok of Array.isArray(v) ? v : [v]) {
       if (tok === "run") counts.run++;
       else if (tok === "bike" || tok === "bike-long") counts.bike++;
       else if (tok === "gym") counts.gym++;
+      else if (tok === "swim") counts.swim++;
     }
   }
   if (!counts.run && !counts.bike) return { run: 3, bike: 3, gym: 0 };
@@ -283,6 +287,7 @@ export function migrate(doc) {
   for (const k of ["weeks", "logs", "checkins", "weighIns", "vo2History"]) d[k] ||= [];
   // weeks built before gym had no `gym` stream — backfill so the math is safe
   for (const w of d.weeks) if (w.targetMin && w.targetMin.gym == null) w.targetMin.gym = 0;
+  for (const w of d.weeks) if (w.targetMin && w.targetMin.swim == null) w.targetMin.swim = 0;
   d.manualBests ||= [];
   d.coachDismissed ||= {};
   d.coachSeen ||= {};

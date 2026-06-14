@@ -230,7 +230,7 @@ export function generateWeek1(startDate) {
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum: 1, isDeload: false,
-    sessions, targetMin: { run: 105, bike: 255, gym: 0 },
+    sessions, targetMin: { run: 105, bike: 255, gym: 0, swim: 0 },
   };
 }
 
@@ -240,6 +240,7 @@ export function generateWeek1(startDate) {
    its `slot` (0/1) so a day can carry two sessions. */
 export function buildSessions(runMin, bikeMin, gymMin, layout, opts = {}) {
   const { deload = false, quality = { run: false, bike: false, gym: false }, climbTarget = null } = opts;
+  const swimMin = opts.swimMin || 0;
   const runQTemplate = opts.runQTemplate || "runQ1";
   const bikeQTemplate = opts.bikeQTemplate || "bikeQ1";
   const gymVenue = opts.gymVenue || "home";
@@ -255,9 +256,13 @@ export function buildSessions(runMin, bikeMin, gymMin, layout, opts = {}) {
   const runEntries = entries.filter(e => e.what === "run");
   const bikeEntries = entries.filter(e => e.what === "bike" || e.what === "bike-long");
   const gymEntries = entries.filter(e => e.what === "gym");
+  const swimEntries = entries.filter(e => e.what === "swim");
   const runSplit = splitMinutes(runMin, runEntries.map(() => 1));
   let bikeSplit = splitMinutes(bikeMin, bikeEntries.map(e => e.what === "bike-long" ? 2 : 1));
   const gymSplit = splitMinutes(gymMin, gymEntries.map(() => 1)).map(snapGymMinutes);
+  const swimSplit = splitMinutes(swimMin, swimEntries.map(() => 1));
+  // one threshold swim per week when swim quality is unlocked
+  const qSwimDay = (quality.swim && !deload && swimEntries.length) ? swimEntries[swimEntries.length - 1].day : null;
 
   const longIdx = bikeEntries.findIndex(e => e.what === "bike-long");
   if (longIdx >= 0 && bikeSplit[longIdx] > longCap) {
@@ -282,10 +287,18 @@ export function buildSessions(runMin, bikeMin, gymMin, layout, opts = {}) {
   const qGymDay = quality.gym && !deload && gymEntries.length
     ? (gymEntries.map(e => e.day).find(d => !hardDays.has(d) && !adjacent(d)) || null) : null;
 
-  let ri = 0, bi = 0, gi = 0, qRunUsed = false, qBikeUsed = false, qGymUsed = false;
+  let ri = 0, bi = 0, gi = 0, si = 0, qRunUsed = false, qBikeUsed = false, qGymUsed = false, qSwimUsed = false;
   const out = [];
   for (const e of entries) {
     if (e.what === "rest") { out.push({ day: e.day, slot: e.slot, sport: "rest", kind: "rest", targetMin: 0, zone: 0 }); continue; }
+    if (e.what === "swim") {
+      const min = swimSplit[si++];
+      const hard = e.day === qSwimDay && !qSwimUsed && min > 0;
+      if (hard) qSwimUsed = true;
+      out.push({ day: e.day, slot: e.slot, sport: "swim", kind: hard ? "quality" : "easy", targetMin: min,
+                 zone: hard ? 3 : 2, type: hard ? "threshold" : "endurance" });
+      continue;
+    }
     if (e.what === "run") {
       const min = runSplit[ri++];
       if (e.day === qRunDay && !qRunUsed && min > 0) {
@@ -313,11 +326,31 @@ export function buildSessions(runMin, bikeMin, gymMin, layout, opts = {}) {
       out.push(s);
     } else out.push({ day: e.day, slot: e.slot, sport: "bike", kind, targetMin: min, zone: 2 });
   }
+  // brick (triathlon): turn the long ride into a back-to-back bike→run on its day
+  if (opts.brick) {
+    const ride = out.find(s => s.sport === "bike" && s.kind === "long") || out.find(s => s.sport === "bike");
+    if (ride) {
+      const runTail = deload ? 15 : 20;
+      delete ride.qualityTemplate;
+      ride.sport = "brick"; ride.kind = "brick";
+      ride.legs = [{ sport: "bike", targetMin: ride.targetMin, zone: 2 }, { sport: "run", targetMin: runTail, zone: 2 }];
+      ride.targetMin = ride.targetMin + runTail;
+    }
+  }
   return out;
 }
 
 export function sumSessions(sessions, sport) {
-  return sessions.filter(s => s.sport === sport).reduce((a, s) => a + s.targetMin, 0);
+  return sessions.reduce((a, s) => {
+    if (s.sport === sport) return a + (s.targetMin || 0);
+    // a brick holds two back-to-back legs — count each leg toward its sport
+    if (s.sport === "brick" && Array.isArray(s.legs)) return a + s.legs.filter(l => l.sport === sport).reduce((x, l) => x + (l.targetMin || 0), 0);
+    return a;
+  }, 0);
+}
+/* Per-sport planned minutes for a session list (the week's targetMin shape). */
+export function sportTargets(sessions) {
+  return { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym"), swim: sumSessions(sessions, "swim") };
 }
 
 /* §7.2 — next load week from the last load week. Run growth hard-capped at
@@ -328,22 +361,24 @@ export function planNextWeek({ prevLoadWeek, chosenRate, settings, startDate, we
   const prevRun = prevLoadWeek.targetMin.run;
   const prevBike = prevLoadWeek.targetMin.bike;
   const prevGym = prevLoadWeek.targetMin.gym || 0;
-  const prevTotal = prevRun + prevBike + prevGym;
+  const prevSwim = prevLoadWeek.targetMin.swim || 0;
+  const prevTotal = prevRun + prevBike + prevGym + prevSwim;
   const total = prevTotal * (1 + chosenRate);
-  // run and gym are load-sensitive → capped at +10 %/wk; the bike absorbs the rest
+  // run, gym and swim are load-sensitive → capped at +10 %/wk; the bike absorbs the rest
   const runT = Math.min(prevRun * 1.10, (prevRun / prevTotal) * total);
   const gymT = prevGym === 0 ? 0 : Math.min(prevGym * 1.10, (prevGym / prevTotal) * total);
-  const bikeT = total - runT - gymT;
+  const swimT = prevSwim === 0 ? 0 : Math.min(prevSwim * 1.10, (prevSwim / prevTotal) * total);
+  const bikeT = total - runT - gymT - swimT;
   const gymHard = settings.allowedTypes ? settings.allowedTypes.gymStrength !== false : true;
   const q = noQuality ? { run: false, bike: false, gym: false }
     : { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate, gym: gymHard };
   const climbTarget = climbTargetAscent({ logs, weekNum, settings });
   const sessions = buildSessions(runT, bikeT, gymT, settings.layout,
-    { quality: q, runQTemplate, bikeQTemplate, longCap: 210, climbTarget,
-      gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate });
+    { quality: q, runQTemplate, bikeQTemplate, swimMin: swimT, brick: settings.goal === "triathlon" && prevBike > 0 && prevRun > 0,
+      longCap: 210, climbTarget, gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: false, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+    targetMin: sportTargets(sessions),
     rate: chosenRate,
   };
 }
@@ -353,6 +388,8 @@ export function planNextWeek({ prevLoadWeek, chosenRate, settings, startDate, we
 export function deloadWeek({ prevLoadWeek, startDate, weekNum }) {
   const sessions = prevLoadWeek.sessions.map(s => {
     if (s.sport === "rest") return { ...s };
+    if (s.sport === "brick") return { day: s.day, slot: s.slot, sport: "brick", kind: "brick", zone: 2,
+      legs: (s.legs || []).map(l => ({ ...l, targetMin: round5(l.targetMin * 0.6) })), targetMin: round5(s.targetMin * 0.6) };
     if (s.sport === "gym") {
       return { day: s.day, slot: s.slot, sport: "gym", kind: "easy",
                targetMin: snapGymMinutes(round5(s.targetMin * 0.6)), venue: s.venue || "home",
@@ -365,7 +402,7 @@ export function deloadWeek({ prevLoadWeek, startDate, weekNum }) {
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: true, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+    targetMin: sportTargets(sessions),
     rate: 0,
   };
 }
@@ -391,6 +428,8 @@ export function taperWeek({ prevLoadWeek, startDate, weekNum, weeksOut }) {
   const keepQuality = weeksOut >= 1;
   const sessions = prevLoadWeek.sessions.map(s => {
     if (s.sport === "rest") return { ...s };
+    if (s.sport === "brick") return { day: s.day, slot: s.slot, sport: "brick", kind: "brick", zone: 2,
+      legs: (s.legs || []).map(l => ({ ...l, targetMin: round5(l.targetMin * factor) })), targetMin: round5(s.targetMin * factor) };
     if (s.sport === "gym") {
       return { day: s.day, slot: s.slot, sport: "gym", kind: "easy",
                targetMin: snapGymMinutes(round5(s.targetMin * factor)), venue: s.venue || "home",
@@ -407,7 +446,7 @@ export function taperWeek({ prevLoadWeek, startDate, weekNum, weeksOut }) {
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum, isDeload: false, taper: weeksOut, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+    targetMin: sportTargets(sessions),
     rate: factor - 1,
   };
 }
@@ -421,14 +460,14 @@ export function lastLoadWeek(weeks) {
 /* ---------------- completion (§7.4) ---------------- */
 
 export function plannedMinutes(week) {
-  return week.targetMin.run + week.targetMin.bike + (week.targetMin.gym || 0);
+  return week.targetMin.run + week.targetMin.bike + (week.targetMin.gym || 0) + (week.targetMin.swim || 0);
 }
 
 export function loggedMinutes(week, logs) {
   const end = addDays(week.startDate, 6);
   return logs
     .filter(l => l.date >= week.startDate && l.date <= end &&
-                 (isRunType(l) || l.sport === "bike" || l.sport === "gym") && l.source !== "seed")
+                 (isRunType(l) || l.sport === "bike" || l.sport === "gym" || l.sport === "swim") && l.source !== "seed")
     .reduce((a, l) => a + (l.min || 0), 0);
 }
 
@@ -563,7 +602,7 @@ function spreadPick(arr, k) {
 /* Fatigue-aware day assignment around a configurable rest day. Returns
    day → [sports]. ≤ 6 sessions = one per day; a 7th/8th lands as a second
    session on the freshest day (farthest from the long/hard day). */
-export function placeLayout({ run, bike, gym = 0, restDay = "sun" }) {
+export function placeLayout({ run, bike, gym = 0, swim = 0, restDay = "sun" }) {
   const layout = {}; DAYS.forEach(d => { layout[d] = []; });
   const active = DAYS.filter(d => d !== restDay);
   const total = run + bike + gym;
@@ -593,6 +632,11 @@ export function placeLayout({ run, bike, gym = 0, restDay = "sun" }) {
     else if (assigned.run < run) { layout[d].push("run"); assigned.run++; }
     else break;
   }
+  // swims are low-impact cross-training — drop each on the currently lightest active day (stacking is fine)
+  for (let k = 0; k < swim; k++) {
+    const lightest = active.reduce((best, d) => layout[d].length < layout[best].length ? d : best, active[0]);
+    layout[lightest].push("swim");
+  }
   for (const d of DAYS) if (!layout[d].length) layout[d] = ["rest"];
   return layout;
 }
@@ -612,6 +656,7 @@ export function goalDefaults(goal, opts = {}) {
   switch (goal) {
     case "race":     return { mix: { run: 4, bike: 1, gym: 0 }, allowed: ["longRun", "runTempo", "runIntervals"], reason: "Run-focused with a long run and tempo work to build race endurance." };
     case "cycling":  return { mix: { run: 1, bike: 4, gym: 0 }, allowed: ["longRide", "bikeClimb", "bikeIntervals"], reason: "Ride-focused with a long ride and climbing to build cycling endurance." };
+    case "triathlon": return { mix: { run: 3, bike: 3, gym: 0, swim: 2 }, allowed: ["longRide", "longRun", "bikeClimb"], reason: "A bike-led triathlon base — endurance across swim, bike and run, with a weekly brick (bike→run)." };
     case "weight": {
       // Faster loss = more sessions (volume) and harder work (intensity).
       const rate = opts.lossKg || 0.5;
@@ -633,29 +678,36 @@ export function goalDefaults(goal, opts = {}) {
    reflects the chosen run/ride/gym counts instead of the fixed generateWeek1 table. */
 export function firstWeekFromMix(startDate, settings, layout) {
   const c = settings.weeklyCounts || { run: 3, bike: 3, gym: 0 };
+  const swim = c.swim || 0;
   const restDay = settings.restDay || "sun";
-  if (!layout) layout = placeLayout({ run: c.run, bike: c.bike, gym: c.gym, restDay });
+  if (!layout) layout = placeLayout({ run: c.run, bike: c.bike, gym: c.gym, swim, restDay });
   const sessions = buildSessions(35 * c.run, 60 * c.bike, 45 * c.gym, layout, {
-    deload: false, quality: { run: false, bike: false, gym: false },
+    deload: false, quality: { run: false, bike: false, gym: false, swim: false },
+    swimMin: 35 * swim, brick: settings.goal === "triathlon" && c.bike > 0 && c.run > 0,
     gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate,
   });
   return {
     id: isoWeekId(startDate), startDate, weekNum: 1, isDeload: false, sessions,
-    targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") },
+    targetMin: sportTargets(sessions),
   };
 }
 
 /* True if a layout value (string or array) contains a run. */
 function hasRun(v) { return Array.isArray(v) ? v.includes("run") : v === "run"; }
 
-export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunMin = null, restDay = null,
+export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, swimCount = null, prevRunMin = null, restDay = null,
                                quality = { run: false, bike: false },
                                runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", climbTarget = null,
-                               gymVenue = "home", gymHard = true, layout = null }) {
+                               gymVenue = "home", gymHard = true, layout = null, brick = null }) {
   const warnings = [];
   const oldRuns = week.sessions.filter(s => s.sport === "run").length;
   const oldBikes = week.sessions.filter(s => s.sport === "bike").length;
   const oldGyms = week.sessions.filter(s => s.sport === "gym").length;
+  const oldSwims = week.sessions.filter(s => s.sport === "swim").length;
+  const hadBrick = week.sessions.some(s => s.sport === "brick");
+  // unless told otherwise, keep the week's existing swims + brick (so relayout/mix-change paths don't drop them)
+  if (swimCount == null) swimCount = oldSwims;
+  if (brick == null) brick = hadBrick;
   const restDays = week.sessions.filter(s => s.sport === "rest").map(s => s.day);
   const rest = restDay || (restDays.includes("sun") || !restDays.length ? "sun" : restDays[0]);
 
@@ -664,8 +716,9 @@ export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunM
   const bikeMin = oldBikes > 0 ? week.targetMin.bike * (bikeCount / oldBikes) : 60 * bikeCount;
   // introducing gym mid-program bootstraps from a 45-min base per session
   const gymMin = oldGyms > 0 ? (week.targetMin.gym || 0) * (gymCount / oldGyms) : 45 * gymCount;
+  const swimMin = oldSwims > 0 ? (week.targetMin.swim || 0) * (swimCount / oldSwims) : 35 * swimCount;
 
-  const lay = layout || placeLayout({ run: runCount, bike: bikeCount, gym: gymCount, restDay: rest });
+  const lay = layout || placeLayout({ run: runCount, bike: bikeCount, gym: gymCount, swim: swimCount, restDay: rest });
 
   for (let i = 0; i < DAYS.length - 1; i++) {
     if (hasRun(lay[DAYS[i]]) && hasRun(lay[DAYS[i + 1]])) { warnings.push("consecutive-runs"); break; }
@@ -673,11 +726,11 @@ export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunM
 
   const q = { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate, gym: gymHard && !week.isDeload };
   const sessions = buildSessions(runMin, bikeMin, gymMin, lay,
-    { deload: week.isDeload, quality: q, runQTemplate, bikeQTemplate,
+    { deload: week.isDeload, quality: q, runQTemplate, bikeQTemplate, swimMin, brick: brick && bikeCount > 0 && runCount > 0,
       longCap: week.isDeload ? 90 : 210, climbTarget, gymVenue, weekSalt: week.startDate });
   return {
     week: { ...week, sessions,
-            targetMin: { run: sumSessions(sessions, "run"), bike: sumSessions(sessions, "bike"), gym: sumSessions(sessions, "gym") } },
+            targetMin: sportTargets(sessions) },
     warnings,
   };
 }
@@ -1786,6 +1839,14 @@ export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1
     };
     const t = tiers[typeId] || tiers.day;
     return { targetMin: t.targetMin, zone: 1, note: t.note, targetAscent: t.targetAscent };
+  }
+
+  if (sport === "swim") {
+    const recent = logs.filter(l => l.sport === "swim" && l.min > 0).slice(-6).map(l => l.min);
+    const base = round5(med(recent) || 35);
+    if (typeId === "threshold" || typeId === "intervals")
+      return { targetMin: base, zone: 3, type: typeId, note: typeId === "intervals" ? "Swim intervals near your CSS pace — e.g. 8–10 × 100 m." : "Threshold swim — steady, strong, around your CSS pace." };
+    return { targetMin: base, zone: 2, type: typeId === "endurance" ? "endurance" : "easy", note: "Smooth, relaxed swimming — focus on form." };
   }
 
   if (QUALITY_TEMPLATES[typeId]) {
