@@ -427,12 +427,13 @@ function openPlanFunnel() {
     height: cs.heightCm ?? "", weight: doc.weighIns.length ? doc.weighIns[doc.weighIns.length - 1].kg : "",
     target: cs.targetWeightKg ?? 80, mix: { ...(cs.weeklyCounts || { run: 3, bike: 3, gym: 0 }) },
     restDay: cs.restDay || "sun", start: E.mondayOf(todayISO()), mixTouched: false,
+    layout: null, layoutKey: "", swapSel: null, allowed: null,
   };
   document.body.insertAdjacentHTML("beforeend", `<div class="checkin" id="funnel"><div class="wrap"></div></div>`);
   const el = $("#funnel");
   requestAnimationFrame(() => el.classList.add("show"));
   const close = () => { el.classList.remove("show"); setTimeout(() => el.remove(), 320); };
-  const TOTAL = 4;
+  const TOTAL = 6;
   const stepsBar = () => `<div class="steps">${Array.from({ length: TOTAL }, (_, i) => `<i class="${i < state.step ? "f" : ""}"></i>`).join("")}</div>`;
   const head = (title, sub) => `<div><div class="eyebrow">Build your plan</div><h1 class="page">${title}</h1>${stepsBar()}${sub ? `<p class="row-sub" style="margin-top:8px">${sub}</p>` : ""}</div>`;
   const nav = (label = "Continue") => `<button class="btn" id="fn-next">${label}</button><button class="btn ghost" id="fn-back">${state.step === 1 ? "Not now" : "Back"}</button>`;
@@ -480,32 +481,73 @@ function openPlanFunnel() {
       ${nav()}`;
     wireNav(() => { state.height = num(el.querySelector("#fn-h").value); state.weight = num(el.querySelector("#fn-w").value); state.target = num(el.querySelector("#fn-tw").value) || state.target; go(4); });
   }
-  function renderTraining() {
+  function renderMix() {
     const total = () => state.mix.run + state.mix.bike + state.mix.gym;
-    el.querySelector(".wrap").innerHTML = head("Your training", E.goalDefaults(state.goal).reason) + `
+    el.querySelector(".wrap").innerHTML = head("Your weekly mix", E.goalDefaults(state.goal).reason) + `
       <div class="card">
         <div class="mixrow" data-k="run"><span class="l">Runs</span><span class="ud"><button data-d="-1">−</button><b id="fn-run">${state.mix.run}</b><button data-d="1">+</button></span></div>
         <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="fn-bike">${state.mix.bike}</b><button data-d="1">+</button></span></div>
         <div class="mixrow" data-k="gym" style="border:none"><span class="l">Gym</span><span class="ud"><button data-d="-1">−</button><b id="fn-gym">${state.mix.gym}</b><button data-d="1">+</button></span></div>
       </div>
-      <div class="card">
-        <div class="frow"><span class="l">Rest day</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end;gap:3px">${E.DAYS.map(d => `<button data-rest="${d}" style="flex:0 0 36px;padding:0" class="${state.restDay === d ? "on" : ""}">${d[0].toUpperCase()}${d[1]}</button>`).join("")}</span></div>
-        <div class="frow" style="border:none"><span class="l">Week 1 starts</span><input type="date" id="fn-start" value="${state.start}"></div>
-      </div>
+      <div class="card"><div class="frow" style="border:none"><span class="l">Week 1 starts</span><input type="date" id="fn-start" value="${state.start}"></div></div>
       <p class="row-sub" id="fn-count">${total()} sessions a week. Weeks run Monday–Sunday.</p>
-      ${nav("Create my plan")}`;
+      ${nav()}`;
     el.querySelectorAll(".mixrow").forEach(row => row.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
       const k = row.dataset.k;
       state.mix[k] = Math.max(0, Math.min(6, state.mix[k] + +btn.dataset.d)); state.mixTouched = true;
       el.querySelector(`#fn-${k}`).textContent = state.mix[k];
       el.querySelector("#fn-count").textContent = `${total()} sessions a week. Weeks run Monday–Sunday.`;
     })));
-    el.querySelectorAll("[data-rest]").forEach(b => b.addEventListener("click", () => { state.restDay = b.dataset.rest; el.querySelectorAll("[data-rest]").forEach(x => x.classList.toggle("on", x === b)); }));
+    wireNav(() => { state.start = el.querySelector("#fn-start")?.value || state.start; if (total() === 0) { toast("Add at least one session"); return; } go(5); });
+  }
+  function renderLayout() {
+    const key = JSON.stringify([state.mix, state.restDay]);
+    if (state.layoutKey !== key) { state.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay }); state.layoutKey = key; state.swapSel = null; }
+    const cls = v => v === "run" ? "lr" : (v && v.startsWith("bike")) ? "lb" : v === "gym" ? "lg" : "lx";
+    const lab = v => ({ run: "Run", bike: "Ride", "bike-long": "Long ride", gym: "Gym", rest: "Rest" }[v] || v);
+    const dayRow = d => {
+      const arr = (Array.isArray(state.layout[d]) ? state.layout[d] : [state.layout[d]]).filter(Boolean);
+      return `<button class="srow lyday ${state.swapSel === d ? "sel" : ""}" data-ld="${d}"><span class="l" style="flex:0 0 46px">${d[0].toUpperCase()}${d.slice(1, 3)}</span><span class="lychips2">${arr.map(v => `<i class="laychip ${cls(v)}">${lab(v)}</i>`).join("")}</span></button>`;
+    };
+    el.querySelector(".wrap").innerHTML = head("Weekly layout", "Auto-arranged around your rest day — tap two days to swap them.") + `
+      <div class="card"><div class="frow" style="border:none"><span class="l">Rest day</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end;gap:3px">${E.DAYS.map(d => `<button data-rest="${d}" style="flex:0 0 36px;padding:0" class="${state.restDay === d ? "on" : ""}">${d[0].toUpperCase()}${d[1]}</button>`).join("")}</span></div></div>
+      <div class="card" style="padding:2px 14px">${E.DAYS.map(dayRow).join("")}</div>
+      <button class="btn ghost mini" id="fn-auto">Auto-arrange</button>
+      ${nav()}`;
+    el.querySelectorAll("[data-rest]").forEach(b => b.addEventListener("click", () => { state.restDay = b.dataset.rest; state.layoutKey = ""; renderLayout(); }));
+    el.querySelectorAll("[data-ld]").forEach(b => b.addEventListener("click", () => {
+      const d = b.dataset.ld;
+      if (state.swapSel == null || state.swapSel === d) state.swapSel = state.swapSel === d ? null : d;
+      else { const t = state.layout[state.swapSel]; state.layout[state.swapSel] = state.layout[d]; state.layout[d] = t; state.swapSel = null; }
+      renderLayout();
+    }));
+    el.querySelector("#fn-auto").addEventListener("click", () => { state.layoutKey = ""; renderLayout(); });
+    wireNav(() => go(6));
+  }
+  function renderWorkouts() {
+    if (!state.allowed) { state.allowed = { ...doc.settings.allowedTypes }; for (const k of E.goalDefaults(state.goal).allowed) state.allowed[k] = true; }
+    const tog = key => { const t = WORKOUT_TOGGLES.find(x => x[0] === key); return t ? `<button class="srow tog" data-fam="${key}"><span class="l">${t[1]}<span>${t[2]}</span></span><span class="switch ${state.allowed[key] !== false ? "on" : ""}"></span></button>` : ""; };
+    el.querySelector(".wrap").innerHTML = head("Workouts to include", "Switch off any you don't want in your plan.") + `
+      <div class="card" style="padding:2px 14px">
+        <div class="gh" style="margin:4px 4px 2px">Run</div>${RUN_BASE.map(tog).join("")}
+        <div class="gh" style="margin:12px 4px 2px">Ride</div>${RIDE_BASE.map(tog).join("")}
+        <div class="gh" style="margin:12px 4px 2px">Gym</div>${GYM_BASE.map(tog).join("")}
+      </div>
+      ${nav("Create my plan")}`;
+    el.querySelectorAll("[data-fam]").forEach(b => b.addEventListener("click", () => {
+      const key = b.dataset.fam, off = state.allowed[key] !== false;
+      if (off && (RUN_BASE.includes(key) || RIDE_BASE.includes(key))) {
+        const grp = RUN_BASE.includes(key) ? RUN_BASE : RIDE_BASE;
+        if (!grp.some(k => k !== key && state.allowed[k] !== false)) { toast("Keep at least one " + (grp === RUN_BASE ? "run" : "ride") + " type"); return; }
+      }
+      state.allowed[key] = !off;
+      b.querySelector(".switch").classList.toggle("on", state.allowed[key] !== false);
+    }));
     wireNav(finish);
   }
   function finish() {
     if (state.mix.run + state.mix.bike + state.mix.gym === 0) { toast("Add at least one session"); return; }
-    const startISO = E.mondayOf(el.querySelector("#fn-start")?.value || E.mondayOf(todayISO()));
+    const startISO = E.mondayOf(state.start || E.mondayOf(todayISO()));
     close();
     persist(() => {
       const s = doc.settings;
@@ -518,15 +560,15 @@ function openPlanFunnel() {
       s.goalEvent = isRaceish() && (state.eventDist || state.eventDate) ? { distanceKm: state.eventDist || null, date: state.eventDate || null } : null;
       s.weeklyCounts = { ...state.mix };
       s.restDay = state.restDay;
-      s.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay });
-      for (const k of E.goalDefaults(state.goal).allowed) s.allowedTypes = { ...s.allowedTypes, [k]: true };
+      s.layout = state.layout || E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay });
+      if (state.allowed) s.allowedTypes = { ...state.allowed };
       if (state.weight) {
         doc.weighIns = doc.weighIns.filter(w => w.date !== todayISO());
         doc.weighIns.push({ date: todayISO(), kg: state.weight });
         doc.weighIns.sort((a, b) => (a.date < b.date ? -1 : 1));
       }
       if (state.goal === "weight" && !s.weeklyCalorieTarget) { const rb = E.recommendBurnGoal(doc); if (rb && rb.burn) s.weeklyCalorieTarget = rb.burn; }
-      doc.weeks = [E.firstWeekFromMix(startISO, s)];
+      doc.weeks = [E.firstWeekFromMix(startISO, s, s.layout)];
     });
     setTab("coach");
     toast(state.name ? `You're set, ${state.name} — Week 1 is ready` : "Your plan is ready — Week 1 starts now");
@@ -535,7 +577,9 @@ function openPlanFunnel() {
     if (state.step === 1) renderGoal();
     else if (state.step === 2) renderAbout();
     else if (state.step === 3) renderBody();
-    else renderTraining();
+    else if (state.step === 4) renderMix();
+    else if (state.step === 5) renderLayout();
+    else renderWorkouts();
   }
   render();
 }
@@ -2216,21 +2260,24 @@ const ADHOC_TYPES = {
   bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
   hike:  [{ id: "easy", label: "Hike", kind: "easy" }, { id: "long", label: "Big day", kind: "long" }],
 };
-function openAdhocSession(sport) {
-  const opts = ADHOC_TYPES[sport] || ADHOC_TYPES.run;
-  const rec = E.recommendWorkout(doc, sport, todayISO());
+function openAdhocSession(sport, opts = {}) {
+  const vo2 = !!opts.vo2;
+  const types = ADHOC_TYPES[sport] || ADHOC_TYPES.run;
+  const rec = vo2 ? null : E.recommendWorkout(doc, sport, todayISO());
   const prefFor = kind => kind === "long" ? ["long", "easy"]
     : kind === "tempo" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runTempo", "runQ1", "long", "easy"])
     : kind === "intervals" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runQ1", "runTempo", "long", "easy"])
     : ["easy"];
-  let chosen = (rec && prefFor(rec.kind).map(id => opts.find(o => o.id === id)).find(Boolean)) || opts[0];
+  let chosen = vo2 ? (types.find(o => o.id === "runTempo") || types[0])
+    : ((rec && prefFor(rec.kind).map(id => types.find(o => o.id === id)).find(Boolean)) || types[0]);
   const presc = () => E.suggestSession(doc.logs, sport, chosen.id, { settings: doc.settings, weekNum: currentWeek()?.weekNum || 1 });
-  let p = presc(), dur = p.targetMin, zone = p.zone;
+  let p = presc(), dur = vo2 ? 20 : p.targetMin, zone = vo2 ? 4 : p.zone;
   const sheet = openSheet(`
-    <div class="sh-title">${SPORT_NAME[sport]} today</div>
-    <div class="sh-sub">A suggestion sized from your recent training — adjust anything, then do it.</div>
-    ${rec ? `<div class="callout" id="ah-rec" style="border-color:rgba(86,219,232,.32)">Recommended · <b>${chosen.label}</b> — ${rec.reason}</div>` : ""}
-    <div class="type-row"><span class="l">Type</span><span class="opts" id="ah-types">${opts.map(o =>
+    <div class="sh-title">${vo2 ? "VO₂ test run" : SPORT_NAME[sport] + " today"}</div>
+    <div class="sh-sub">${vo2 ? "A field test to estimate your VO₂ max." : "A suggestion sized from your recent training — adjust anything, then do it."}</div>
+    ${vo2 ? `<div class="callout" style="border-color:rgba(86,219,232,.32)"><b>VO₂ test</b> — run this all-out as a ~5 km or 20-minute time trial (steady and as hard as you can hold). Log it with distance and we'll estimate your VO₂ from the pace.</div>`
+      : rec ? `<div class="callout" id="ah-rec" style="border-color:rgba(86,219,232,.32)">Recommended · <b>${chosen.label}</b> — ${rec.reason}</div>` : ""}
+    <div class="type-row"><span class="l">Type</span><span class="opts" id="ah-types">${types.map(o =>
       `<button data-ah="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
     <div class="frow frow-wheel"><span class="l">Duration</span>
       <div class="dwheel" id="ah-min-wheel"></div></div>
@@ -2257,7 +2304,7 @@ function openAdhocSession(sport) {
   };
   refresh();
   sheet.querySelectorAll("[data-ah]").forEach(b => b.addEventListener("click", () => {
-    chosen = opts.find(o => o.id === b.dataset.ah);
+    chosen = types.find(o => o.id === b.dataset.ah);
     sheet.querySelectorAll("[data-ah]").forEach(x => x.classList.toggle("on", x === b));
     p = presc(); dur = p.targetMin; zone = p.zone; readMin.set(dur);
     sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", +x.dataset.z === zone));
@@ -2896,7 +2943,7 @@ function renderProgress() {
   page.querySelector("#pg-vo2how")?.addEventListener("click", () => openModal("How VO₂ max is estimated",
     "We estimate VO₂ max from your best recent run using Daniels' VDOT model — it turns the pace and duration of your strongest run in the last 8 weeks into a VO₂-max-equivalent. Log a hard run or a short time trial to sharpen it. Switch to Manual in Settings → Fitness to enter watch readings instead.",
     [{ label: "Got it" }]));
-  page.querySelector("#pg-vo2run")?.addEventListener("click", () => openAdhocSession("run"));
+  page.querySelector("#pg-vo2run")?.addEventListener("click", () => openAdhocSession("run", { vo2: true }));
   page.querySelector("#pg-tw")?.addEventListener("click", () => openValueSheet({
     title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: doc.settings.targetWeightKg, min: 40, max: 150,
     onSave: v => { doc.settings.targetWeightKg = v; },
@@ -3228,7 +3275,7 @@ function renderSettings() {
   $("#st-vo2how")?.addEventListener("click", () => openModal("How VO₂ max is estimated",
     "With no Garmin reading, we estimate VO₂ max from your best recent run using Daniels' VDOT model — it turns the pace and duration of your strongest run in the last 8 weeks into a VO₂-max-equivalent. Log a hard run or a short time trial to sharpen it. It's marked “est”, and any reading you enter by hand always wins.",
     [{ label: "Got it" }]));
-  $("#st-vo2run")?.addEventListener("click", () => openAdhocSession("run"));
+  $("#st-vo2run")?.addEventListener("click", () => openAdhocSession("run", { vo2: true }));
   $("#st-tw")?.addEventListener("click", () => openValueSheet({
     title: "Target weight", label: "Target", suffix: "kg", step: "0.1", value: st.targetWeightKg, min: 40, max: 150,
     onSave: v => { st.targetWeightKg = v; },

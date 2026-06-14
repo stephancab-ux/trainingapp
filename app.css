@@ -190,6 +190,14 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .goalgrid button b{display:block;font-size:15px;color:var(--ink);font-weight:700;margin-bottom:1px}
 .goalgrid button.on{border-color:var(--cy);background:rgba(86,219,232,.08)}
 .goalgrid button.on b{color:var(--cy)}
+.lyday{gap:10px}
+.lyday.sel{background:rgba(86,219,232,.10);border-radius:12px;border-bottom-color:transparent}
+.lychips2{display:flex;gap:5px;flex-wrap:wrap;flex:1}
+.laychip{font-style:normal;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:8px}
+.laychip.lr{background:rgba(255,122,102,.16);color:#ff9a86}
+.laychip.lb{background:rgba(142,157,248,.16);color:#aab4fb}
+.laychip.lg{background:rgba(201,139,219,.16);color:#d7a6e6}
+.laychip.lx{background:#1a242f;color:var(--mut)}
 .prop .top{display:flex;align-items:baseline;gap:10px}
 .prop .rate{font-size:54px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--cy)}
 .prop .rec{font-size:11px;font-weight:750;letter-spacing:.1em;color:var(--cy);text-transform:uppercase;border:1px solid rgba(86,219,232,.4);padding:3px 8px;border-radius:999px;transition:opacity .2s}

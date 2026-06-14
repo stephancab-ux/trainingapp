@@ -611,10 +611,10 @@ export function goalDefaults(goal) {
 
 /* Build a personalised Week 1 straight from the weekly mix (onboarding funnel) — Week 1
    reflects the chosen run/ride/gym counts instead of the fixed generateWeek1 table. */
-export function firstWeekFromMix(startDate, settings) {
+export function firstWeekFromMix(startDate, settings, layout) {
   const c = settings.weeklyCounts || { run: 3, bike: 3, gym: 0 };
   const restDay = settings.restDay || "sun";
-  const layout = placeLayout({ run: c.run, bike: c.bike, gym: c.gym, restDay });
+  if (!layout) layout = placeLayout({ run: c.run, bike: c.bike, gym: c.gym, restDay });
   const sessions = buildSessions(35 * c.run, 60 * c.bike, 45 * c.gym, layout, {
     deload: false, quality: { run: false, bike: false, gym: false },
     gymVenue: settings.gymVenueDefault || "home", weekSalt: startDate,
