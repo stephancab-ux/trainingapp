@@ -1723,14 +1723,18 @@ export function suggestSession(logs, sport, typeId, { settings = {}, weekNum = 1
   const lastN = (pred, n) => logs.filter(pred).slice(-n).map(l => l.min);
   const runish = sport === "run" || sport === "trail";
 
-  // hikes are low-intensity, time-based — no pace/zone prescription
+  // hikes are low-intensity, time-based — three tiers, each with an adaptive climb target
   if (sport === "hike") {
-    if (typeId === "long") {
-      const longs = logs.filter(l => l.sport === "hike").slice(-4).map(l => l.min);
-      return { targetMin: round5(avg(longs) || 180), zone: 1, note: "A big day out — steady, fuel well and enjoy it." };
-    }
-    const easy = logs.filter(l => l.sport === "hike").slice(-6).map(l => l.min);
-    return { targetMin: round5(med(easy) || 90), zone: 1, note: "An easy hike — keep the effort relaxed." };
+    const recentAsc = logs.filter(l => l.sport === "hike" && l.ascent > 0).slice(-6).map(l => l.ascent);
+    const base = recentAsc.length ? med(recentAsc) : (settings.climbBaseAscent || 500);
+    const r50 = v => Math.round(v / 50) * 50;
+    const tiers = {
+      short:  { targetMin: 120, targetAscent: r50(Math.max(base * 0.5, 250)), note: "A short hike — a leg-stretch in the hills." },
+      day:    { targetMin: 240, targetAscent: r50(Math.max(base, 400)),       note: "A day hike — steady all-day effort; pack food and water." },
+      bigday: { targetMin: 360, targetAscent: r50(Math.max(base * 2, 900)),   note: "A big day out — morning till late afternoon; fuel well and pace it." },
+    };
+    const t = tiers[typeId] || tiers.day;
+    return { targetMin: t.targetMin, zone: 1, note: t.note, targetAscent: t.targetAscent };
   }
 
   if (QUALITY_TEMPLATES[typeId]) {

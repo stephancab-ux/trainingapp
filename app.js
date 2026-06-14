@@ -2501,7 +2501,7 @@ const ADHOC_TYPES = {
   run:   [{ id: "easy", label: "Easy", kind: "easy" }, { id: "runTempo", label: "Tempo", kind: "quality", tpl: "runTempo" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "runHills", label: "Hills", kind: "quality", tpl: "runHills" }, { id: "long", label: "Long", kind: "long" }],
   trail: [{ id: "easy", label: "Easy", kind: "easy" }, { id: "long", label: "Long", kind: "long" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "trailHilly", label: "Hilly", kind: "easy" }],
   bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
-  hike:  [{ id: "easy", label: "Hike", kind: "easy" }, { id: "long", label: "Big day", kind: "long" }],
+  hike:  [{ id: "short", label: "Short", kind: "easy" }, { id: "day", label: "Day hike", kind: "easy" }, { id: "bigday", label: "Big day", kind: "long" }],
 };
 function openAdhocSession(sport, opts = {}) {
   const vo2 = !!opts.vo2;
@@ -2530,7 +2530,7 @@ function openAdhocSession(sport, opts = {}) {
     <button class="btn" id="ah-watch">Send to watch (.FIT)</button>
     <button class="btn" id="ah-log">Log it now</button>
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: 240, value: dur });
+  const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: sport === "hike" ? 600 : 240, value: dur });
   const sessionObj = () => {
     const s = { sport, kind: chosen.kind, targetMin: readMin(), zone };
     if (chosen.kind === "quality") s.qualityTemplate = chosen.tpl;

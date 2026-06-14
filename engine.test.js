@@ -1031,6 +1031,20 @@ test("suggestSession adapts to recent history with sane fallbacks", () => {
   assert.equal(E.suggestSession([], "bike", "long", {}).targetMin, 120);
 });
 
+test("suggestSession hike tiers are distinct in duration + ascent and adapt to history", () => {
+  const s = { climbBaseAscent: 500 };
+  const short = E.suggestSession([], "hike", "short", { settings: s });
+  const day = E.suggestSession([], "hike", "day", { settings: s });
+  const big = E.suggestSession([], "hike", "bigday", { settings: s });
+  assert.deepEqual([short.targetMin, day.targetMin, big.targetMin], [120, 240, 360], "fixed durations 2h/4h/6h");
+  assert.ok(short.targetAscent < day.targetAscent && day.targetAscent < big.targetAscent, "ascent rises by tier");
+  assert.ok(big.targetAscent >= 900, "big day floors at 900 m with no history");
+  // adaptive: a mountain hiker's recent climbs lift the targets
+  const hist = [{ sport: "hike", ascent: 1000, min: 200 }, { sport: "hike", ascent: 1200, min: 220 }];
+  const dayA = E.suggestSession(hist, "hike", "day", { settings: s });
+  assert.ok(dayA.targetAscent >= 1000, "day ≈ your usual climb (median ~1100)");
+});
+
 /* ---------- v1.7.5: VO₂ VDOT, workout recommendation, recommended goals ---------- */
 
 test("estimateVo2FromRuns: VDOT from the best recent run, else null", () => {
