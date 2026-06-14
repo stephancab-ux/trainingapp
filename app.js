@@ -995,7 +995,8 @@ function renderToday() {
   }
 
   const daySessions = week.sessions.filter(x => x.day === todayDay);
-  const s = daySessions.find(x => x.sport !== "rest" && sessionStatus(week, x).kind !== "done") || daySessions[0];
+  // an empty day (e.g. after rescheduling the only session away) reads as a free/rest day
+  const s = daySessions.find(x => x.sport !== "rest" && sessionStatus(week, x).kind !== "done") || daySessions[0] || { sport: "rest", day: todayDay };
   const st = sessionStatus(week, s);
   const second = daySessions.filter(x => x !== s && x.sport !== "rest");
   let card = "";
@@ -1369,11 +1370,55 @@ function openSessionReview(week, s, st) {
     <div class="callout">${instr}</div>
     <button class="btn" id="sr-log">Log this session</button>
     <button class="btn ghost" id="sr-mod">${s.sport === "gym" ? "Open workout" : "Modify this session"}</button>
+    <button class="btn ghost" id="sr-resched">Reschedule</button>
     <button class="btn ghost" id="sr-link">Link to an activity</button>
   `);
   sheet.querySelector("#sr-log").addEventListener("click", () => { closeOverlay(); openLogSheet({ date, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }); });
   sheet.querySelector("#sr-mod").addEventListener("click", () => { closeOverlay(); if (s.sport === "gym") openWorkoutPage(week, s, date); else openSessionEditor(week, s, st); });
+  sheet.querySelector("#sr-resched").addEventListener("click", () => { closeOverlay(); openReschedule(week, s); });
   sheet.querySelector("#sr-link").addEventListener("click", () => { closeOverlay(); openLinkPicker(week, s); });
+}
+
+/* Move a planned session to another day in the same week (today-or-later only;
+   forward or back). This week only — the recurring layout is left untouched. */
+function openReschedule(week, s) {
+  const t = todayISO();
+  const days = E.DAYS.map(day => {
+    const date = E.dateOfDay(week, day);
+    return { day, date, dnum: E.parseISO(date).getUTCDate(),
+             past: date < t, current: day === s.day, rest: day === doc.settings.restDay };
+  });
+  const sheet = openSheet(`
+    <div class="sh-title">Reschedule</div>
+    <div class="sh-sub">Move ${kindLabel(s)} to another day this week — past days are closed.</div>
+    <div class="day-pick">${days.map(d =>
+      `<button class="dchip ${d.current ? "now" : ""}" data-day="${d.day}" ${d.past || d.current ? "disabled" : ""}>${DAY_LABEL[d.day].slice(0, 3)} ${d.dnum}${d.rest ? " ·rest" : ""}${d.current ? " ·now" : ""}</button>`).join("")}</div>
+  `);
+  sheet.querySelectorAll("[data-day]:not([disabled])").forEach(b => b.addEventListener("click", () => {
+    const target = b.dataset.day;
+    const move = () => {
+      const oldDay = s.day, oldSlot = s.slot;
+      persist(() => { s.day = target; s.slot = week.sessions.filter(x => x.day === target && x !== s).length; });
+      closeOverlay();
+      renderCoach();
+      toastUndo("Moved to " + DAY_LABEL[target], () => { persist(() => { s.day = oldDay; s.slot = oldSlot; }); renderCoach(); });
+    };
+    if (wouldStackHard(week, s, target))
+      openModal("Two hard days in a row?", "This puts a hard session next to another hard day. Recovery may suffer — move it anyway?",
+        [{ label: "Move it", fn: move }, { label: "Cancel", cls: "ghost" }]);
+    else move();
+  }));
+}
+
+/* True if moving session s onto `target` would sit a hard/quality day (or a run)
+   next to another of the same on an adjacent day — drives a warn-but-allow prompt. */
+function wouldStackHard(week, s, target) {
+  const i = E.DAYS.indexOf(target);
+  const neighbours = [E.DAYS[i - 1], E.DAYS[i + 1]].filter(Boolean);
+  const onDay = day => week.sessions.filter(x => x.day === day && x !== s);
+  if (s.kind === "quality" && neighbours.some(d => onDay(d).some(x => x.kind === "quality"))) return true;
+  if (E.isRunType(s) && neighbours.some(d => onDay(d).some(x => E.isRunType(x)))) return true;
+  return false;
 }
 
 /* Pick a recent diary activity to satisfy a planned session (e.g. a Garmin import). */

@@ -317,7 +317,7 @@ svg text{font-family:inherit}
 .swipe{position:relative;overflow:hidden}
 .swipe-del{position:absolute;top:0;right:0;height:100%;width:88px;border:none;background:var(--bad);color:#fff;font-weight:750;font-size:14px}
 .swipe-content{position:relative;z-index:1;background:var(--card);transition:transform .2s;touch-action:pan-y}
-.toast .undo{margin-left:12px;color:var(--cy);font-weight:800;background:none;border:none;font-size:14px}
+#toast .undo{margin-left:12px;color:var(--cy);font-weight:800;background:none;border:none;font-size:14px;pointer-events:auto}
 .stickybar{position:sticky;top:env(safe-area-inset-top);z-index:20;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line)}
 /* paint the iPhone status-bar strip opaque so scrolled content can't show behind the clock/battery */
 body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:var(--bg);z-index:25;pointer-events:none}
@@ -525,6 +525,10 @@ body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area
 .wpg-chips{display:flex;flex-wrap:wrap;gap:6px}
 .fchip{min-height:32px;padding:0 11px;border-radius:9px;background:#1b2734;color:var(--sub);font-size:12px;font-weight:700}
 .fchip.on{background:var(--cy);color:var(--cy-ink)}
+.day-pick{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 4px}
+.dchip{min-height:40px;padding:0 13px;border-radius:11px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);font-size:13px;font-weight:700}
+.dchip:disabled{opacity:.4;cursor:default}
+.dchip.now{border-color:var(--cy);color:var(--cy)}
 .wtimer.reps{background:radial-gradient(120% 80% at 50% 0%,rgba(230,161,60,.14),transparent)}
 .wt-reps{font-size:74px;font-weight:800;line-height:1;color:var(--sand)}
 .wt-reps small{display:block;font-size:14px;color:var(--sub);font-weight:600;margin-top:4px}
