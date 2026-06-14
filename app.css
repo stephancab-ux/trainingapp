@@ -110,6 +110,34 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .st.pend{border:1.5px dashed #46586b}
 .st.plan{border:1.5px solid #2c3947}
 .st.now{border:2px solid var(--cy)}
+/* grouped day: one date column, the day's activities stacked to its right */
+.day-group{display:flex;gap:12px;border-bottom:1px solid var(--line);padding:4px 2px}
+.day-group:last-child{border-bottom:none}
+.day-group.today{background:rgba(86,219,232,.06);border-radius:14px;border-bottom-color:transparent;padding:6px 10px;margin:0 -8px}
+.day-group .dt{width:34px;text-align:center;flex:none;padding-top:9px}
+.day-group .dt b{display:block;font-size:15px;font-weight:750}
+.day-group .dt span{font-size:10px;color:var(--mut);font-weight:700;letter-spacing:.08em}
+.day-group .acts{flex:1;min-width:0;display:flex;flex-direction:column}
+.dayact{display:flex;align-items:center;gap:10px;min-height:46px;width:100%;text-align:left;padding:3px 0}
+.dayact + .dayact{border-top:1px solid var(--line)}
+.dayact .tx{flex:1;min-width:0}
+.dayact .tx b{display:block;font-size:15px;font-weight:700}
+.dayact .tx span{display:block;font-size:12.5px;color:var(--mut);font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.streakcard{cursor:pointer}
+.linklist{max-height:52vh;overflow-y:auto;margin:2px -4px}
+/* race-day hero */
+.raceday{display:flex;gap:16px;align-items:center}
+.rd-ring{position:relative;flex:none;width:132px;height:132px;display:flex;align-items:center;justify-content:center}
+.rd-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.rd-trophy{font-size:20px;line-height:1.1}
+.rd-center b{font-size:30px;font-weight:800;line-height:1.05}
+.rd-center small{font-size:10px;color:var(--mut);letter-spacing:.07em;text-transform:uppercase}
+.rd-info{flex:1;min-width:0}
+.rd-title{font-size:17px;font-weight:760}
+.rd-sub{font-size:12.5px;color:var(--sub);margin:2px 0 8px}
+.rd-phase{margin-left:8px;color:var(--sand);font-weight:700}
+.rd-line{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line)}
+.rd-line span{color:var(--sub)}.rd-line b{font-variant-numeric:tabular-nums}
 .mix{display:flex;gap:12px}
 .mix .half{flex:1;display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:10px 12px}
 .mix .half .mlab{font-size:13px;color:var(--sub);font-weight:650}
@@ -198,6 +226,16 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .laychip.lb{background:rgba(142,157,248,.16);color:#aab4fb}
 .laychip.lg{background:rgba(201,139,219,.16);color:#d7a6e6}
 .laychip.lx{background:#1a242f;color:var(--mut)}
+.laychip[data-rm]{cursor:pointer}
+.lybudget{display:flex;gap:14px;font-size:12px;color:var(--sub);font-weight:600;padding:2px 6px}
+.lybudget b{color:var(--ink)}
+.lyrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:46px;border-bottom:1px solid var(--line);padding:6px 0}
+.lyrow:last-child{border-bottom:none}
+.lyd{flex:0 0 38px;font-weight:700;font-size:13px;color:var(--sub)}
+.lyrow .lychips2{flex:1 1 90px;min-width:80px}
+.lyadds{display:flex;gap:4px;margin-left:auto}
+.lyadd{font-size:11.5px;font-weight:700;padding:4px 8px;border-radius:8px;border:1px solid var(--line);color:var(--cy);background:var(--card)}
+.lyadd:disabled{opacity:.3;color:var(--mut)}
 .prop .top{display:flex;align-items:baseline;gap:10px}
 .prop .rate{font-size:54px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--cy)}
 .prop .rec{font-size:11px;font-weight:750;letter-spacing:.1em;color:var(--cy);text-transform:uppercase;border:1px solid rgba(86,219,232,.4);padding:3px 8px;border-radius:999px;transition:opacity .2s}

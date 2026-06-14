@@ -337,6 +337,7 @@ function sessionSlotIndex(week, s) {
 function sessionStatus(week, s) {
   const date = E.dateOfDay(week, s.day);
   if (s.sport === "rest") return { kind: "rest", date };
+  if (s.linkedLogId) { const ll = doc.logs.find(l => l.id === s.linkedLogId); if (ll) return { kind: "done", log: ll, date, linked: true }; }
   const logs = dayLogsFor(date, s.sport);
   const log = logs[sessionSlotIndex(week, s)] || (logs.length === 1 ? logs[0] : null);
   if (log) return { kind: "done", log, date };
@@ -489,7 +490,15 @@ function openPlanFunnel() {
         <div class="mixrow" data-k="bike"><span class="l">Rides</span><span class="ud"><button data-d="-1">−</button><b id="fn-bike">${state.mix.bike}</b><button data-d="1">+</button></span></div>
         <div class="mixrow" data-k="gym" style="border:none"><span class="l">Gym</span><span class="ud"><button data-d="-1">−</button><b id="fn-gym">${state.mix.gym}</b><button data-d="1">+</button></span></div>
       </div>
-      <div class="card"><div class="frow" style="border:none"><span class="l">Week 1 starts</span><input type="date" id="fn-start" value="${state.start}"></div></div>
+      <div class="card">
+        <div class="lab" style="margin-bottom:7px">When does Week 1 start?</div>
+        <div class="wpg-chips">
+          <button class="fchip ${state.start === E.mondayOf(todayISO()) ? "on" : ""}" data-startq="${E.mondayOf(todayISO())}">This Monday</button>
+          <button class="fchip ${state.start === E.addDays(E.mondayOf(todayISO()), 7) ? "on" : ""}" data-startq="${E.addDays(E.mondayOf(todayISO()), 7)}">Next Monday</button>
+        </div>
+        <div class="frow" style="border:none;margin-top:8px"><span class="l">Or a date</span><input type="date" id="fn-start" value="${state.start}"></div>
+        <p class="row-sub" style="margin-top:4px">Weeks run Mon–Sun — defaults to this Monday; pick a later one to start fresh.</p>
+      </div>
       <p class="row-sub" id="fn-count">${total()} sessions a week. Weeks run Monday–Sunday.</p>
       ${nav()}`;
     el.querySelectorAll(".mixrow").forEach(row => row.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
@@ -498,31 +507,26 @@ function openPlanFunnel() {
       el.querySelector(`#fn-${k}`).textContent = state.mix[k];
       el.querySelector("#fn-count").textContent = `${total()} sessions a week. Weeks run Monday–Sunday.`;
     })));
+    el.querySelectorAll("[data-startq]").forEach(b => b.addEventListener("click", () => {
+      state.start = b.dataset.startq; el.querySelector("#fn-start").value = state.start;
+      el.querySelectorAll("[data-startq]").forEach(x => x.classList.toggle("on", x === b));
+    }));
     wireNav(() => { state.start = el.querySelector("#fn-start")?.value || state.start; if (total() === 0) { toast("Add at least one session"); return; } go(5); });
   }
   function renderLayout() {
     const key = JSON.stringify([state.mix, state.restDay]);
-    if (state.layoutKey !== key) { state.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay }); state.layoutKey = key; state.swapSel = null; }
-    const cls = v => v === "run" ? "lr" : (v && v.startsWith("bike")) ? "lb" : v === "gym" ? "lg" : "lx";
-    const lab = v => ({ run: "Run", bike: "Ride", "bike-long": "Long ride", gym: "Gym", rest: "Rest" }[v] || v);
-    const dayRow = d => {
-      const arr = (Array.isArray(state.layout[d]) ? state.layout[d] : [state.layout[d]]).filter(Boolean);
-      return `<button class="srow lyday ${state.swapSel === d ? "sel" : ""}" data-ld="${d}"><span class="l" style="flex:0 0 46px">${d[0].toUpperCase()}${d.slice(1, 3)}</span><span class="lychips2">${arr.map(v => `<i class="laychip ${cls(v)}">${lab(v)}</i>`).join("")}</span></button>`;
-    };
-    el.querySelector(".wrap").innerHTML = head("Weekly layout", "Auto-arranged around your rest day — tap two days to swap them.") + `
+    if (state.layoutKey !== key) { state.layout = E.placeLayout({ run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym, restDay: state.restDay }); state.layoutKey = key; }
+    for (const d of E.DAYS) state.layout[d] = (Array.isArray(state.layout[d]) ? state.layout[d] : [state.layout[d]]).filter(x => x && x !== "rest").map(x => x === "bike-long" ? "bike" : x);
+    const budget = { run: state.mix.run, bike: state.mix.bike, gym: state.mix.gym };
+    el.querySelector(".wrap").innerHTML = head("Weekly layout", "Tap + to place each activity on a day — two on one day is fine, capped by your mix.") + `
       <div class="card"><div class="frow" style="border:none"><span class="l">Rest day</span><span class="seg" style="border:none;padding:0;flex:1;justify-content:flex-end;gap:3px">${E.DAYS.map(d => `<button data-rest="${d}" style="flex:0 0 36px;padding:0" class="${state.restDay === d ? "on" : ""}">${d[0].toUpperCase()}${d[1]}</button>`).join("")}</span></div></div>
-      <div class="card" style="padding:2px 14px">${E.DAYS.map(dayRow).join("")}</div>
+      ${layoutEditorBody(state.layout, budget, state.restDay)}
       <button class="btn ghost mini" id="fn-auto">Auto-arrange</button>
       ${nav()}`;
     el.querySelectorAll("[data-rest]").forEach(b => b.addEventListener("click", () => { state.restDay = b.dataset.rest; state.layoutKey = ""; renderLayout(); }));
-    el.querySelectorAll("[data-ld]").forEach(b => b.addEventListener("click", () => {
-      const d = b.dataset.ld;
-      if (state.swapSel == null || state.swapSel === d) state.swapSel = state.swapSel === d ? null : d;
-      else { const t = state.layout[state.swapSel]; state.layout[state.swapSel] = state.layout[d]; state.layout[d] = t; state.swapSel = null; }
-      renderLayout();
-    }));
+    bindLayoutEditor(el, state.layout, budget, state.restDay, renderLayout);
     el.querySelector("#fn-auto").addEventListener("click", () => { state.layoutKey = ""; renderLayout(); });
-    wireNav(() => go(6));
+    wireNav(() => { state.layout = finalizeLayout(state.layout, budget, state.restDay); go(6); });
   }
   function renderWorkouts() {
     if (!state.allowed) { state.allowed = { ...doc.settings.allowedTypes }; for (const k of E.goalDefaults(state.goal).allowed) state.allowed[k] = true; }
@@ -656,18 +660,19 @@ function coachUnread() {
 /* ---------------- COACH ---------------- */
 
 /* Program-adherence streak — a banner at the top of the Coach tab. */
+let streakOpen = false;
 function streakBlock() {
   const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: todayISO() });
-  return `<div class="card">
-    <div class="hd"><span class="eyebrow">Program streak</span><span class="eyebrow tapx">${adh.adherence != null ? `${Math.round(adh.adherence * 100)}% adherence` : "following the plan"}</span></div>
+  return `<div class="card streakcard" id="streak-card">
+    <div class="hd"><span class="eyebrow">Program streak</span><span class="eyebrow tapx" style="margin-left:auto">${adh.adherence != null ? `${Math.round(adh.adherence * 100)}% adherence` : "following the plan"} ${streakOpen ? "⌄" : "›"}</span></div>
     <div class="stat"><span class="midnum">${adh.current}</span><span class="unit">day streak · best ${adh.longest}</span></div>
-    <div class="streakgrid">
+    ${streakOpen ? `<div class="streakgrid">
       <div><b>${adh.sessionsRow}</b><span>sessions in a row</span></div>
       <div><b>${adh.weeksRow}</b><span>full weeks</span></div>
       <div><b>${adh.restRespected}</b><span>rests kept</span></div>
       <div><b>${adh.missed}</b><span>missed</span></div>
     </div>
-    <p class="row-sub" style="margin-top:8px">Counts following your plan — completed sessions, respected rest days — not just any activity.</p></div>`;
+    <p class="row-sub" style="margin-top:8px">Counts following your plan — completed sessions, respected rest days — not just any activity.</p>` : ""}</div>`;
 }
 
 function renderCoach() {
@@ -717,6 +722,7 @@ function renderCoach() {
   if (week) wireProgram(page, week, due);
   $("#co-startplan")?.addEventListener("click", () => openPlanFunnel());
   $("#co-newplan")?.addEventListener("click", startNewPlan);
+  $("#streak-card")?.addEventListener("click", () => { streakOpen = !streakOpen; renderCoach(); });
 
   // tapping a message marks just that one read (clears its unread dot + badge)
   page.querySelectorAll(".coachcard[data-isig]").forEach(card => card.addEventListener("click", e => {
@@ -957,7 +963,7 @@ function renderToday() {
   const totN = week.sessions.filter(x => x.sport !== "rest").length;
 
   page.innerHTML = head + card + activities + yLink +
-    `<div class="weekmini">${dots}&nbsp; Week ${week.weekNum} · ${doneN} of ${totN} done</div>`;
+    `<div class="weekmini">${dots}&nbsp; Week ${week.weekNum} · ${doneN} of ${totN} sessions done</div>`;
 
   wireActs();
   $("#td-log")?.addEventListener("click", () =>
@@ -1162,10 +1168,10 @@ function programSection(week, due) {
   const runDone = Math.min(week.targetMin.run, sportLogged(week, "run"));
   const bikeDone = Math.min(week.targetMin.bike, sportLogged(week, "bike"));
 
-  const dayRows = week.sessions.map((s, i) => {
+  const byDay = {};
+  week.sessions.forEach((s, i) => {
     const st = sessionStatus(week, s);
-    const d = E.parseISO(st.date).getUTCDate();
-    const dn = s.day.toUpperCase();
+    const dnum = E.parseISO(st.date).getUTCDate();
     let sub = "", stIcon = "";
     if (st.kind === "done") {
       const l = st.log;
@@ -1194,11 +1200,18 @@ function programSection(week, due) {
       stIcon = `<span class="st plan"></span>`;
     }
     const icon = ICONS[s.sport === "rest" ? "rest" : s.sport];
-    return `<button class="day ${st.kind === "today" ? "today" : ""}" data-di="${i}" ${s.sport === "rest" ? "disabled" : ""}>
-      <span class="dt"><b>${d}</b><span>${dn}</span></span>
+    const g = (byDay[s.day] = byDay[s.day] || { d: dnum, dn: s.day.toUpperCase(), today: false, acts: [] });
+    if (st.kind === "today") g.today = true;
+    g.acts.push(`<button class="dayact ${st.kind === "today" ? "today" : ""}" data-di="${i}" ${s.sport === "rest" ? "disabled" : ""}>
       <span class="ic ${sportClass(s.sport)}">${icon}</span>
       <span class="tx"><b>${kindLabel(s)}${s.targetMin ? ` · ${s.targetMin} min` : ""}</b><span>${sub}</span></span>
-      ${stIcon}</button>`;
+      ${stIcon}</button>`);
+  });
+  const dayRows = E.DAYS.filter(day => byDay[day]).map(day => {
+    const g = byDay[day];
+    return `<div class="day-group ${g.today ? "today" : ""}">
+      <span class="dt"><b>${g.d}</b><span>${g.dn}</span></span>
+      <span class="acts">${g.acts.join("")}</span></div>`;
   }).join("");
 
   return `
@@ -1207,11 +1220,6 @@ function programSection(week, due) {
     ${due ? `<button class="card" id="wk-checkin" style="display:flex;gap:12px;align-items:center;border-color:rgba(86,219,232,.35)">
        <span style="flex:1;text-align:left"><b>Sunday check-in is open</b><br><span class="row-sub">2 minutes: weight, feel, next week's volume</span></span>
        <span class="chip runc">GO →</span></button>` : ""}
-    <div class="card" style="padding:13px 16px"><div class="tot">
-      <div class="row"><span class="nm">Run</span><span class="bar"><i style="width:${pct(runDone, week.targetMin.run)}%;background:${SPORT_COLOR.run}"></i></span><span class="qty">${sportLogged(week, "run")} / ${week.targetMin.run} min</span></div>
-      <div class="row"><span class="nm">Ride</span><span class="bar"><i style="width:${pct(bikeDone, week.targetMin.bike)}%;background:var(--bike)"></i></span><span class="qty">${sportLogged(week, "bike")} / ${week.targetMin.bike} min</span></div>
-      ${week.targetMin.gym > 0 ? `<div class="row"><span class="nm">Gym</span><span class="bar"><i style="width:${pct(sportLogged(week, "gym"), week.targetMin.gym)}%;background:#c98bdb"></i></span><span class="qty">${sportLogged(week, "gym")} / ${week.targetMin.gym} min</span></div>` : ""}
-    </div></div>
     <div class="card days">${dayRows}</div>
     ${comingWeeksCard()}
     <button class="btn ghost mini" id="wk-watch">Export this week to watch (.FIT)</button>`;
@@ -1221,11 +1229,59 @@ function wireProgram(page, week, due) {
     const s = week.sessions[+b.dataset.di];
     const st = sessionStatus(week, s);
     if (st.kind === "done") openLogSheet({ date: st.date, sport: s.sport, log: st.log, title: kindLabel(s), type: typeOfSession(s) });
-    else if (s.sport === "gym") openWorkoutPage(week, s, st.date || E.dateOfDay(week, s.day));
-    else openSessionEditor(week, s, st);
+    else openSessionReview(week, s, st);
   }));
   $("#wk-checkin")?.addEventListener("click", () => openCheckin(due));
   $("#wk-watch")?.addEventListener("click", () => exportWeekToWatch(week));
+}
+
+/* Review a planned session — what to do + Log / Modify / Link to a diary activity. */
+function openSessionReview(week, s, st) {
+  const date = st.date;
+  let instr;
+  if (s.sport === "gym") {
+    instr = `${s.venue === "gym" ? "Gym" : "Home"} full-body workout${s.kind === "quality" ? " · harder day" : ""}. Open it to see the exercises and run the timer.`;
+  } else {
+    const z = zoneInfo(s);
+    const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
+    const pace = (s.sport === "run" || s.sport === "trail") ? E.paceHint(doc.logs, bounds(), s.zone || 2, doc.settings.easyPace) : null;
+    instr = [tpl ? esc(tpl.label) : `Keep it ${s.kind === "long" ? "steady and unhurried" : "conversational"}.`,
+      `${z.label} · ${z.lo}–${z.hi} bpm`,
+      pace ? `Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km` : "",
+      s.targetAscent ? `Climb ≈ ${s.targetAscent} m ↑` : ""].filter(Boolean).join("<br>");
+  }
+  const sheet = openSheet(`
+    <div class="sh-title">${kindLabel(s)}${s.targetMin ? ` · ${s.targetMin} min` : ""}</div>
+    <div class="sh-sub">${fmtDate(date)} · ${SPORT_NAME[s.sport] || s.sport}</div>
+    <div class="callout">${instr}</div>
+    <button class="btn" id="sr-log">Log this session</button>
+    <button class="btn ghost" id="sr-mod">${s.sport === "gym" ? "Open workout" : "Modify this session"}</button>
+    <button class="btn ghost" id="sr-link">Link to an activity</button>
+  `);
+  sheet.querySelector("#sr-log").addEventListener("click", () => { closeOverlay(); openLogSheet({ date, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }); });
+  sheet.querySelector("#sr-mod").addEventListener("click", () => { closeOverlay(); if (s.sport === "gym") openWorkoutPage(week, s, date); else openSessionEditor(week, s, st); });
+  sheet.querySelector("#sr-link").addEventListener("click", () => { closeOverlay(); openLinkPicker(week, s); });
+}
+
+/* Pick a recent diary activity to satisfy a planned session (e.g. a Garmin import). */
+function openLinkPicker(week, s) {
+  const linked = new Set();
+  for (const w of doc.weeks) for (const x of w.sessions) if (x.linkedLogId) linked.add(x.linkedLogId);
+  const cutoff = E.addDays(todayISO(), -21);
+  const cands = doc.logs.filter(l => l.source !== "seed" && l.date >= cutoff && !linked.has(l.id))
+    .sort((a, b) => ((a.sport === s.sport ? 0 : 1) - (b.sport === s.sport ? 0 : 1)) || (a.date < b.date ? 1 : -1));
+  const sheet = openSheet(`
+    <div class="sh-title">Link an activity</div>
+    <div class="sh-sub">Count this ${SPORT_NAME[s.sport] || s.sport} done from a logged activity — no re-entry.</div>
+    ${cands.length ? `<div class="linklist">${cands.slice(0, 20).map(l =>
+      `<button class="srow" data-link="${l.id}"><span class="l">${logTitle(l)}<span>${fmtShort(l.date)} · ${logExtra(l) || (l.min + " min")}</span></span><span class="chev">›</span></button>`).join("")}</div>`
+      : `<p class="row-sub">No recent unlinked activities. Log it, or import from Garmin first.</p>`}
+  `);
+  sheet.querySelectorAll("[data-link]").forEach(b => b.addEventListener("click", () => {
+    closeOverlay();
+    persist(() => { s.linkedLogId = b.dataset.link; });
+    toast("Linked ✓");
+  }));
 }
 
 /* The Diary (was the Week tab): a day-by-day calendar of what you actually did
@@ -1473,7 +1529,13 @@ function openWeeklyMix(week) {
     refresh();
   })));
   refresh();
-  sheet.querySelector("#mx-save").addEventListener("click", () => { closeOverlay(); changeMix(week, r, b, g); });
+  sheet.querySelector("#mx-save").addEventListener("click", () => {
+    closeOverlay();
+    openModal("Apply your mix", "Auto-place the sessions on your freshest days, or arrange the weekly layout yourself?", [
+      { label: "Auto-place", fn: () => changeMix(week, r, b, g) },
+      { label: "Choose layout", fn: () => { changeMix(week, r, b, g); openLayoutEditor(); } },
+    ]);
+  });
 }
 
 /* Re-lay a week around the current rest day / counts (used after moving the
@@ -1843,7 +1905,8 @@ function openCheckin(week) {
       <span class="chip">felt&nbsp;<b>${state.feel} / 5</b></span>
       ${state.weightKg ? `<span class="chip"><b>${state.weightKg}</b>&nbsp;kg</span>` : ""}
       ${state.vo2 ? `<span class="chip">VO₂&nbsp;<b>${state.vo2}</b></span>` : ""}
-      ${state.hrv7d ? `<span class="chip">HRV&nbsp;<b>${state.hrv7d}</b>&nbsp;ms</span>` : ""}</div>`;
+      ${state.hrv7d ? `<span class="chip">HRV&nbsp;<b>${state.hrv7d}</b>&nbsp;ms</span>` : ""}</div>`
+      + (E.targetSuggestions(doc).length ? `<div class="callout">As you've progressed, consider raising: ${E.targetSuggestions(doc).map(t => `<b>${t.label} ${t.current}→${t.recommended}${t.unit === "%" ? "%" : ""}</b>`).join(", ")} — update in Settings → Targets.</div>` : "");
 
     const allow = doc.settings.allowedTypes;
     const wo = E.weeksToEvent(doc.settings, startDate);
@@ -2474,6 +2537,36 @@ function renderProgress() {
   const anyHike = vol.some(v => v.hike > 0);
   const anyGym = vol.some(v => v.gym > 0);
   const CARDS = {
+    raceday: () => {
+      const ev = doc.settings.goalEvent;
+      if (!ev || !ev.date || ev.date < todayISO()) return "";
+      const days = Math.max(0, Math.round((E.parseISO(ev.date) - E.parseISO(todayISO())) / 864e5));
+      const wo = E.weeksToEvent(doc.settings, todayISO());
+      const phase = wo === 0 ? "Race week" : wo <= 2 ? "Taper" : "Build";
+      const adh = E.programAdherence({ weeks: doc.weeks, logs: doc.logs, todayISO: todayISO() }).adherence;
+      const isRide = doc.settings.goal === "cycling";
+      const pbs = E.personalBests({ logs: doc.logs, manualBests: doc.manualBests || [] });
+      const lp = pbs.find(pb => pb.key === (isRide ? "longestRide" : "longestRun"));
+      const longest = lp ? lp.value : 0;
+      const distPct = ev.distanceKm ? Math.min(1, longest / ev.distanceKm) : null;
+      const parts = [adh, distPct].filter(v => v != null);
+      const readiness = parts.length ? Math.round(parts.reduce((a, v) => a + v, 0) / parts.length * 100) : 0;
+      const rcol = readiness >= 80 ? "#41c98b" : readiness >= 55 ? "#e6a13c" : "#ff7a66";
+      const label = GOAL_LABEL[doc.settings.goal] || "Your event";
+      const startW = doc.weeks[0] ? doc.weeks[0].startDate : todayISO();
+      const totalW = (E.weeksToEvent(doc.settings, startW) || 0) + 1;
+      const curW = (currentWeek() || lastWeek())?.weekNum || 1;
+      return `<div class="raceday">
+        <div class="rd-ring">${C.progressRing({ pct: readiness / 100, color: rcol })}
+          <div class="rd-center"><span class="rd-trophy">🏆</span><b>${days}</b><small>days</small></div></div>
+        <div class="rd-info">
+          <div class="rd-title">${label}${ev.distanceKm ? ` · ${ev.distanceKm} km` : ""}</div>
+          <div class="rd-sub">${fmtDate(ev.date)}<span class="rd-phase">${phase}</span></div>
+          ${ev.distanceKm ? `<div class="rd-line"><span>Longest ${isRide ? "ride" : "run"}</span><b>${Math.round(longest)} / ${ev.distanceKm} km</b></div>` : ""}
+          <div class="rd-line"><span>Readiness</span><b style="color:${rcol}">${readiness}%</b></div>
+          <div class="rd-line"><span>Training</span><b>Week ${curW} of ${totalW}</b></div>
+        </div></div>`;
+    },
     volume: () => {
       const view = cardToggle.volume || "targets";
       const tabs = cardTabs("volume", [["targets", "Targets"], ["volume", "Volume"]], view);
@@ -2750,7 +2843,7 @@ function renderProgress() {
       }
       return `
       <div class="hd"><span class="eyebrow">Aerobic / anaerobic</span>${w.total ? `<span class="eyebrow tapx">${Math.round(w.easyPct * 100)}% easy</span>` : ""}</div>
-      ${pts.length >= 2 ? wrap("balance", C.lineChart(null, { series: [{ points: pts, color: "var(--sand)", segColors: pts.map(p => balCol(p.y)) }], axis: true, taps: true, target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
+      ${pts.length >= 2 ? wrap("balance", C.lineChart(null, { series: [{ points: pts, color: "var(--sand)", segColors: pts.map(p => balCol(p.y)) }], band: pts.map(p => ({ x: p.x, lo: 12, hi: 28 })), axis: true, taps: true, target: 20, targetLabel: "20%", fmtY: v => v + "%", selected: lineSel.balance, xLabels: [fmtShort(pts[0].date), fmtShort(pts[pts.length - 1].date)] })) : `<p class="row-sub">Log sessions with heart rate to see your easy-vs-hard balance against the 80/20 line.</p>`}
       ${pts.length >= 2 ? `<div class="legend2"><span><i style="background:#5fbf6a"></i>on target</span><span><i style="background:#e6a13c"></i>drifting</span><span><i style="background:#e8554e"></i>off</span></div>` : ""}
       ${lineDetail("balance", [{ points: pts }], p => `${Math.round(p.y)}% hard`)}
       ${w.total ? `<div class="callout">Over ${win.label.toLowerCase()}: <b>${Math.round(w.easyPct * 100)}%</b> easy · <b>${Math.round(tPct * 100)}%</b> threshold · <b>${Math.round(aPct * 100)}%</b> anaerobic.<br>${advice}</div>` : ""}`;
@@ -2899,7 +2992,7 @@ function renderProgress() {
   page.innerHTML = `
     <div class="phead"><h1 class="page">Progress</h1><button class="iconbtn" id="pg-customize" aria-label="Customize">${ICONS_UI.sliders}</button></div>
     ${rangeBar}
-    ${order.map(c => `<div class="card pc">${CARDS[c.id]()}</div>`).join("") ||
+    ${order.map(c => { const h = CARDS[c.id](); return h ? `<div class="card pc">${h}</div>` : ""; }).join("") ||
       `<p class="row-sub" style="padding:20px 4px">No cards selected. Tap the sliders icon to choose what to show.</p>`}`;
 
   // ----- wiring -----
@@ -3085,14 +3178,19 @@ function wireReorder(list, onChange) {
   }));
 }
 
-function openValueSheet({ title, label, suffix, step = "1", value = "", withDate = false, min, max, allowClear = false, onSave }) {
+function openValueSheet({ title, label, suffix, step = "1", value = "", withDate = false, min, max, allowClear = false, recommend = null, recommendNote = "", onSave }) {
+  const recHtml = recommend && recommend.value != null
+    ? `<div class="callout" style="border-color:rgba(86,219,232,.3)">Recommended <b>~${typeof recommend.value === "number" ? recommend.value.toLocaleString() : recommend.value}${suffix ? " " + suffix : ""}</b>${recommend.reason ? ` — ${recommend.reason}` : ""}<br><button class="btn ghost mini" id="vs-use" style="margin-top:8px">Use this</button></div>`
+    : (recommendNote ? `<div class="callout">${recommendNote}</div>` : "");
   const sheet = openSheet(`
     <div class="sh-title">${title}</div>
+    ${recHtml}
     ${withDate ? `<div class="frow"><span class="l">Date</span><input type="date" id="vs-date" value="${todayISO()}" max="${todayISO()}"></div>` : ""}
     <div class="frow"><span class="l">${label}</span><input type="text" step="${step}" inputmode="decimal" id="vs-val" value="${value}" placeholder="—">${suffix ? `<span class="suffix">${suffix}</span>` : ""}</div>
     <button class="btn" id="vs-save">Save</button>
     ${allowClear ? `<button class="btn ghost" id="vs-clear">Clear value</button>` : ""}
   `);
+  sheet.querySelector("#vs-use")?.addEventListener("click", () => { sheet.querySelector("#vs-val").value = recommend.value; });
   sheet.querySelector("#vs-save").addEventListener("click", () => {
     const v = num(sheet.querySelector("#vs-val").value);
     if (v == null || (min != null && v < min) || (max != null && v > max)) { toast(min != null ? `Enter ${min}–${max}` : "Enter a number"); return; }
@@ -3282,7 +3380,9 @@ function renderSettings() {
   }));
   $("#st-cal")?.addEventListener("click", () => openValueSheet({
     title: "Weekly burn goal", label: "Per week", suffix: "kcal", step: "50",
-    value: st.weeklyCalorieTarget ?? (recBurn && recBurn.burn ? recBurn.burn : ""), min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
+    value: st.weeklyCalorieTarget ?? "", min: 500, max: 10000, allowClear: !!st.weeklyCalorieTarget,
+    recommend: recBurn && recBurn.burn ? { value: recBurn.burn, reason: recBurn.reason } : null,
+    recommendNote: recBurn && recBurn.burn ? "" : "Add your height, current weight and target weight to estimate this.",
     onSave: v => { st.weeklyCalorieTarget = v ? Math.round(v) : null; },
   }));
   page.querySelectorAll("[data-tgt]").forEach(btn => btn.addEventListener("click", () => {
@@ -3310,6 +3410,8 @@ function renderSettings() {
   $("#st-rest")?.addEventListener("click", openRestDaySheet);
   $("#st-climb")?.addEventListener("click", () => openValueSheet({
     title: "Climb target", label: "Base ascent", suffix: "m", step: "50", value: st.climbBaseAscent, min: 100, max: 3000,
+    recommend: recClimb ? { value: recClimb, reason: "from your recent rides" } : null,
+    recommendNote: recClimb ? "" : "Log a couple of rides with ascent first.",
     onSave: v => { st.climbBaseAscent = Math.round(v / 10) * 10; toast("Climb target updated"); },
   }));
   $("#st-pace")?.addEventListener("click", openPaceSheet);
@@ -3527,14 +3629,17 @@ function openPaceSheet() {
 function openGrowthSheet() {
   const st = doc.settings;
   let v = Math.round(st.growthRate * 100);
+  const rg = E.recommendGrowthRate(doc);
   const sheet = openSheet(`
     <div class="sh-title">Weekly growth</div>
     <div class="sh-sub">Default proposal after a good week</div>
+    ${rg ? `<div class="callout" style="border-color:rgba(86,219,232,.3)">Recommended <b>+${Math.round(rg.rate * 100)}%</b> — ${rg.reason}<br><button class="btn ghost mini" id="gr-use" style="margin-top:8px">Use this</button></div>` : ""}
     <div class="nextline"><span class="midnum" id="gr-v">+${v} %</span></div>
     <input type="range" min="0" max="15" step="1" id="gr-slider" value="${v}">
     <div class="ticks"><span>0</span><span>+15 %</span></div>
     <button class="btn" id="gr-save">Save</button>
   `);
+  sheet.querySelector("#gr-use")?.addEventListener("click", () => { v = Math.round(rg.rate * 100); sheet.querySelector("#gr-slider").value = v; sheet.querySelector("#gr-v").textContent = `+${v} %`; });
   sheet.querySelector("#gr-slider").addEventListener("input", e => {
     v = +e.target.value;
     sheet.querySelector("#gr-v").textContent = `+${v} %`;
@@ -3546,78 +3651,97 @@ function openGrowthSheet() {
   });
 }
 
+/* ---- shared budget-capped layout editor (funnel + Settings) ---- */
+const LY_SP = { run: ["lr", "Run"], bike: ["lb", "Ride"], "bike-long": ["lb", "Long ride"], gym: ["lg", "Gym"] };
+function layPlaced(lay, sp) {
+  return E.DAYS.reduce((n, d) => n + (lay[d] || []).filter(x => x === sp || (sp === "bike" && x === "bike-long")).length, 0);
+}
+/* day rows of placed-activity chips + per-sport add buttons, capped by `budget`. */
+function layoutEditorBody(lay, budget, restDay) {
+  const sports = [["run", "+ run"], ["bike", "+ ride"], ["gym", "+ gym"]].filter(([k]) => budget[k] > 0);
+  const header = `<div class="lybudget">${sports.map(([k]) => `<span>${LY_SP[k][1]} <b>${layPlaced(lay, k)}/${budget[k]}</b></span>`).join("")}</div>`;
+  const rows = E.DAYS.filter(d => d !== restDay).map(d => {
+    const arr = (lay[d] || []).filter(v => v !== "rest");
+    const chips = arr.length ? arr.map((v, i) => `<i class="laychip ${LY_SP[v][0]}" data-rm="${d}|${i}">${LY_SP[v][1]} ✕</i>`).join("") : `<i class="laychip lx">Rest</i>`;
+    const adds = sports.map(([k, l]) => `<button class="lyadd" data-add="${d}|${k}" ${layPlaced(lay, k) >= budget[k] ? "disabled" : ""}>${l}</button>`).join("");
+    return `<div class="lyrow"><span class="lyd">${d[0].toUpperCase()}${d.slice(1, 3)}</span><span class="lychips2">${chips}</span><span class="lyadds">${adds}</span></div>`;
+  }).join("");
+  return header + `<div class="card" style="padding:4px 12px;margin-top:8px">${rows}</div>`;
+}
+function bindLayoutEditor(root, lay, budget, restDay, rerender) {
+  root.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+    const [d, k] = b.dataset.add.split("|");
+    if (layPlaced(lay, k) >= budget[k]) return;
+    lay[d] = (lay[d] || []).filter(x => x !== "rest"); lay[d].push(k); rerender();
+  }));
+  root.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => {
+    const [d, i] = b.dataset.rm.split("|"); lay[d].splice(+i, 1); rerender();
+  }));
+}
+/* keep manual placements, append any unplaced budget to the emptiest active days,
+   promote one ride to the long ride, fill empty days with rest. Returns a new layout. */
+function finalizeLayout(lay, budget, restDay) {
+  const out = {}; for (const d of E.DAYS) out[d] = (lay[d] || []).filter(v => v !== "rest").map(v => v === "bike-long" ? "bike" : v);
+  const active = E.DAYS.filter(d => d !== restDay);
+  for (const sp of ["run", "bike", "gym"]) {
+    while (layPlaced(out, sp) < (budget[sp] || 0) && active.length) {
+      const d = active.slice().sort((a, b) => out[a].length - out[b].length)[0]; out[d].push(sp);
+    }
+  }
+  if (budget.bike > 0) {
+    const rideDays = E.DAYS.filter(d => out[d].includes("bike"));
+    const longDay = rideDays.includes("sat") ? "sat" : rideDays[rideDays.length - 1];
+    if (longDay) { const i = out[longDay].indexOf("bike"); if (i >= 0) out[longDay][i] = "bike-long"; }
+  }
+  for (const d of E.DAYS) if (!out[d].length) out[d] = ["rest"];
+  return out;
+}
+
 function openLayoutEditor() {
-  const lay = {}; for (const d of E.DAYS) { const v = doc.settings.layout[d]; lay[d] = Array.isArray(v) ? (v[0] || "rest") : (v || "rest"); }
-  const OPTS = [["run", "Run"], ["bike", "Ride"], ["bike-long", "Long"], ["gym", "Gym"], ["rest", "Rest"]];
-  const sheet = openSheet(`
-    <div class="sh-title">Weekly layout</div>
-    <div class="sh-sub">Applies when the next week is generated</div>
-    ${E.DAYS.map(d => `<div class="seg" data-day="${d}">
-      <span class="l" style="flex:0 0 44px;align-self:center;color:var(--sub);font-weight:700;font-size:13px">${d.toUpperCase()}</span>
-      ${OPTS.map(([v, l]) => `<button data-v="${v}" class="${lay[d] === v ? "on" : ""}">${l}</button>`).join("")}</div>`).join("")}
-    <button class="btn" id="ly-save">Save for next week</button>
-    <button class="btn ghost" id="ly-now">Apply to this week too</button>
-    <button class="btn ghost" id="ly-auto">Auto-schedule this week (best for me)</button>
-  `);
-  sheet.querySelectorAll(".seg[data-day]").forEach(row => {
-    row.querySelectorAll("[data-v]").forEach(btn => btn.addEventListener("click", () => {
-      lay[row.dataset.day] = btn.dataset.v;
-      row.querySelectorAll("[data-v]").forEach(x => x.classList.toggle("on", x === btn));
-    }));
-  });
-  const cutoffNote = () => {
-    const t = todayISO(), w = currentWeek();
-    if (!w) return "";
-    const di = E.dayIndex(t);
-    return di >= 6 ? "" : ` Only ${E.DAYS.slice(di + 1).map(d => d.toUpperCase()).join(", ")} change — done and today stay put.`;
+  const budget = { ...(doc.settings.weeklyCounts || { run: 3, bike: 3, gym: 0 }) };
+  const restDay = doc.settings.restDay || "sun";
+  const lay = {}; for (const d of E.DAYS) { const v = doc.settings.layout[d]; lay[d] = (Array.isArray(v) ? v : [v]).filter(x => x && x !== "rest").map(x => x === "bike-long" ? "bike" : x); }
+  const sheet = openSheet(`<div id="ly-root"></div>`);
+  const root = sheet.querySelector("#ly-root");
+  const draw = () => {
+    root.innerHTML = `
+      <div class="sh-title">Weekly layout</div>
+      <div class="sh-sub">Tap + to place each activity on a day — two on one day is fine, capped by your weekly mix.</div>
+      ${layoutEditorBody(lay, budget, restDay)}
+      <button class="btn" id="ly-save">Save for next week</button>
+      <button class="btn ghost" id="ly-now">Apply to this week too</button>
+      <button class="btn ghost" id="ly-auto">Auto-schedule (best for me)</button>`;
+    bindLayoutEditor(root, lay, budget, restDay, draw);
+    root.querySelector("#ly-save").addEventListener("click", saveNext);
+    root.querySelector("#ly-now").addEventListener("click", applyNow);
+    root.querySelector("#ly-auto").addEventListener("click", () => { closeOverlay(); const w = currentWeek(); if (!w) { toast("No active week"); return; } persist(() => { reflowWeek(w); }); toast("Auto-scheduled"); });
   };
-  // rebuild the current week's *future* days from a day→sport map, freezing past+today
-  const applyToCurrentWeek = (mapForFuture) => {
+  const saveNext = () => {
+    const final = finalizeLayout(lay, budget, restDay);
+    const commit = () => { closeOverlay(); persist(() => { doc.settings.layout = final; }); toast("Layout saved — next week uses it"); };
+    const consec = E.consecutiveRunDays(final);
+    if (consec.length && !doc.settings.warnedRunAdjacency) {
+      openModal("Back-to-back runs", `Runs land on consecutive days (${consec.map(p => p.join("+")).join(", ")}). Keep it anyway?`, [
+        { label: "Keep it", fn: () => { doc.settings.warnedRunAdjacency = true; commit(); } },
+        { label: "Cancel", cls: "ghost" }]);
+    } else commit();
+  };
+  const applyNow = () => {
     const w = currentWeek(); if (!w) { toast("No active week"); return; }
-    const t = todayISO(), di = E.dayIndex(t);
+    const final = finalizeLayout(lay, budget, restDay);
+    closeOverlay();
     persist(() => {
-      // freeze sessions on past+today; replace future days per the map
-      for (const s of w.sessions) {
-        const sdi = E.DAYS.indexOf(s.day);
-        if (sdi <= di) continue; // protect past + today
-        const want = mapForFuture[s.day] || "rest";
-        if (want === "rest") { Object.assign(s, { sport: "rest", kind: "rest", targetMin: 0, zone: 0 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
-        else if (want === "run" || want === "bike") { Object.assign(s, { sport: want, kind: "easy", targetMin: s.targetMin || (want === "run" ? 35 : 60), zone: 2 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
-        else if (want === "bike-long") { Object.assign(s, { sport: "bike", kind: "long", targetMin: Math.max(s.targetMin, 90), zone: 2 }); delete s.qualityTemplate; delete s.gym; delete s.venue; }
-        else if (want === "gym") { Object.assign(s, { sport: "gym", kind: "easy", targetMin: E.snapGymMinutes(s.targetMin || 45), venue: doc.settings.gymVenueDefault || "home", gym: { seed: E.hashSeed(`${w.id}-${s.day}-${s.slot ?? 0}`), avoidIds: [], swaps: {} } }); delete s.qualityTemplate; delete s.zone; }
-      }
+      doc.settings.layout = final;
+      const idx = weekIndex(w), qs = qstate(), allow = doc.settings.allowedTypes, di = E.dayIndex(todayISO());
+      const { week: nw } = E.relayoutWeek({ week: w, runCount: budget.run, bikeCount: budget.bike, gymCount: budget.gym, restDay, layout: final,
+        quality: { run: qs.run, bike: qs.bike }, runQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "run", allow), bikeQTemplate: E.qualityTemplateFor(doc.weeks.slice(0, idx), "bike", allow),
+        climbTarget: E.climbTargetAscent({ logs: doc.logs, weekNum: w.weekNum, settings: doc.settings }), gymVenue: doc.settings.gymVenueDefault || "home", gymHard: allow.gymStrength !== false });
+      w.sessions = [...w.sessions.filter(s => E.DAYS.indexOf(s.day) <= di), ...nw.sessions.filter(s => E.DAYS.indexOf(s.day) > di)];
       w.targetMin = { run: E.sumSessions(w.sessions, "run"), bike: E.sumSessions(w.sessions, "bike"), gym: E.sumSessions(w.sessions, "gym") };
     });
-  };
-  sheet.querySelector("#ly-now").addEventListener("click", () => {
-    closeOverlay();
-    persist(() => { doc.settings.layout = lay; });
-    applyToCurrentWeek(lay);
     toast("Applied to this week");
-  });
-  sheet.querySelector("#ly-auto").addEventListener("click", () => {
-    closeOverlay();
-    const w = currentWeek(); if (!w) { toast("No active week"); return; }
-    persist(() => { reflowWeek(w); }); // placeLayout = fatigue-aware optimal
-    toast("Auto-scheduled for your condition");
-  });
-  sheet.querySelector("#ly-save").addEventListener("click", () => {
-    const doSave = () => {
-      closeOverlay();
-      persist(() => { doc.settings.layout = lay; });
-      toast("Layout saved — next week uses it");
-    };
-    const consec = E.consecutiveRunDays(lay);
-    if (consec.length && !doc.settings.warnedRunAdjacency) {
-      closeOverlay();
-      openModal("Back-to-back runs", `Runs land on consecutive days (${consec.map(p => p.join("+")).join(", ")}) — the main injury risk at current load. Keep it anyway?`, [
-        { label: "Keep it", fn: () => { doc.settings.warnedRunAdjacency = true; persist(() => { doc.settings.layout = lay; }); toast("Layout saved"); } },
-        { label: "Go back", cls: "ghost", fn: openLayoutEditor },
-      ]);
-      return;
-    }
-    doSave();
-  });
+  };
+  draw();
 }
 
 /* ---------------- data in / out ---------------- */

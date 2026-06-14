@@ -1122,3 +1122,10 @@ test("coachInsights surfaces an event countdown when a dated event is set", () =
   const ins = E.coachInsights({ doc, todayISO: "2026-06-15" });
   assert.ok(ins.some(i => i.id === "event-countdown"), "countdown insight present");
 });
+
+test("targetSuggestions flags a climb-target increase as rides get bigger", () => {
+  const doc = { settings: { ...SETTINGS, climbBaseAscent: 500 }, weeks: [], checkins: [],
+    logs: [600, 700, 800].map((a, i) => ({ sport: "bike", ascent: a, km: 30, min: 90, date: `2026-06-0${i + 1}` })) };
+  const climb = E.targetSuggestions(doc).find(s => s.key === "climb");
+  assert.ok(climb && climb.recommended > 500, "climb increase suggested");
+});

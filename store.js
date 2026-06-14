@@ -9,6 +9,7 @@ export const SCHEMA_VERSION = 8;
    v1.6 merged pairs behind a toggle: load (focus/daily), speedByType (run/ride),
    distance (run/ride). */
 export const PROGRESS_CARDS = [
+  { id: "raceday",     on: true },
   { id: "volume",      on: true },
   { id: "load",        on: true },
   { id: "calories",    on: true },

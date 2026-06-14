@@ -631,7 +631,7 @@ function hasRun(v) { return Array.isArray(v) ? v.includes("run") : v === "run"; 
 export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunMin = null, restDay = null,
                                quality = { run: false, bike: false },
                                runQTemplate = "runQ1", bikeQTemplate = "bikeQ1", climbTarget = null,
-                               gymVenue = "home", gymHard = true }) {
+                               gymVenue = "home", gymHard = true, layout = null }) {
   const warnings = [];
   const oldRuns = week.sessions.filter(s => s.sport === "run").length;
   const oldBikes = week.sessions.filter(s => s.sport === "bike").length;
@@ -645,14 +645,14 @@ export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunM
   // introducing gym mid-program bootstraps from a 45-min base per session
   const gymMin = oldGyms > 0 ? (week.targetMin.gym || 0) * (gymCount / oldGyms) : 45 * gymCount;
 
-  const layout = placeLayout({ run: runCount, bike: bikeCount, gym: gymCount, restDay: rest });
+  const lay = layout || placeLayout({ run: runCount, bike: bikeCount, gym: gymCount, restDay: rest });
 
   for (let i = 0; i < DAYS.length - 1; i++) {
-    if (hasRun(layout[DAYS[i]]) && hasRun(layout[DAYS[i + 1]])) { warnings.push("consecutive-runs"); break; }
+    if (hasRun(lay[DAYS[i]]) && hasRun(lay[DAYS[i + 1]])) { warnings.push("consecutive-runs"); break; }
   }
 
   const q = { run: quality.run && !!runQTemplate, bike: quality.bike && !!bikeQTemplate, gym: gymHard && !week.isDeload };
-  const sessions = buildSessions(runMin, bikeMin, gymMin, layout,
+  const sessions = buildSessions(runMin, bikeMin, gymMin, lay,
     { deload: week.isDeload, quality: q, runQTemplate, bikeQTemplate,
       longCap: week.isDeload ? 90 : 210, climbTarget, gymVenue, weekSalt: week.startDate });
   return {
@@ -666,7 +666,7 @@ export function relayoutWeek({ week, runCount, bikeCount, gymCount = 0, prevRunM
 export function consecutiveRunDays(layout) {
   const out = [];
   for (let i = 0; i < DAYS.length - 1; i++) {
-    if ((layout[DAYS[i]] === "run") && (layout[DAYS[i + 1]] === "run")) out.push([DAYS[i], DAYS[i + 1]]);
+    if (hasRun(layout[DAYS[i]]) && hasRun(layout[DAYS[i + 1]])) out.push([DAYS[i], DAYS[i + 1]]);
   }
   return out;
 }
@@ -1161,6 +1161,23 @@ export function recommendGrowthRate(doc) {
   else if (avgC >= 0.75) { rate = 0.05; reason = "Solid consistency — a moderate build fits."; }
   else { rate = 0.03; reason = "Recent weeks were patchy — grow gently."; }
   return { rate, reason };
+}
+
+/* Targets whose data-driven recommendation now meaningfully (≥10%) exceeds the current
+   setting — so the coach + Sunday review can nudge the user to raise them as they progress. */
+export function targetSuggestions(doc) {
+  const s = doc.settings || {};
+  const out = [];
+  const up = (key, label, current, recommended, unit, reason) => {
+    if (recommended != null && current != null && current > 0 && recommended >= current * 1.1)
+      out.push({ key, label, current, recommended, unit, reason });
+  };
+  up("climb", "Climb target", s.climbBaseAscent, recommendClimbTarget(doc), "m", "your recent rides are climbing more");
+  const gr = recommendGrowthRate(doc);
+  if (gr) up("growth", "Weekly growth", Math.round((s.growthRate || 0) * 100), Math.round(gr.rate * 100), "%", gr.reason);
+  const rb = recommendBurnGoal(doc);
+  if (rb && rb.burn && s.weeklyCalorieTarget) up("burn", "Weekly burn goal", s.weeklyCalorieTarget, rb.burn, "kcal", "toward your target weight");
+  return out;
 }
 
 /* ---- personal bests, auto from logs merged with manual entries ---- */
@@ -1789,6 +1806,14 @@ export function coachInsights({ doc, todayISO }) {
               impact: wo <= 2 ? 0.85 : 0.6, confidence: 0.9 });
       }
     }
+  }
+
+  // recommendations that have outgrown the current setting
+  for (const t of targetSuggestions(doc)) {
+    const u = t.unit === "%" ? "%" : t.unit === "kcal" ? " kcal" : " " + t.unit;
+    add({ id: "tgt-" + t.key, category: "improvement", title: `Raise your ${t.label.toLowerCase()}`,
+          body: `Your training suggests about ${t.recommended}${u} now — you're set to ${t.current}${u}. ${t.reason}. Bump it in Settings → Targets.`,
+          why: "Recommended from your recent data.", impact: 0.6, confidence: 0.7 });
   }
 
   // new personal bests in the last 7 days

@@ -199,6 +199,17 @@ export function vo2Gauge({ pos = 0.5, color = CY, segs }) {
   return svg(W, H, s);
 }
 
+/* A circular progress ring — faint full circle + a coloured arc for `pct` (0–1).
+   Content (trophy, day count) is overlaid via CSS by the caller. */
+export function progressRing({ pct = 0, color = CY, size = 132, sw = 10 }) {
+  const r = (size - sw) / 2 - 2, cx = size / 2, cy = size / 2, c = 2 * Math.PI * r;
+  const off = c * (1 - Math.max(0, Math.min(1, pct)));
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1a2530" stroke-width="${sw}"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>
+  </svg>`;
+}
+
 /* Stacked vertical bars. rows: [{label?, total, ...keyVals}]; keys+colors map
    the stack order. Used for daily exercise load + monthly volume. */
 export function stackedBars(rows, { keys, colors, width = 352, height = 120, fmtY = null, labelEvery = 0, target = null } = {}) {
