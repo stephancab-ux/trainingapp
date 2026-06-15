@@ -1219,7 +1219,9 @@ export function loadCurve(logs, bounds, from, to, todayISO) {
   for (const l of logs) if (LOADBEARING(l)) byDay[l.date] = (byDay[l.date] || 0) + sessionLoad(l, bounds);
   const sumRange = (a, b) => { let s = 0; for (let d = a; d <= b; d = addDays(d, 1)) s += byDay[d] || 0; return s; };
   const out = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) {
+  // never plot past today — a future day has no load yet (the window can end on a future Sunday)
+  const last = (todayISO && todayISO < to) ? todayISO : to;
+  for (let d = from; d <= last; d = addDays(d, 1)) {
     const acute = sumRange(addDays(d, -6), d);
     const chronic = sumRange(addDays(d, -27), d) / 4;
     const acwr = chronic > 0 ? acute / chronic : null;

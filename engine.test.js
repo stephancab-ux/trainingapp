@@ -964,6 +964,16 @@ test("loadCurve's last point matches the trainingLoad chip", () => {
   assert.equal(last.current, true);
 });
 
+test("loadCurve never plots past today, even when the range ends on a future Sunday", () => {
+  const logs = [{ id: "a", date: "2026-06-14", sport: "run", min: 50, avgHR: 150 },
+                { id: "b", date: "2026-06-15", sport: "bike", min: 60, avgHR: 140 }];
+  const curve = E.loadCurve(logs, BOUNDS, "2026-05-25", "2026-06-21", "2026-06-15"); // to = future Sunday
+  assert.equal(curve[curve.length - 1].date, "2026-06-15", "stops at today");
+  assert.ok(!curve.some(c => c.date > "2026-06-15"), "no future days");
+  // a past range still runs to its end (to < today)
+  assert.equal(E.loadCurve(logs, BOUNDS, "2026-05-01", "2026-05-31", "2026-06-15").slice(-1)[0].date, "2026-05-31");
+});
+
 test("effectiveAerobicTE prefers the real value, else a labeled estimate", () => {
   assert.deepEqual(E.effectiveAerobicTE({ sport: "run", min: 60, avgHR: 150, aerobicTE: 3.4 }, BOUNDS),
     { te: 3.4, estimated: false });

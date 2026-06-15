@@ -1,6 +1,6 @@
 /* Remonte service worker — cache-first app shell, versioned cache.
    Bump VERSION on every release; the app picks it up on the second reopen. */
-const VERSION = "v1.8.6";
+const VERSION = "v1.8.7";
 const CACHE = "remonte-" + VERSION;
 const ASSETS = [
   "./",
