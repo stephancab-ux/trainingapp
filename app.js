@@ -1134,6 +1134,16 @@ function renderToday() {
 
 /* ---------------- logging ---------------- */
 
+/* RPE 1–10 → a hue (green=easy → red=max), an emoji and a word, so the scale's
+   direction is obvious. Used by the log sheet + the send-to-watch sheet. */
+const RPE_META = n => {
+  const hue = Math.round(130 - (n - 1) / 9 * 130);
+  const [emoji, label] = n <= 1 ? ["😌", "very easy"] : n <= 3 ? ["🙂", "easy"] : n <= 5 ? ["😐", "moderate"]
+    : n <= 7 ? ["😣", "hard"] : n <= 9 ? ["😫", "very hard"] : ["🥵", "max effort"];
+  return { hue, emoji, label };
+};
+const rpePick = rpe => rpe ? `RPE ${rpe} · ${RPE_META(rpe).emoji} ${RPE_META(rpe).label}` : "how hard did it feel?";
+
 function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null, linkSession = null }) {
   const isEdit = !!log;
   let min = isEdit ? log.min : prefillMin;
@@ -1179,7 +1189,9 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="frow"><span class="l">Calories</span><input type="text" inputmode="numeric" id="lg-cal" placeholder="—" value="${isEdit && log.calories != null ? log.calories : ""}"><span class="suffix">kcal</span></div>
     ${sport === "other" ? "" : `<div class="frow"><span class="l">Aerobic TE</span><input type="text" inputmode="decimal" id="lg-te" placeholder="—" value="${isEdit && log.aerobicTE != null ? log.aerobicTE : ""}"><span class="suffix">/ 5</span></div>`}
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
-      `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}">${i + 1}</button>`).join("")}</div>
+      `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}" style="--h:${RPE_META(i + 1).hue}">${i + 1}</button>`).join("")}</div>
+    <div class="rpe-ends"><span>😌 easy</span><span>all-out 🥵</span></div>
+    <div class="rpe-pick" id="lg-rpe-desc">${rpePick(rpe)}</div>
     <div class="frow"><span class="l">Note</span><input type="text" id="lg-note" placeholder="optional" value="${isEdit ? esc(log.note || "") : ""}"></div>
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
@@ -1208,6 +1220,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
   sheet.querySelectorAll("[data-rpe]").forEach(b => b.addEventListener("click", () => {
     rpe = rpe === +b.dataset.rpe ? null : +b.dataset.rpe;
     sheet.querySelectorAll("[data-rpe]").forEach(x => x.classList.toggle("on", +x.dataset.rpe === rpe));
+    sheet.querySelector("#lg-rpe-desc").textContent = rpePick(rpe);
   }));
   sheet.querySelector("#lg-save").addEventListener("click", () => {
     min = readMin();
@@ -2485,7 +2498,9 @@ function openWorkoutPage(week, session, dateISO) {
         <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="wd-maxhr" placeholder="—"><span class="suffix">bpm</span></div>
         <div class="frow"><span class="l">Calories</span><input type="text" inputmode="numeric" id="wd-cal" placeholder="—"><span class="suffix">kcal</span></div>
         <div class="frow" style="border:none"><span class="l">Effort</span>
-          <span class="seg rpe" style="border:none;padding:0;flex:1;justify-content:flex-end;flex-wrap:wrap">${[1,2,3,4,5,6,7,8,9,10].map(n => `<button data-rpe="${n}" style="flex:0 0 30px;min-height:38px">${n}</button>`).join("")}</span></div>
+          <span class="seg rpe" style="border:none;padding:0;flex:1;justify-content:flex-end;flex-wrap:wrap">${[1,2,3,4,5,6,7,8,9,10].map(n => `<button data-rpe="${n}" style="flex:0 0 30px;min-height:38px;--h:${RPE_META(n).hue}">${n}</button>`).join("")}</span></div>
+        <div class="rpe-ends"><span>😌 easy</span><span>all-out 🥵</span></div>
+        <div class="rpe-pick" id="wd-rpe-desc">${rpePick(null)}</div>
       </div>
       <p class="row-sub">No heart rate? It still counts toward your time and streak — just not the aerobic/anaerobic split.</p>
       <button class="btn" id="wd-save">Save workout</button>
@@ -2494,6 +2509,7 @@ function openWorkoutPage(week, session, dateISO) {
     wrap.querySelectorAll("[data-rpe]").forEach(b => b.addEventListener("click", () => {
       rpe = rpe === +b.dataset.rpe ? null : +b.dataset.rpe;
       wrap.querySelectorAll("[data-rpe]").forEach(x => x.classList.toggle("on", +x.dataset.rpe === rpe));
+      wrap.querySelector("#wd-rpe-desc").textContent = rpePick(rpe);
     }));
     wrap.querySelector("#wd-close").addEventListener("click", close);
     wrap.querySelector("#wd-skip").addEventListener("click", close);

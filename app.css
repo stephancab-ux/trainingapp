@@ -187,8 +187,10 @@ nav.tabbar .inner{display:flex;width:100%;max-width:480px}
 .seg button.on{background:var(--cy);color:var(--cy-ink)}
 .rpe-row{display:flex;gap:5px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
 .rpe-row .l{color:var(--sub);font-size:15px;font-weight:600;margin-right:6px}
-.rpe-row button{flex:1;height:34px;border-radius:8px;background:#1b2734;color:var(--sub);font-size:12.5px;font-weight:700}
-.rpe-row button.on{background:var(--cy);color:var(--cy-ink)}
+.rpe-row button,.seg.rpe button{flex:1;height:34px;border-radius:8px;font-size:12.5px;font-weight:800;border:1.5px solid transparent;background:hsl(var(--h,200) 40% 23%);color:hsl(var(--h,200) 82% 80%)}
+.rpe-row button.on,.seg.rpe button.on{background:hsl(var(--h) 64% 48%);color:#06151c;border-color:hsl(var(--h) 64% 60%)}
+.rpe-ends{display:flex;justify-content:space-between;font-size:11.5px;font-weight:650;color:var(--mut);margin:-2px 2px 0}
+.rpe-pick{text-align:center;font-size:12.5px;font-weight:700;color:var(--sub);min-height:16px;margin:4px 0 2px}
 .type-row{display:flex;gap:8px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
 .type-row .l{color:var(--sub);font-size:15px;font-weight:600;flex:none}
 .type-row .opts{display:flex;gap:5px;flex:1;flex-wrap:wrap;justify-content:flex-end}
