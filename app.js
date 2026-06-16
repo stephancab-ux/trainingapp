@@ -277,28 +277,33 @@ function wireSheetDrag(sheet, scrim) {
    minute values (shown h:mm past 60), centres `value`, and returns read() →
    the selected total minutes. Used by every duration input. */
 const WHEEL_IH = 36;
-function buildDurationWheel(el, { min = 1, max = 300, value = 45, onChange } = {}) {
+function buildDurationWheel(el, { min = 1, max = 300, value = 45, onChange, coarseFrom = Infinity, coarseStep = 5 } = {}) {
   const fmt = m => (m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}` : `${m}`);
+  // value list: 1-min steps up to `coarseFrom`, then `coarseStep`-min steps (default = every minute → unchanged)
+  const vals = [];
+  for (let m = min; m <= max; m += (m < coarseFrom ? 1 : coarseStep)) vals.push(m);
+  const nearestIdx = v => { let b = 0; for (let i = 1; i < vals.length; i++) if (Math.abs(vals[i] - v) < Math.abs(vals[b] - v)) b = i; return b; };
   let html = `<div class="dwheel-pad"></div>`;
-  for (let m = min; m <= max; m++)
+  for (const m of vals)
     html += `<div class="dwheel-item" data-m="${m}"><b>${fmt(m)}</b><i>${m >= 60 ? "h:mm" : "min"}</i></div>`;
   html += `<div class="dwheel-pad"></div>`;
   el.innerHTML = html;
   el.classList.add("dwheel");
-  let cur = Math.max(min, Math.min(max, Math.round(value)));
+  let idx = nearestIdx(Math.max(min, Math.min(max, Math.round(value))));
+  let cur = vals[idx];
   const items = el.querySelectorAll(".dwheel-item");
-  const setHi = () => items.forEach(it => it.classList.toggle("sel", +it.dataset.m === cur));
-  requestAnimationFrame(() => { el.scrollTop = (cur - min) * WHEEL_IH; setHi(); });
+  const setHi = () => items.forEach((it, i) => it.classList.toggle("sel", i === idx));
+  requestAnimationFrame(() => { el.scrollTop = idx * WHEEL_IH; setHi(); });
   let raf;
   el.addEventListener("scroll", () => {
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
-      const m = Math.max(min, Math.min(max, min + Math.round(el.scrollTop / WHEEL_IH)));
-      if (m !== cur) { cur = m; setHi(); onChange && onChange(cur); }
+      const i = Math.max(0, Math.min(vals.length - 1, Math.round(el.scrollTop / WHEEL_IH)));
+      if (i !== idx) { idx = i; cur = vals[idx]; setHi(); onChange && onChange(cur); }
     });
   });
   const read = () => cur;
-  read.set = v => { cur = Math.max(min, Math.min(max, Math.round(v))); el.scrollTop = (cur - min) * WHEEL_IH; setHi(); };
+  read.set = v => { idx = nearestIdx(Math.max(min, Math.min(max, Math.round(v)))); cur = vals[idx]; el.scrollTop = idx * WHEEL_IH; setHi(); };
   return read;
 }
 function openModal(title, body, buttons) {
@@ -1196,7 +1201,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 300, value: min, onChange: () => { if (isSwim) showSwimPace(); } });
+  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 1200, coarseFrom: 180, value: min, onChange: () => { if (isSwim) showSwimPace(); } });
   // swim: live pace per 100 m readout under the metres field
   const showSwimPace = () => {
     const pl = sheet.querySelector("#lg-pace"); if (!pl) return;
@@ -1950,7 +1955,7 @@ function openSessionEditor(week, s, st) {
     <button class="btn ghost" id="se-watch">Send to watch (.FIT)</button>
     <button class="btn ghost" id="se-save">Save changes</button>
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#se-min-wheel"), { min: 5, max: 240, value: dur });
+  const readMin = buildDurationWheel(sheet.querySelector("#se-min-wheel"), { min: 5, max: 1200, coarseFrom: 180, value: dur });
   const refresh = () => {
     const climb = chosen.id === "bikeClimb";
     sheet.querySelector("#se-climb-row").hidden = !climb;
@@ -2620,7 +2625,7 @@ function openAdhocSession(sport, opts = {}) {
     <button class="btn" id="ah-watch">Send to watch (.FIT)</button>
     <button class="btn" id="ah-log">Log it now</button>
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: sport === "hike" ? 600 : 240, value: dur });
+  const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: 1200, coarseFrom: 180, value: dur });
   const sessionObj = () => {
     const s = { sport, kind: chosen.kind, targetMin: readMin(), zone };
     if (chosen.kind === "quality") s.qualityTemplate = chosen.tpl;
@@ -2875,25 +2880,41 @@ function renderProgress() {
       const tabs = cardTabs("volume", [["targets", "Targets"], ["volume", "Volume"]], view);
       if (view === "targets") {
         const SPO = [["run", "Run"], ["bike", "Ride"], ["swim", "Swim"], ["trail", "Trail"], ["hike", "Hike"], ["gym", "Gym"], ["other", "Other"]];
-        const rows = SPO.filter(([sp]) => tBands[sp]).map(([sp, lab]) => {
-          const b = tBands[sp], col = SPORT_COLOR[sp] || SPORT_COLOR.other;
-          const actual = b.unit === "min" ? (wkActual[sp]?.min || 0) : b.unit === "m" ? (wkActual[sp]?.m || 0) : (wkActual[sp]?.km || 0);
-          const max = Math.max(b.hi, actual) * 1.08 || 1;
-          const optL = b.lo / max * 100, optR = b.hi / max * 100;
-          const over = actual > b.hi, inb = actual >= b.lo && actual <= b.hi;
-          const fmt = v => b.unit === "min" ? fmtDur(Math.round(v)) : b.unit === "m" ? `${Math.round(v).toLocaleString()} m` : v.toFixed(1) + " km";
+        const SU = { run: "km", bike: "km", trail: "km", hike: "km", swim: "m", gym: "min", other: "min" };
+        const fmtU = (v, unit) => unit === "min" ? fmtDur(Math.round(v)) : unit === "m" ? `${Math.round(v).toLocaleString()} m` : v.toFixed(1) + " km";
+        const actOf = (sp, unit) => unit === "min" ? (wkActual[sp]?.min || 0) : unit === "m" ? (wkActual[sp]?.m || 0) : (wkActual[sp]?.km || 0);
+        // every targeted-or-logged sport, so you see the full week's volume
+        const shown = SPO.filter(([sp]) => tBands[sp] || (wkActual[sp]?.count > 0)).map(([sp, lab]) => {
+          const b = tBands[sp], unit = b ? b.unit : (SU[sp] || "km");
+          return { sp, lab, b, unit, col: SPORT_COLOR[sp] || SPORT_COLOR.other, actual: actOf(sp, unit) };
+        });
+        // shared scale per unit — all km sports comparable; gym (min) and swim (m) each their own
+        const unitMax = {};
+        for (const r of shown) unitMax[r.unit] = Math.max(unitMax[r.unit] || 0, r.actual, r.b ? r.b.hi : 0);
+        for (const u in unitMax) unitMax[u] = unitMax[u] * 1.08 || 1;
+        const rows = shown.map(r => {
+          const max = unitMax[r.unit] || 1, fillPct = Math.max(2, Math.min(100, r.actual / max * 100));
+          if (r.b) {
+            const optL = r.b.lo / max * 100, optR = r.b.hi / max * 100;
+            const over = r.actual > r.b.hi, inb = r.actual >= r.b.lo && r.actual <= r.b.hi;
+            return `<div class="lf-row">
+              <span class="lf-name"><i style="background:${r.col}"></i>${r.lab}</span>
+              <span class="lf-track"><i class="lf-fill ${over ? "over" : ""}" style="width:${fillPct}%;background:${r.col}"></i><i class="lf-opt" style="left:${optL}%;width:${Math.max(2, optR - optL)}%"></i></span>
+              <span class="lf-val ${inb ? "ok" : ""}">${fmtU(r.actual, r.unit)}<small>/ ${fmtU(r.b.target, r.unit)}</small></span>
+            </div>`;
+          }
           return `<div class="lf-row">
-            <span class="lf-name"><i style="background:${col}"></i>${lab}</span>
-            <span class="lf-track"><i class="lf-fill ${over ? "over" : ""}" style="width:${Math.max(2, Math.min(100, actual / max * 100))}%;background:${col}"></i><i class="lf-opt" style="left:${optL}%;width:${Math.max(2, optR - optL)}%"></i></span>
-            <span class="lf-val ${inb ? "ok" : ""}">${fmt(actual)}<small>/ ${fmt(b.target)}</small></span>
+            <span class="lf-name"><i style="background:${r.col}"></i>${r.lab}</span>
+            <span class="lf-track"><i class="lf-fill" style="width:${fillPct}%;background:${r.col};opacity:.6"></i></span>
+            <span class="lf-val">${fmtU(r.actual, r.unit)}<small>no target</small></span>
           </div>`;
         }).join("");
         return `
         <div class="hd"><span class="eyebrow">Weekly targets</span>${tabs}</div>
         ${rows
           ? `<div class="lf">${rows}</div>
-             <div class="callout">This week's progress toward each goal (±${doc.settings.targetRangePct || 15}% band, in the activity's colour). Edit the goals in Settings → Training plan.</div>`
-          : `<p class="row-sub">Set weekly distance/time targets in Settings → Training plan to track your progress here.</p>`}`;
+             <div class="callout">This week's volume — activities with a target show a ±${doc.settings.targetRangePct || 15}% band; ones without still show what you did. Bars share a scale per unit, so a 70 km ride dwarfs a 15 km run. Edit goals in Settings → Training plan.</div>`
+          : `<p class="row-sub">Set weekly distance/time targets in Settings → Training plan, or log an activity, to see your week here.</p>`}`;
       }
       return `
       <div class="hd"><span class="eyebrow">${unit === "month" ? "Monthly" : "Weekly"} volume</span>${tabs}</div>
