@@ -515,6 +515,7 @@ body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area
 .wtimer.work{background:radial-gradient(120% 80% at 50% 0%,rgba(86,219,232,.12),transparent)}
 .wtimer.rest{background:radial-gradient(120% 80% at 50% 0%,rgba(201,139,219,.12),transparent)}
 .wtimer-x{position:absolute;right:6px;top:2px;font-size:18px}
+.wtimer-mute{position:absolute;left:6px;top:2px;font-size:18px;background:none;border:none}
 .wt-stage{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:700}
 .wt-name{font-size:26px;font-weight:800;line-height:1.1}
 .wt-name .uni{font-style:normal;font-size:13px;color:var(--sand)}

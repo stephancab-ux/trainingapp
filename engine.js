@@ -13,7 +13,22 @@ export const QUALITY_TEMPLATES = {
   bikeClimb: { sport: "bike", family: "climb",     name: "Climbing ride",   zone: 3, label: "Long climb @ Z3 — seated, steady; repeat to fill the session", set: { type: "block", blockMin: 30, zone: 3 } },
   bikeSprint:{ sport: "bike", family: "sprint",    name: "Sprint ride",     zone: 5, label: "6 × 30 s all-out @ Z5 · 4 min easy spin between",     set: { type: "intervals", reps: 6, workSec: 30,  workZone: 5, restSec: 240, restZone: 1 } },
 };
-export const QUALITY_WARMUP = "15 min warm-up / 10 min cool-down inside the planned time";
+
+/* Seconds of the main set (matches the structure workoutSteps/sessionTimeline build). */
+function mainSetSec(tpl) {
+  const s = tpl.set;
+  return s.type === "intervals" ? s.reps * (s.workSec + s.restSec) : s.blockMin * 60;
+}
+/* Warm-up / cool-down minutes that fill targetMin around the main set (a 60/40 split),
+   so warm + main + cool === targetMin exactly. Returns null for non-quality sessions. */
+export function warmCoolMin(session) {
+  const tpl = session.qualityTemplate ? QUALITY_TEMPLATES[session.qualityTemplate] : null;
+  if (!tpl || !tpl.set) return null;
+  const mainMin = Math.round(mainSetSec(tpl) / 60);
+  const pad = Math.max(0, (session.targetMin || mainMin) - mainMin);
+  const warm = Math.round(pad * 0.6);
+  return { warm, cool: pad - warm, mainMin };
+}
 
 /* ---------------- dates ---------------- */
 
@@ -1661,7 +1676,8 @@ export function workoutSteps(session, bounds) {
   const tpl = session.qualityTemplate ? QUALITY_TEMPLATES[session.qualityTemplate] : null;
   const steps = [];
   if (tpl && tpl.set) {
-    steps.push({ intensity: "warmup", durationType: "time", seconds: 600, ...z(2), name: "Warm-up" });
+    const wc = warmCoolMin(session);
+    if (wc.warm) steps.push({ intensity: "warmup", durationType: "time", seconds: wc.warm * 60, ...z(2), name: "Warm-up" });
     const set = tpl.set;
     if (set.type === "intervals") {
       const from = steps.length;
@@ -1671,12 +1687,40 @@ export function workoutSteps(session, bounds) {
     } else {
       steps.push({ intensity: "active", durationType: "time", seconds: set.blockMin * 60, ...z(set.zone), name: tpl.name });
     }
-    steps.push({ intensity: "cooldown", durationType: "time", seconds: 300, ...z(2), name: "Cool-down" });
+    if (wc.cool) steps.push({ intensity: "cooldown", durationType: "time", seconds: wc.cool * 60, ...z(2), name: "Cool-down" });
   } else {
     steps.push({ intensity: "active", durationType: "time", seconds: (session.targetMin || 30) * 60,
                  ...z(session.zone || 2), name: session.kind === "long" ? "Long" : "Steady" });
   }
   return steps;
+}
+
+/* Flat, fully-expanded phase list for the in-app guided player (repeats unrolled),
+   each phase carrying zone + HR bounds. Shares warmCoolMin with workoutSteps so the
+   on-screen timeline, the printed breakdown and the .FIT all agree. */
+export function sessionTimeline(session, bounds) {
+  const z = n => { const k = Math.min(5, Math.max(1, n)); const b = bounds[k - 1]; return { zone: k, hrLo: b.lo, hrHi: b.hi }; };
+  const tpl = session.qualityTemplate ? QUALITY_TEMPLATES[session.qualityTemplate] : null;
+  const out = [];
+  if (tpl && tpl.set) {
+    const wc = warmCoolMin(session);
+    if (wc.warm) out.push({ name: "Warm-up", seconds: wc.warm * 60, intensity: "warmup", ...z(2) });
+    const set = tpl.set;
+    if (set.type === "intervals") {
+      const workName = tpl.family === "hills" ? "Uphill" : "Work";
+      for (let r = 1; r <= set.reps; r++) {
+        out.push({ name: workName, seconds: set.workSec, intensity: "work", rep: r, reps: set.reps, ...z(set.workZone) });
+        out.push({ name: "Recover", seconds: set.restSec, intensity: "rest", rep: r, reps: set.reps, ...z(set.restZone) });
+      }
+    } else {
+      out.push({ name: tpl.name, seconds: set.blockMin * 60, intensity: "work", ...z(set.zone) });
+    }
+    if (wc.cool) out.push({ name: "Cool-down", seconds: wc.cool * 60, intensity: "cooldown", ...z(2) });
+  } else {
+    out.push({ name: session.kind === "long" ? "Long" : "Steady", seconds: (session.targetMin || 30) * 60,
+               intensity: "active", ...z(session.zone || 2) });
+  }
+  return out;
 }
 
 /* ---- v1.4: week/month buckets, distance, Garmin-style load, VO₂ category ---- */

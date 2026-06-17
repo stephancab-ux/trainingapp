@@ -991,6 +991,70 @@ function todayActivityCard(l, planned) {
   </button>`;
 }
 
+/* Precise, complete lines for a quality session: warm-up, main set, cool-down —
+   durations come from engine.warmCoolMin so they sum to the session total. The single
+   source for the workout breakdown shown on the Today card, the review sheet and the
+   editor. Returns null for non-quality (easy/long) sessions. */
+function qualityLines(s) {
+  const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
+  if (!tpl) return null;
+  const wc = E.warmCoolMin(s);
+  const z2 = bounds()[1];
+  const easy = `Zone 2 · ${z2.lo}–${z2.hi} bpm`;
+  const out = [];
+  if (wc && wc.warm) out.push(`<b>Warm-up</b> ${wc.warm} min easy — ${easy}`);
+  out.push(`<b>Main set</b> ${esc(tpl.label)}`);
+  if (wc && wc.cool) out.push(`<b>Cool-down</b> ${wc.cool} min easy — ${easy}`);
+  return out;
+}
+
+/* One full Today card for a single scheduled session (gym or endurance). Action
+   buttons carry data-si so renderToday wires each card to its own session. */
+function todaySessionCard(s, week, st) {
+  const si = week.sessions.indexOf(s);
+  const skipped = st.kind === "skipped";
+  if (s.sport === "gym") {
+    const venue = s.venue || "home";
+    return `<div class="card">
+      <div class="t-chips"><span class="chip gymc">${s.kind === "quality" ? "GYM · QUALITY" : "GYM"}</span><span class="chip zc2">${venue === "gym" ? "AT THE GYM" : "AT HOME"}</span>${skipped ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
+      <div class="bignum">${s.targetMin}<small>min</small></div>
+      <div class="t-block"><div class="lab">Workout</div>
+        <div class="t-pace-v">A full-body ${venue === "gym" ? "gym" : "home"} session. Open it to see today's exercises, run the timer, swap moves, or switch home ↔ gym.</div></div>
+      <div class="t-actions">
+        <button class="btn td-workout" data-si="${si}">Open workout</button>
+        ${!skipped ? `<button class="btn ghost td-skip" data-si="${si}">Skip today</button>` : ""}
+      </div></div>`;
+  }
+  const z = zoneInfo(s);
+  const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
+  const pace = s.sport === "run" ? E.paceHint(doc.logs, bounds(), s.kind === "quality" ? 4 : 2, doc.settings.easyPace) : null;
+  const gpace = goalPaceFor(s);
+  const ql = qualityLines(s);
+  const canPlay = s.sport === "run" || s.sport === "trail" || s.sport === "bike" || s.sport === "swim" || s.sport === "hike";
+  return `<div class="card">
+    <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip ${z.cls}">${z.label.toUpperCase()}</span>${skipped ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
+    <div class="bignum">${s.targetMin}<small>min</small></div>
+    <div class="t-block"><div class="lab">Heart rate target</div>
+      <div class="midnum">${z.lo}–${z.hi} <span class="unit">bpm</span></div></div>
+    ${ql ? `<div class="t-block"><div class="lab">Session</div>
+      <div class="t-pace-v">${ql.join("<br>")}</div>
+      ${s.targetAscent ? `<p class="row-sub" style="margin-top:3px;color:var(--sand)">Target climb ≈ ${s.targetAscent} m of ascent</p>` : ""}</div>` : ""}
+    ${gpace ? `<div class="t-block"><div class="lab">Pace · ${esc(gpace.label)}</div>
+      <div class="t-pace-v">≈ ${gpace.lo === gpace.hi ? E.fmtPace(gpace.lo) : `${E.fmtPace(gpace.lo)}–${E.fmtPace(gpace.hi)}`} /km <span>from your ${goalTimeLabel()} goal</span></div></div>`
+     : pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
+      <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : pace.manual ? "your pace setting — easy runs will tune this" : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
+    ${s.note ? `<p class="row-sub" style="margin-top:10px">${esc(s.note)}</p>` : ""}
+    ${s.kind === "easy" && s.sport === "run" ? `<p class="t-note">Keep it conversational — walk breaks are fine. Same heart rate, faster pace is how the engine comes back.</p>` : ""}
+    ${s.kind === "long" ? `<p class="t-note">Steady and unhurried — this ride is the week's anchor.</p>` : ""}
+    <div class="t-actions">
+      ${canPlay ? `<button class="btn td-start" data-si="${si}">▶ Start guided workout</button>` : ""}
+      <button class="btn ${canPlay ? "ghost" : ""} td-log" data-si="${si}">Log this session</button>
+      <button class="btn ghost td-edit-s" data-si="${si}">Adjust / send to watch</button>
+      ${!skipped ? `<button class="btn ghost td-skip" data-si="${si}">Skip today</button>` : ""}
+    </div>
+  </div>`;
+}
+
 function renderToday() {
   const page = $('[data-page="today"]');
   const t = todayISO();
@@ -1041,63 +1105,21 @@ function renderToday() {
   }
 
   const daySessions = week.sessions.filter(x => x.day === todayDay);
+  const real = daySessions.filter(x => x.sport !== "rest");
+  const pending = real.filter(x => sessionStatus(week, x).kind !== "done");
   // an empty day (e.g. after rescheduling the only session away) reads as a free/rest day
-  const s = daySessions.find(x => x.sport !== "rest" && sessionStatus(week, x).kind !== "done") || daySessions[0] || { sport: "rest", day: todayDay };
-  const st = sessionStatus(week, s);
-  const second = daySessions.filter(x => x !== s && x.sport !== "rest");
-  let card = "";
-
-  if (s.sport === "rest") {
-    card = `<div class="card">
+  const restCard = `<div class="card">
       <div class="t-chips"><span class="chip restc">REST</span></div>
       <div class="bignum" style="font-size:44px">Rest day</div>
       <p class="t-note">The adaptation happens today. ${due ? "One thing left: the weekly check-in." : "See you tomorrow."}</p>
       ${due ? `<div class="t-actions"><button class="btn" id="td-checkin">Sunday check-in</button></div>` : ""}
     </div>`;
-  } else if (st.kind === "done") {
-    // the completed session now shows as its activity card below (tagged ON PLAN)
-    card = "";
-  } else if (s.sport === "gym") {
-    const venue = s.venue || "home";
-    card = `<div class="card">
-      <div class="t-chips"><span class="chip gymc">${s.kind === "quality" ? "GYM · QUALITY" : "GYM"}</span><span class="chip zc2">${venue === "gym" ? "AT THE GYM" : "AT HOME"}</span>${st.kind === "skipped" ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
-      <div class="bignum">${s.targetMin}<small>min</small></div>
-      <div class="t-block"><div class="lab">Workout</div>
-        <div class="t-pace-v">A full-body ${venue === "gym" ? "gym" : "home"} session. Open it to see today's exercises, run the timer, swap moves, or switch home ↔ gym.</div></div>
-      ${second.length ? `<p class="row-sub" style="margin-top:10px">＋ also today: ${esc(second.map(x => kindLabel(x) + " · " + x.targetMin + " min").join(" · "))}</p>` : ""}
-      <div class="t-actions">
-        <button class="btn" id="td-workout">Open workout</button>
-        ${st.kind !== "skipped" ? `<button class="btn ghost" id="td-skip">Skip today</button>` : ""}
-      </div></div>`;
-  } else {
-    const z = zoneInfo(s);
-    const tpl = s.qualityTemplate ? E.QUALITY_TEMPLATES[s.qualityTemplate] : null;
-    const pace = s.sport === "run" ? E.paceHint(doc.logs, bounds(), s.kind === "quality" ? 4 : 2, doc.settings.easyPace) : null;
-    const gpace = goalPaceFor(s);
-    card = `<div class="card">
-      <div class="t-chips"><span class="chip ${sportClass(s.sport)}">${kindLabel(s).toUpperCase()}</span><span class="chip ${z.cls}">${z.label.toUpperCase()}</span>${st.kind === "skipped" ? `<span class="chip restc">SKIPPED</span>` : ""}</div>
-      <div class="bignum">${s.targetMin}<small>min</small></div>
-      <div class="t-block"><div class="lab">Heart rate target</div>
-        <div class="midnum">${z.lo}–${z.hi} <span class="unit">bpm</span></div></div>
-      ${tpl ? `<div class="t-block"><div class="lab">Session</div>
-        <div class="t-pace-v">${tpl.label}</div>
-        ${s.targetAscent ? `<p class="row-sub" style="margin-top:3px;color:var(--sand)">Target climb ≈ ${s.targetAscent} m of ascent</p>` : ""}
-        <p class="row-sub" style="margin-top:3px">${E.QUALITY_WARMUP}</p></div>` : ""}
-      ${gpace ? `<div class="t-block"><div class="lab">Pace · ${esc(gpace.label)}</div>
-        <div class="t-pace-v">≈ ${gpace.lo === gpace.hi ? E.fmtPace(gpace.lo) : `${E.fmtPace(gpace.lo)}–${E.fmtPace(gpace.hi)}`} /km <span>from your ${goalTimeLabel()} goal</span></div></div>`
-       : pace && !tpl ? `<div class="t-block"><div class="lab">Pace · estimate</div>
-        <div class="t-pace-v">≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km <span>${pace.learned ? `learned from your last ${pace.n} easy runs` : pace.manual ? "your pace setting — easy runs will tune this" : "starting estimate — easy runs tune this"}</span></div></div>` : ""}
-      ${s.note ? `<p class="row-sub" style="margin-top:10px">${esc(s.note)}</p>` : ""}
-      ${s.kind === "easy" && s.sport === "run" ? `<p class="t-note">Keep it conversational — walk breaks are fine. Same heart rate, faster pace is how the engine comes back.</p>` : ""}
-      ${s.kind === "long" ? `<p class="t-note">Steady and unhurried — this ride is the week's anchor.</p>` : ""}
-      ${second.length ? `<p class="row-sub" style="margin-top:10px">＋ also today: ${esc(second.map(x => kindLabel(x) + " · " + x.targetMin + " min").join(" · "))}</p>` : ""}
-      <div class="t-actions">
-        <button class="btn" id="td-log">Log this session</button>
-        <button class="btn ghost" id="td-edit-s">Adjust / send to watch</button>
-        ${st.kind !== "skipped" ? `<button class="btn ghost" id="td-skip">Skip today</button>` : ""}
-      </div>
-    </div>`;
-  }
+  // every session you still have to do today gets its own full card, in any order
+  const card = pending.length
+    ? (pending.length > 1 ? `<div class="eyebrow" style="margin:2px 2px 8px">${pending.length} sessions today · do them in any order</div>` : "")
+      + pending.map(x => todaySessionCard(x, week, sessionStatus(week, x))).join("")
+    : real.length ? "" /* all done → they appear under “Logged today” */
+    : restCard;
 
   // quiet one-tap for an unlogged yesterday — never a guilt banner
   let yLink = "";
@@ -1122,14 +1144,13 @@ function renderToday() {
     `<div class="weekmini">${dots}&nbsp; Week ${week.weekNum} · ${doneN} of ${totN} sessions done</div>`;
 
   wireActs();
-  $("#td-log")?.addEventListener("click", () =>
-    openLogSheet({ date: t, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }));
-  $("#td-edit")?.addEventListener("click", () =>
-    openLogSheet({ date: t, sport: s.sport, log: st.log, title: kindLabel(s) }));
-  $("#td-edit-s")?.addEventListener("click", () => openSessionEditor(week, s, st));
-  $("#td-workout")?.addEventListener("click", () => openWorkoutPage(week, s, t));
+  const siOf = b => week.sessions[+b.dataset.si];
+  page.querySelectorAll(".td-start").forEach(b => b.addEventListener("click", () => openGuidedWorkout(week, siOf(b), t)));
+  page.querySelectorAll(".td-log").forEach(b => b.addEventListener("click", () => { const x = siOf(b); openLogSheet({ date: t, sport: x.sport, prefillMin: x.targetMin, title: kindLabel(x), type: typeOfSession(x) }); }));
+  page.querySelectorAll(".td-edit-s").forEach(b => b.addEventListener("click", () => { const x = siOf(b); openSessionEditor(week, x, sessionStatus(week, x)); }));
+  page.querySelectorAll(".td-workout").forEach(b => b.addEventListener("click", () => openWorkoutPage(week, siOf(b), t)));
+  page.querySelectorAll(".td-skip").forEach(b => b.addEventListener("click", () => openSkip(week, siOf(b))));
   $("#td-plus")?.addEventListener("click", openTodayPlus);
-  $("#td-skip")?.addEventListener("click", () => openSkip(week, s));
   $("#td-checkin")?.addEventListener("click", () => openCheckin(due || week));
   $("#td-yest")?.addEventListener("click", () => {
     const ys = yWeek.sessions.find(x => x.day === E.DAYS[E.dayIndex(yDate)] && x.sport !== "rest");
@@ -1437,7 +1458,7 @@ function openSessionReview(week, s, st) {
     const pace = (s.sport === "run" || s.sport === "trail") ? E.paceHint(doc.logs, bounds(), s.zone || 2, doc.settings.easyPace) : null;
     const gpace = goalPaceFor(s);
     const gpaceTxt = gpace ? `${gpace.label[0].toUpperCase() + gpace.label.slice(1)} ≈ ${gpace.lo === gpace.hi ? E.fmtPace(gpace.lo) : `${E.fmtPace(gpace.lo)}–${E.fmtPace(gpace.hi)}`} /km` : null;
-    instr = [tpl ? esc(tpl.label) : `Keep it ${s.kind === "long" ? "steady and unhurried" : "conversational"}.`,
+    instr = [...(qualityLines(s) || [`Keep it ${s.kind === "long" ? "steady and unhurried" : "conversational"}.`]),
       `${z.label} · ${z.lo}–${z.hi} bpm`,
       gpaceTxt || (pace ? `Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km` : ""),
       s.targetAscent ? `Climb ≈ ${s.targetAscent} m ↑` : ""].filter(Boolean).join("<br>");
@@ -1446,11 +1467,13 @@ function openSessionReview(week, s, st) {
     <div class="sh-title">${kindLabel(s)}${s.targetMin ? ` · ${s.targetMin} min` : ""}</div>
     <div class="sh-sub">${fmtDate(date)} · ${SPORT_NAME[s.sport] || s.sport}</div>
     <div class="callout">${instr}</div>
-    <button class="btn" id="sr-log">Log this session</button>
+    ${s.sport !== "gym" ? `<button class="btn" id="sr-start">▶ Start guided workout</button>` : ""}
+    <button class="btn ${s.sport !== "gym" ? "ghost" : ""}" id="sr-log">Log this session</button>
     <button class="btn ghost" id="sr-mod">${s.sport === "gym" ? "Open workout" : "Modify this session"}</button>
     <button class="btn ghost" id="sr-resched">Reschedule</button>
     <button class="btn ghost" id="sr-link">Link to an activity</button>
   `);
+  sheet.querySelector("#sr-start")?.addEventListener("click", () => { closeOverlay(); openGuidedWorkout(week, s, date); });
   sheet.querySelector("#sr-log").addEventListener("click", () => { closeOverlay(); openLogSheet({ date, sport: s.sport, prefillMin: s.targetMin, title: kindLabel(s), type: typeOfSession(s) }); });
   sheet.querySelector("#sr-mod").addEventListener("click", () => { closeOverlay(); if (s.sport === "gym") openWorkoutPage(week, s, date); else openSessionEditor(week, s, st); });
   sheet.querySelector("#sr-resched").addEventListener("click", () => { closeOverlay(); openReschedule(week, s); });
@@ -1961,7 +1984,7 @@ function openSessionEditor(week, s, st) {
     sheet.querySelector("#se-climb-row").hidden = !climb;
     const tpl = chosen.tpl ? E.QUALITY_TEMPLATES[chosen.tpl] : null;
     sheet.querySelector("#se-detail").innerHTML = tpl
-      ? `${esc(tpl.label)}<br><span class="row-sub">${E.QUALITY_WARMUP}</span>`
+      ? qualityLines({ qualityTemplate: chosen.tpl, targetMin: readMin() }).join("<br>")
       : `Keep it ${chosen.id === "long" ? "steady and unhurried" : "conversational"} at Z${zone}.`;
   };
   refresh();
@@ -2025,11 +2048,24 @@ function sessionFit(s, date) {
   const bytes = F.encodeWorkout({ name, sport: s.sport === "bike" ? "bike" : "run", steps });
   return { bytes, file: `${date}-${(s.qualityTemplate || s.kind)}.fit` };
 }
+/* Garmin removed FIT-workout import from Connect web (its Workouts page only creates
+   workouts), so the only built-in way to load a structured workout file is to sideload
+   it onto the watch over USB. Shared by the single-session and weekly exports. */
+function watchImportModal(title, lead) {
+  openModal(title,
+    `${lead} Garmin Connect can't import workout files — load it onto the watch over USB:<br>
+     <b>1.</b> Plug the watch into your computer.<br>
+     <b>2.</b> Copy the .FIT into the watch's <b>GARMIN/NEWFILES</b> folder (older models: the <b>Workouts</b> folder).<br>
+     <b>3.</b> Eject and unplug — it appears under your saved workouts.<br>
+     <span style="color:var(--bad)">Don't use Garmin's “Import Data” page — that's only for finished activities and will reject a workout file.</span><br>
+     <small>On Windows the watch shows up as a drive. On a Mac, newer music watches use MTP — use Android File Transfer.</small>`,
+    [{ label: "Got it", cls: "ghost" }]);
+}
 function sendSessionToWatch(s, date) {
   const { bytes, file } = sessionFit(s, date);
   downloadBytes(file, bytes);
   toast("Workout file ready");
-  openModal("Load onto your Garmin", "Open Garmin Connect → Workouts → Import, and pick this .FIT — it syncs to your watch and guides each step. Or copy it into the watch's GARMIN/NEWFILES folder over USB.", [{ label: "Got it", cls: "ghost" }]);
+  watchImportModal("Load it onto your Garmin", "Your workout file is downloaded.");
 }
 function exportWeekToWatch(week) {
   const files = [];
@@ -2040,7 +2076,7 @@ function exportWeekToWatch(week) {
   }
   if (!files.length) { toast("No sessions to export"); return; }
   downloadBytes(`week-${week.startDate}-workouts.zip`, makeZip(files));
-  openModal("Week exported", `${files.length} workout files zipped. Unzip, then import each .FIT in Garmin Connect → Workouts → Import (or drop them in the watch's GARMIN/NEWFILES over USB).`, [{ label: "Got it", cls: "ghost" }]);
+  watchImportModal("Week exported", `${files.length} workout files are zipped — unzip them first.`);
 }
 function downloadBytes(filename, bytes) {
   const blob = new Blob([bytes], { type: "application/octet-stream" });
@@ -2339,6 +2375,56 @@ function beep(freq = 880, ms = 120) {
   if (navigator.vibrate) try { navigator.vibrate(55); } catch {}
 }
 
+/* ---------------- guided-workout voice + screen wake lock ----------------
+   Shared by the gym timer and the run/ride/swim player. Speaks via the device's
+   built-in speech synthesis — free, fully offline. iOS only runs a web app with the
+   screen on, so we hold a screen Wake Lock during a workout; truly-locked background
+   audio needs a native app (out of scope). All feature-detected and best-effort. */
+let _voiceMuted = false, _voicePrimed = false, _pickedVoice = null;
+let _wakeLock = null, _wakeWanted = false;
+const hasSpeech = () => typeof window !== "undefined" && "speechSynthesis" in window;
+function voiceOn() { return doc.settings.voiceCues !== false && !_voiceMuted; }
+function setMuted(m) { _voiceMuted = m; if (m) try { speechSynthesis.cancel(); } catch {} }
+function pickVoice() {
+  if (!hasSpeech()) return null;
+  if (_pickedVoice) return _pickedVoice;
+  const vs = speechSynthesis.getVoices() || [];
+  _pickedVoice = vs.find(v => /^en[-_]/i.test(v.lang) && v.localService) || vs.find(v => /^en[-_]/i.test(v.lang)) || vs[0] || null;
+  return _pickedVoice;
+}
+/* Call once from the Start tap (a user gesture) so iOS allows later speech. */
+function primeVoice() {
+  if (_voicePrimed || !hasSpeech()) return;
+  _voicePrimed = true;
+  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch {}
+}
+function speak(text) {
+  if (!voiceOn() || !text || !hasSpeech()) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-US"; u.rate = 1; const v = pickVoice(); if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+function shutUp() { try { if (hasSpeech()) speechSynthesis.cancel(); } catch {} }
+/* Spoken cue for a gym timer step (work / self-paced reps / rest). */
+function sayGymStep(s) {
+  if (!s) return;
+  if (s.kind === "reps") speak(`${s.name}. ${s.reps} reps${s.uni ? " each side" : ""}. Tap done when ready.`);
+  else if (s.kind === "work") speak(`Round ${s.round} of ${s.rounds}. ${s.name}. ${s.sec} seconds.`);
+  else speak(`Rest. ${s.sec} seconds.`);
+}
+async function keepAwake() {
+  _wakeWanted = true;
+  try { if ("wakeLock" in navigator) _wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+function releaseAwake() { _wakeWanted = false; try { _wakeLock?.release?.(); } catch {} _wakeLock = null; }
+if (hasSpeech() && speechSynthesis.addEventListener) speechSynthesis.addEventListener("voiceschanged", () => { _pickedVoice = null; });
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && _wakeWanted) keepAwake();
+});
+
 /* Flatten a workout into timer steps. A reps block → self-paced "reps" steps
    with a 45 s rest between sets; a timed block → work/rest countdown steps. */
 function workoutSteps(workout) {
@@ -2368,13 +2454,13 @@ function openWorkoutPage(week, session, dateISO) {
   requestAnimationFrame(() => el.classList.add("show"));
   let tick = null;
   const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
-  const close = () => { stop(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); persist(); };
+  const close = () => { stop(); releaseAwake(); shutUp(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); persist(); };
   const wrap = el.querySelector(".wrap");
   let workout = workoutForSession(session);
 
   const gymState = () => (session.gym = session.gym || { avoidIds: [], swaps: {} });
   function paintOverview() {
-    stop();
+    stop(); releaseAwake(); shutUp();
     const venue = session.venue || "home";
     const focus = (session.gym && session.gym.focus) || "full";
     const eq = workout.equipmentNeeded.length
@@ -2449,12 +2535,13 @@ function openWorkoutPage(week, session, dateISO) {
   }
 
   let steps = [], idx = 0, remaining = 0, paused = false;
-  const gotoStep = i => { idx = Math.max(0, Math.min(steps.length - 1, i)); remaining = steps[idx].kind === "reps" ? 0 : steps[idx].sec; renderStep(); };
+  const gotoStep = i => { idx = Math.max(0, Math.min(steps.length - 1, i)); remaining = steps[idx].kind === "reps" ? 0 : steps[idx].sec; renderStep(); sayGymStep(steps[idx]); };
   const advance = () => { if (idx + 1 >= steps.length) { stop(); paintDone(); return; } gotoStep(idx + 1); };
   function paintTimer() {
     stop();
     steps = workoutSteps(workout);
     if (!steps.length) { toast("Nothing to run"); return; }
+    primeVoice(); keepAwake();
     paused = false; gotoStep(0);
     tick = setInterval(() => {
       if (paused || steps[idx].kind === "reps") return; // rep sets are self-paced
@@ -2475,6 +2562,7 @@ function openWorkoutPage(week, session, dateISO) {
       : `<div class="wt-count">${remaining}</div>`;
     wrap.innerHTML = `<div class="wtimer ${cls}">
       <button class="iconbtn wtimer-x" id="wt-quit" aria-label="Close">✕</button>
+      <button class="iconbtn wtimer-mute" id="wt-mute" aria-label="Voice on/off">${_voiceMuted ? "🔇" : "🔊"}</button>
       <div class="wt-stage">${stage}</div>
       <div class="wt-name">${exIcon(s.cat)}${esc(s.name)}${s.uni && s.kind === "work" ? " <i class='uni'>each side</i>" : ""}</div>
       ${mid}
@@ -2486,6 +2574,7 @@ function openWorkoutPage(week, session, dateISO) {
         <button class="btn ghost" id="wt-skip">›</button></div>
       <div class="wt-prog"><i style="width:${Math.round((idx / steps.length) * 100)}%"></i></div></div>`;
     wrap.querySelector("#wt-quit").addEventListener("click", paintOverview);
+    wrap.querySelector("#wt-mute").addEventListener("click", () => { setMuted(!_voiceMuted); renderStep(); });
     wrap.querySelector("#wt-pause").addEventListener("click", () => { paused = !paused; renderStep(); });
     wrap.querySelector("#wt-skip").addEventListener("click", advance);
     wrap.querySelector("#wt-back").addEventListener("click", () => gotoStep(idx - 1));
@@ -2493,7 +2582,7 @@ function openWorkoutPage(week, session, dateISO) {
   }
 
   function paintDone() {
-    stop();
+    stop(); releaseAwake(); speak("Workout complete. Nice work.");
     wrap.innerHTML = `
       <div class="wpg-head"><button class="iconbtn" id="wd-close" aria-label="Close">✕</button>
         <h1 class="page">Nice work</h1><p class="row-sub">Log it so it counts toward your load and streak.</p></div>
@@ -2529,6 +2618,96 @@ function openWorkoutPage(week, session, dateISO) {
   }
 
   paintOverview();
+}
+
+/* Fullscreen guided player for run / ride / swim / trail / hike. Steps the engine's
+   sessionTimeline with an on-screen countdown + detailed spoken cues (device voice,
+   offline), holding a screen wake lock so it keeps running with the screen on.
+   Finishing drops straight into the normal log sheet. */
+function openGuidedWorkout(week, session, dateISO) {
+  const phases = E.sessionTimeline(session, bounds());
+  if (!phases.length) { toast("Nothing to run"); return; }
+  document.body.insertAdjacentHTML("beforeend", `<div class="checkin workoutpg" id="guidedpg"><div class="wrap"></div></div>`);
+  const el = $("#guidedpg");
+  requestAnimationFrame(() => el.classList.add("show"));
+  const wrap = el.querySelector(".wrap");
+  const isRunny = session.sport === "run" || session.sport === "trail";
+
+  let idx = 0, remaining = phases[0].seconds, paused = true, tick = null, deadline = 0, said10 = false, saidHalf = false;
+  const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
+  const close = () => { stop(); releaseAwake(); shutUp(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); };
+  const fmtClock = s => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
+  const minsWord = sec => sec >= 60 ? `${Math.round(sec / 60)} minute${Math.round(sec / 60) === 1 ? "" : "s"}` : `${sec} seconds`;
+  const workPace = p => isRunny && p.intensity === "work" ? goalPaceFor(session) : null;
+  const phaseTitle = p => p.intensity === "warmup" ? "Warm-up" : p.intensity === "cooldown" ? "Cool-down" : p.intensity === "rest" ? "Recover" : p.name;
+  const phaseSay = p => {
+    const where = p.rep ? `Rep ${p.rep} of ${p.reps}. ` : "";
+    const gp = workPace(p);
+    const pace = gp ? `, target pace ${E.fmtPace(gp.lo)} to ${E.fmtPace(gp.hi)} per kilometre` : "";
+    return `${where}${phaseTitle(p)}. ${minsWord(p.seconds)}. Zone ${p.zone}, heart rate ${p.hrLo} to ${p.hrHi}${pace}.`;
+  };
+
+  function render() {
+    const p = phases[idx], nx = phases[idx + 1];
+    const cls = p.intensity === "work" ? "work" : p.intensity === "rest" ? "rest" : "";
+    const gp = workPace(p);
+    wrap.innerHTML = `<div class="wtimer ${cls}">
+      <button class="iconbtn wtimer-x" id="g-quit" aria-label="Close">✕</button>
+      <button class="iconbtn wtimer-mute" id="g-mute" aria-label="Voice on/off">${_voiceMuted ? "🔇" : "🔊"}</button>
+      <div class="wt-stage">${p.rep ? `Rep ${p.rep}/${p.reps} · ` : ""}${esc(phaseTitle(p))} · Zone ${p.zone}</div>
+      <div class="wt-name">${esc(kindLabel(session))} · ${SPORT_NAME[session.sport] || session.sport}</div>
+      <div class="wt-count">${fmtClock(remaining)}</div>
+      <div class="wt-instr">${p.hrLo}–${p.hrHi} bpm${gp ? ` · ≈ ${gp.lo === gp.hi ? E.fmtPace(gp.lo) : `${E.fmtPace(gp.lo)}–${E.fmtPace(gp.hi)}`} /km` : ""}</div>
+      <div class="wt-next">${nx ? "Next · " + esc(phaseTitle(nx)) + " · " + fmtClock(nx.seconds) : "Final phase!"}</div>
+      <div class="wt-ctrls">
+        <button class="btn ghost" id="g-back">‹</button>
+        <button class="btn" id="g-pause">${paused ? "Start" : "Pause"}</button>
+        <button class="btn ghost" id="g-skip">›</button></div>
+      <div class="wt-prog"><i style="width:${Math.round((idx / phases.length) * 100)}%"></i></div>
+      <p class="row-sub" style="text-align:center;margin-top:10px">Keep the screen on — it counts you through each step out loud.</p></div>`;
+    wrap.querySelector("#g-quit").addEventListener("click", close);
+    wrap.querySelector("#g-mute").addEventListener("click", () => { setMuted(!_voiceMuted); render(); });
+    wrap.querySelector("#g-pause").addEventListener("click", togglePlay);
+    wrap.querySelector("#g-skip").addEventListener("click", () => gotoPhase(idx + 1));
+    wrap.querySelector("#g-back").addEventListener("click", () => gotoPhase(idx - 1));
+  }
+  function gotoPhase(i) {
+    if (i >= phases.length) { finish(); return; }
+    idx = Math.max(0, Math.min(phases.length - 1, i));
+    remaining = phases[idx].seconds; deadline = Date.now() + remaining * 1000; said10 = saidHalf = false;
+    render();
+    if (!paused) speak(phaseSay(phases[idx]));
+  }
+  function togglePlay() {
+    paused = !paused;
+    if (!paused) {
+      primeVoice(); keepAwake();
+      deadline = Date.now() + remaining * 1000;
+      speak(phaseSay(phases[idx]));
+      stop(); tick = setInterval(loop, 250);
+    } else { stop(); shutUp(); }
+    render();
+  }
+  function loop() {
+    if (paused) return;
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    if (left === remaining) return;          // act only on a whole-second change
+    remaining = left;
+    const c = wrap.querySelector(".wt-count"); if (c) c.textContent = fmtClock(remaining);
+    const p = phases[idx], nx = phases[idx + 1];
+    if (!saidHalf && p.seconds >= 240 && remaining === Math.round(p.seconds / 2)) { saidHalf = true; speak("Halfway."); }
+    else if (!said10 && nx && remaining === 10) { said10 = true; speak(`Next, ${phaseTitle(nx).toLowerCase()}, ${minsWord(nx.seconds)}.`); }
+    else if (remaining <= 5 && remaining >= 1) speak(String(remaining));
+    if (remaining <= 3 && remaining >= 1) beep(720, 70);
+    if (remaining <= 0) { beep(1320, 120); gotoPhase(idx + 1); }
+  }
+  function finish() {
+    stop(); releaseAwake();
+    speak("Workout complete. Nice work.");
+    el.classList.remove("show"); setTimeout(() => el.remove(), 320);
+    openLogSheet({ date: dateISO, sport: session.sport, prefillMin: session.targetMin, title: kindLabel(session), type: typeOfSession(session) });
+  }
+  render();
 }
 
 /* ---------------- AD-HOC WORKOUT (Today ＋) ---------------- */
@@ -2633,9 +2812,9 @@ function openAdhocSession(sport, opts = {}) {
     return s;
   };
   const refresh = () => {
-    const tpl = chosen.tpl ? E.QUALITY_TEMPLATES[chosen.tpl] : null;
+    const ql = chosen.tpl ? qualityLines({ qualityTemplate: chosen.tpl, targetMin: readMin() }) : null;
     const pace = (sport === "run" || sport === "trail") ? E.paceHint(doc.logs, bounds(), zone, doc.settings.easyPace) : null;
-    const lines = [p.note || (tpl ? tpl.label : "")];
+    const lines = p.note ? [p.note] : (ql ? [...ql] : [""]);
     if (pace) lines.push(`Pace ≈ ${E.fmtPace(pace.lo)}–${E.fmtPace(pace.hi)} /km at Z${zone}`);
     if (p.targetAscent) lines.push(`Target climb ≈ ${p.targetAscent} m of ascent`);
     sheet.querySelector("#ah-detail").innerHTML = lines.filter(Boolean).join("<br>");
@@ -3636,6 +3815,7 @@ function renderSettings() {
       <button class="srow" id="st-lay"><span class="l">Weekly layout<span>set after your mix — applies next week</span></span>
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "swim" ? "ls" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
       <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
+      <button class="srow tog" id="st-voice"><span class="l">Voice cues<span>${st.voiceCues !== false ? "spoken guidance during guided workouts" : "off — workouts stay silent"}</span></span><span class="switch ${st.voiceCues !== false ? "on" : ""}"></span></button>
     </div>`,
     targets: `<div class="scard">
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
@@ -3810,6 +3990,7 @@ function renderSettings() {
     }
   });
   $("#st-lay")?.addEventListener("click", openLayoutEditor);
+  $("#st-voice")?.addEventListener("click", () => persist(() => { doc.settings.voiceCues = doc.settings.voiceCues === false; }));
   $("#st-newplan")?.addEventListener("click", startNewPlan);
   $("#st-export")?.addEventListener("click", exportJSON);
   $("#st-import")?.addEventListener("click", () => $("#st-file-json").click());

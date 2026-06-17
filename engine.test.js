@@ -777,6 +777,28 @@ test("workoutSteps expand intervals; easy is one block; FIT encodes a valid file
   assert.equal((bytes[bytes.length - 2] | (bytes[bytes.length - 1] << 8)), F.fitCRC(bytes, 0, bytes.length - 2), "file CRC");
 });
 
+test("warmCoolMin fills targetMin around the main set; sessionTimeline expands flat", () => {
+  // runQ1 main set = 8 × (60 + 120) = 1440 s = 24 min; targetMin 35 → 11 min pad → 7 warm / 4 cool
+  assert.deepEqual(E.warmCoolMin({ qualityTemplate: "runQ1", targetMin: 35 }), { warm: 7, cool: 4, mainMin: 24 });
+  assert.equal(E.warmCoolMin({ kind: "easy" }), null);
+
+  const tl = E.sessionTimeline({ sport: "run", kind: "quality", qualityTemplate: "runQ1", targetMin: 35 }, BOUNDS);
+  assert.equal(tl.length, 18);                                  // warm + 8×[work,recover] + cool
+  assert.equal(tl[0].name, "Warm-up");
+  assert.equal(tl[0].seconds, 7 * 60);
+  assert.equal(tl[1].intensity, "work");
+  assert.equal(tl[1].zone, 4);
+  assert.equal(tl[2].intensity, "rest");
+  assert.equal(tl[tl.length - 1].name, "Cool-down");
+  assert.equal(tl[tl.length - 1].seconds, 4 * 60);
+  assert.equal(tl.reduce((a, p) => a + p.seconds, 0), 35 * 60); // phases sum to the planned total
+
+  const easy = E.sessionTimeline({ sport: "run", kind: "easy", targetMin: 40, zone: 2 }, BOUNDS);
+  assert.equal(easy.length, 1);
+  assert.equal(easy[0].seconds, 2400);
+  assert.equal(easy[0].zone, 2);
+});
+
 test("fmtBestValue formats time / distance / metres", () => {
   assert.equal(E.fmtBestValue({ unit: "time", value: 1350 }), "22:30");
   assert.equal(E.fmtBestValue({ unit: "km", value: 70.71 }), "70.7 km");
