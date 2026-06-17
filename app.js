@@ -2801,8 +2801,9 @@ function openAdhocSession(sport, opts = {}) {
     <div class="type-row"><span class="l">Target zone</span><span class="opts" id="ah-zones">${[1, 2, 3, 4, 5].map(z =>
       `<button data-z="${z}" class="${z === zone ? "on" : ""}">Z${z}</button>`).join("")}</span></div>
     <div id="ah-detail" class="callout"></div>
-    <button class="btn" id="ah-watch">Send to watch (.FIT)</button>
-    <button class="btn" id="ah-log">Log it now</button>
+    ${vo2 ? "" : `<button class="btn" id="ah-start">▶ Start guided workout</button>`}
+    <button class="btn ${vo2 ? "" : "ghost"}" id="ah-watch">Send to watch (.FIT)</button>
+    <button class="btn ${vo2 ? "" : "ghost"}" id="ah-log">Log it now</button>
   `);
   const readMin = buildDurationWheel(sheet.querySelector("#ah-min-wheel"), { min: 5, max: 1200, coarseFrom: 180, value: dur });
   const sessionObj = () => {
@@ -2830,6 +2831,7 @@ function openAdhocSession(sport, opts = {}) {
   sheet.querySelectorAll("[data-z]").forEach(b => b.addEventListener("click", () => {
     zone = +b.dataset.z; sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", x === b)); refresh();
   }));
+  sheet.querySelector("#ah-start")?.addEventListener("click", () => { const s = sessionObj(); closeOverlay(); openGuidedWorkout(null, s, todayISO()); });
   sheet.querySelector("#ah-watch").addEventListener("click", () => sendSessionToWatch(sessionObj(), todayISO()));
   sheet.querySelector("#ah-log").addEventListener("click", () => {
     const s = sessionObj();
