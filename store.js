@@ -81,6 +81,7 @@ export function defaultSettings() {
     progressRange: { preset: "12w", offset: 0, compare: false, unit: "week" },
     progressCards: PROGRESS_CARDS.map(c => ({ ...c })),
     voiceCues: true,
+    gps: false,
     lastExportAt: null,
   };
 }

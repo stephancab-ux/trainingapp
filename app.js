@@ -1170,7 +1170,7 @@ const RPE_META = n => {
 };
 const rpePick = rpe => rpe ? `RPE ${rpe} · ${RPE_META(rpe).emoji} ${RPE_META(rpe).label}` : "how hard did it feel?";
 
-function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null, linkSession = null }) {
+function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, type = null, linkSession = null, prefillKm = null }) {
   const isEdit = !!log;
   let min = isEdit ? log.min : prefillMin;
   let rpe = isEdit ? (log.rpe || null) : null;
@@ -1208,7 +1208,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     ${isGym ? "" : isSwim
       ? `<div class="frow"><span class="l">Distance</span><input type="text" inputmode="numeric" id="lg-m" placeholder="optional" value="${isEdit && log.m != null ? log.m : ""}"><span class="suffix">m</span></div>
          <div class="goalpace" id="lg-pace"></div>`
-      : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit && log.km != null ? log.km : ""}"><span class="suffix">km</span></div>`}
+      : `<div class="frow"><span class="l">Distance</span><input type="text" step="0.01" inputmode="decimal" id="lg-km" placeholder="—" value="${isEdit ? (log.km != null ? log.km : "") : (prefillKm != null ? prefillKm : "")}"><span class="suffix">km</span></div>`}
     ${elevRows}
     <div class="frow"><span class="l">Avg heart rate</span><input type="text" inputmode="numeric" id="lg-hr" placeholder="—" value="${isEdit && log.avgHR != null ? log.avgHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
@@ -2620,9 +2620,18 @@ function openWorkoutPage(week, session, dateISO) {
   paintOverview();
 }
 
+/* Great-circle distance in km between two {lat,lng} points (live GPS distance). */
+function haversineKm(a, b) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
 /* Fullscreen guided player for run / ride / swim / trail / hike. Steps the engine's
    sessionTimeline with an on-screen countdown + detailed spoken cues (device voice,
    offline), holding a screen wake lock so it keeps running with the screen on.
+   Optional live phone GPS (opt-in) shows distance + pace and pre-fills the log.
    Finishing drops straight into the normal log sheet. */
 function openGuidedWorkout(week, session, dateISO) {
   const phases = E.sessionTimeline(session, bounds());
@@ -2632,10 +2641,31 @@ function openGuidedWorkout(week, session, dateISO) {
   requestAnimationFrame(() => el.classList.add("show"));
   const wrap = el.querySelector(".wrap");
   const isRunny = session.sport === "run" || session.sport === "trail";
+  // live phone GPS (opt-in, outdoor sports only): distance + current pace/speed, screen-on only
+  const gpsUses = doc.settings.gps === true && ["run", "trail", "bike", "hike"].includes(session.sport);
+  const gpsSpeedUnit = session.sport === "bike";
+  let watchId = null, gpsKm = 0, lastPt = null, curTxt = "";
+  const gpsLine = () => `📍 ${gpsKm.toFixed(2)} km${curTxt ? " · " + curTxt : ""}`;
+  const onPos = pos => {
+    const c = pos.coords;
+    if (c.accuracy != null && c.accuracy > 30) return;                 // drop low-accuracy fixes
+    const pt = { lat: c.latitude, lng: c.longitude };
+    if (lastPt) { const d = haversineKm(lastPt, pt); if (d * 1000 >= 2) { gpsKm += d; lastPt = pt; } }  // ignore <2 m jitter
+    else lastPt = pt;
+    const mps = (c.speed != null && c.speed >= 0) ? c.speed : null;
+    if (mps != null && mps > 0.3) curTxt = gpsSpeedUnit ? `${(mps * 3.6).toFixed(1)} km/h` : `${E.fmtPace(Math.round(1000 / mps))} /km`;
+    const g = wrap.querySelector("#g-gps"); if (g) g.textContent = gpsLine();
+  };
+  const startGps = () => {
+    if (!gpsUses || watchId != null || !navigator.geolocation) return;
+    try { watchId = navigator.geolocation.watchPosition(onPos, () => toast("GPS unavailable"), { enableHighAccuracy: true, maximumAge: 1000, timeout: 12000 }); }
+    catch { toast("GPS unavailable"); }
+  };
+  const stopGps = () => { if (watchId != null && navigator.geolocation) { try { navigator.geolocation.clearWatch(watchId); } catch {} } watchId = null; };
 
   let idx = 0, remaining = phases[0].seconds, paused = true, tick = null, deadline = 0, said10 = false, saidHalf = false;
   const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
-  const close = () => { stop(); releaseAwake(); shutUp(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); };
+  const close = () => { stop(); stopGps(); releaseAwake(); shutUp(); el.classList.remove("show"); setTimeout(() => el.remove(), 320); };
   const fmtClock = s => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
   const minsWord = sec => sec >= 60 ? `${Math.round(sec / 60)} minute${Math.round(sec / 60) === 1 ? "" : "s"}` : `${sec} seconds`;
   const workPace = p => isRunny && p.intensity === "work" ? goalPaceFor(session) : null;
@@ -2658,6 +2688,7 @@ function openGuidedWorkout(week, session, dateISO) {
       <div class="wt-name">${esc(kindLabel(session))} · ${SPORT_NAME[session.sport] || session.sport}</div>
       <div class="wt-count">${fmtClock(remaining)}</div>
       <div class="wt-instr">${p.hrLo}–${p.hrHi} bpm${gp ? ` · ≈ ${gp.lo === gp.hi ? E.fmtPace(gp.lo) : `${E.fmtPace(gp.lo)}–${E.fmtPace(gp.hi)}`} /km` : ""}</div>
+      ${gpsUses ? `<div class="wt-gps" id="g-gps">${gpsLine()}</div>` : ""}
       <div class="wt-next">${nx ? "Next · " + esc(phaseTitle(nx)) + " · " + fmtClock(nx.seconds) : "Final phase!"}</div>
       <div class="wt-ctrls">
         <button class="btn ghost" id="g-back">‹</button>
@@ -2681,7 +2712,7 @@ function openGuidedWorkout(week, session, dateISO) {
   function togglePlay() {
     paused = !paused;
     if (!paused) {
-      primeVoice(); keepAwake();
+      primeVoice(); keepAwake(); startGps();
       deadline = Date.now() + remaining * 1000;
       speak(phaseSay(phases[idx]));
       stop(); tick = setInterval(loop, 250);
@@ -2702,10 +2733,10 @@ function openGuidedWorkout(week, session, dateISO) {
     if (remaining <= 0) { beep(1320, 120); gotoPhase(idx + 1); }
   }
   function finish() {
-    stop(); releaseAwake();
+    stop(); stopGps(); releaseAwake();
     speak("Workout complete. Nice work.");
     el.classList.remove("show"); setTimeout(() => el.remove(), 320);
-    openLogSheet({ date: dateISO, sport: session.sport, prefillMin: session.targetMin, title: kindLabel(session), type: typeOfSession(session) });
+    openLogSheet({ date: dateISO, sport: session.sport, prefillMin: session.targetMin, title: kindLabel(session), type: typeOfSession(session), prefillKm: gpsKm > 0 ? +gpsKm.toFixed(2) : null });
   }
   render();
 }
@@ -3818,6 +3849,7 @@ function renderSettings() {
         <span class="laychips">${E.DAYS.map(d => { const v = Array.isArray(lay[d]) ? lay[d][0] : lay[d]; const c = v === "run" ? "lr" : v === "gym" ? "lg" : v === "swim" ? "ls" : v === "rest" ? "lx" : "lb"; return `<i class="${c}">${d[0].toUpperCase()}</i>`; }).join("")}</span><span class="chev">›</span></button>
       <button class="srow" id="st-newplan"><span class="l">Goal &amp; plan<span>${GOAL_LABEL[st.goal] || "General fitness"}${st.goalEvent?.date ? " · event " + fmtShort(st.goalEvent.date) : ""} — tap to update or restart</span></span><span class="chev">›</span></button>
       <button class="srow tog" id="st-voice"><span class="l">Voice cues<span>${st.voiceCues !== false ? "spoken guidance during guided workouts" : "off — workouts stay silent"}</span></span><span class="switch ${st.voiceCues !== false ? "on" : ""}"></span></button>
+      <button class="srow tog" id="st-gps"><span class="l">GPS tracking<span>${st.gps === true ? "live distance &amp; pace in guided workouts (screen on, outdoors)" : "off — distances stay manual"}</span></span><span class="switch ${st.gps === true ? "on" : ""}"></span></button>
     </div>`,
     targets: `<div class="scard">
       <button class="srow" id="st-tw"><span class="l">Target weight</span><span class="v">${st.targetWeightKg.toFixed(1)} kg</span><span class="chev">›</span></button>
@@ -3993,6 +4025,7 @@ function renderSettings() {
   });
   $("#st-lay")?.addEventListener("click", openLayoutEditor);
   $("#st-voice")?.addEventListener("click", () => persist(() => { doc.settings.voiceCues = doc.settings.voiceCues === false; }));
+  $("#st-gps")?.addEventListener("click", () => persist(() => { doc.settings.gps = doc.settings.gps !== true; }));
   $("#st-newplan")?.addEventListener("click", startNewPlan);
   $("#st-export")?.addEventListener("click", exportJSON);
   $("#st-import")?.addEventListener("click", () => $("#st-file-json").click());
