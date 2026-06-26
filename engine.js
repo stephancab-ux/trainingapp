@@ -12,13 +12,18 @@ export const QUALITY_TEMPLATES = {
   bikeQ2:    { sport: "bike", family: "intervals", name: "Sweet spot",      zone: 3, label: "2 × 12 min @ Z3–Z4 sweet spot · 5 min easy between",set: { type: "intervals", reps: 2, workSec: 720, workZone: 3, restSec: 300, restZone: 2 } },
   bikeClimb: { sport: "bike", family: "climb",     name: "Climbing ride",   zone: 3, label: "Long climb @ Z3 — seated, steady; repeat to fill the session", set: { type: "block", blockMin: 30, zone: 3 } },
   bikeSprint:{ sport: "bike", family: "sprint",    name: "Sprint ride",     zone: 5, label: "6 × 30 s all-out @ Z5 · 4 min easy spin between",     set: { type: "intervals", reps: 6, workSec: 30,  workZone: 5, restSec: 240, restZone: 1 } },
+  bikeTempo: { sport: "bike", family: "tempo",     name: "Tempo ride",      zone: 3, label: "Z3 tempo with 2 × 3 min Z4 surges + a 1 min Z5 finish", set: { type: "segments", segments: [{ sec: 840, zone: 3 }, { sec: 180, zone: 4 }, { sec: 840, zone: 3 }, { sec: 180, zone: 4 }, { sec: 60, zone: 5 }] } },
 };
 
 /* Seconds of the main set (matches the structure workoutSteps/sessionTimeline build). */
 function mainSetSec(tpl) {
   const s = tpl.set;
-  return s.type === "intervals" ? s.reps * (s.workSec + s.restSec) : s.blockMin * 60;
+  if (s.type === "intervals") return s.reps * (s.workSec + s.restSec);
+  if (s.type === "segments") return s.segments.reduce((a, x) => a + x.sec, 0);
+  return s.blockMin * 60;
 }
+/* Display name for a mixed-zone segment by its zone. */
+function segName(z) { return z >= 5 ? "Kick" : z === 4 ? "Surge" : z === 3 ? "Tempo" : "Easy"; }
 /* Warm-up / cool-down minutes that fill targetMin around the main set (a 60/40 split),
    so warm + main + cool === targetMin exactly. Returns null for non-quality sessions. */
 export function warmCoolMin(session) {
@@ -547,11 +552,11 @@ export function qualityState(history) {
    itself still progresses Q1 → Q2 after 4 planned quality sessions (§7.5). */
 const QUALITY_ROTATION = {
   run:  ["intervals", "tempo", "hills"],
-  bike: ["intervals", "sprint", "climb"],
+  bike: ["intervals", "sprint", "climb", "tempo"],
 };
 
 const FAMILY_KEY = { run: { intervals: "runIntervals", tempo: "runTempo", hills: "runHills" },
-                     bike: { intervals: "bikeIntervals", sprint: "bikeSprint", climb: "bikeClimb" } };
+                     bike: { intervals: "bikeIntervals", sprint: "bikeSprint", climb: "bikeClimb", tempo: "bikeTempo" } };
 
 /* Allowed-family aware (v1.2). `allowed` is settings.allowedFamilies or null
    (= everything). Returns null when no family is allowed for the sport. */
@@ -562,7 +567,7 @@ export function qualityTemplateFor(weeks, sport, allowed = null) {
   if (allowed) cycle = cycle.filter(fam => allowed[FAMILY_KEY[sport][fam]] !== false);
   if (!cycle.length) return null;
   const family = cycle[count % cycle.length];
-  if (family === "tempo") return "runTempo";
+  if (family === "tempo") return sport === "bike" ? "bikeTempo" : "runTempo";
   if (family === "hills") return "runHills";
   if (family === "climb") return "bikeClimb";
   if (family === "sprint") return "bikeSprint";
@@ -1277,13 +1282,18 @@ export function effectiveAerobicTE(log, bounds) {
    anaerobic / sprint collapse into one "VO₂max / hard" label. */
 export function primaryBenefit(log, bounds) {
   const { te } = effectiveAerobicTE(log, bounds);
-  if (te < 1) return "Recovery";
-  const z = zoneOfHR(bounds, log.avgHR), type = log.type;
-  if (z === 5 || type === "intervals" || type === "hills") return "VO₂max / hard";
-  if (z === 4 || type === "tempo") return "Threshold";
-  if (z === 3 || type === "climb") return "Tempo";
-  if (type === "long" || (log.min || 0) >= 90 || z == null || z <= 2) return "Base";
-  return "Tempo";
+  const ante = log.anaerobicTE;
+  if (te < 1 && (ante == null || ante < 1)) return "Recovery";
+  // peak intensity (max HR if logged, else average) + anaerobic TE split the top end — Garmin-style
+  const peak = zoneOfHR(bounds, log.maxHR != null ? log.maxHR : log.avgHR), t = log.type, mins = log.min || 0;
+  if (ante != null && (ante >= 4 || t === "sprint")) return "Sprint";
+  if (ante != null && ante >= 2.5) return "Anaerobic";
+  if (t === "sprint") return "Sprint";
+  if (peak === 5 || t === "intervals") return "VO₂ Max";
+  if (peak === 4 || t === "hills") return "Threshold";
+  if (peak === 3 || t === "tempo" || t === "climb") return "Tempo";
+  if (t === "long" || mins >= 90 || peak == null || peak <= 2) return "Base";
+  return "Base";
 }
 
 /* ---- performance & efficiency (no power → speed / climb-rate) ---- */
@@ -1684,6 +1694,8 @@ export function workoutSteps(session, bounds) {
       steps.push({ intensity: "active", durationType: "time", seconds: set.workSec, ...z(set.workZone), name: "Work" });
       steps.push({ intensity: "rest", durationType: "time", seconds: set.restSec, ...z(set.restZone), name: "Recover" });
       steps.push({ type: "repeat", from, count: set.reps });
+    } else if (set.type === "segments") {
+      for (const sg of set.segments) steps.push({ intensity: "active", durationType: "time", seconds: sg.sec, ...z(sg.zone), name: segName(sg.zone) });
     } else {
       steps.push({ intensity: "active", durationType: "time", seconds: set.blockMin * 60, ...z(set.zone), name: tpl.name });
     }
@@ -1712,6 +1724,8 @@ export function sessionTimeline(session, bounds) {
         out.push({ name: workName, seconds: set.workSec, intensity: "work", rep: r, reps: set.reps, ...z(set.workZone) });
         out.push({ name: "Recover", seconds: set.restSec, intensity: "rest", rep: r, reps: set.reps, ...z(set.restZone) });
       }
+    } else if (set.type === "segments") {
+      set.segments.forEach(sg => out.push({ name: segName(sg.zone), seconds: sg.sec, intensity: sg.zone >= 4 ? "work" : "active", ...z(sg.zone) }));
     } else {
       out.push({ name: tpl.name, seconds: set.blockMin * 60, intensity: "work", ...z(set.zone) });
     }
@@ -1767,17 +1781,31 @@ export function intensityInRange(logs, bounds, from, to) {
 
 /* Garmin-style load focus: load split into Low aerobic (Z1–2), High aerobic
    (Z3–4) and Anaerobic (Z5), with a polarized "optimal range" per bucket. */
-function loadBucketOf(l, bounds) {
-  const z = zoneOfHR(bounds, l.avgHR);
-  if (z != null) return z <= 2 ? "low" : z <= 4 ? "high" : "anaerobic";
-  const t = l.type;
-  if (t === "intervals" || t === "hills") return "anaerobic";
-  if (t === "tempo" || t === "climb") return "high";
-  return "low";
+/* Garmin-style split of one session's load into low / high / anaerobic. The base
+   bucket comes from AVERAGE HR (where the time was spent); an anaerobic slice is
+   carved off from the entered anaerobic TE, else from MAX HR reaching Z5 or a hard
+   type — so interval / surge sessions stop reading as purely easy. */
+function loadSplit(l, bounds) {
+  const out = { low: 0, high: 0, anaerobic: 0 };
+  const load = sessionLoad(l, bounds);
+  if (!load) return out;
+  const az = zoneOfHR(bounds, l.avgHR), t = l.type;
+  const base = az != null ? (az <= 2 ? "low" : "high")
+             : (t === "tempo" || t === "climb" || t === "intervals" || t === "hills") ? "high" : "low";
+  let anaerShare = 0;
+  if (l.anaerobicTE != null) anaerShare = Math.min(0.8, l.anaerobicTE / 5);
+  else if (t === "intervals" || t === "hills" || t === "sprint") anaerShare = 0.5;
+  else if (zoneOfHR(bounds, l.maxHR != null ? l.maxHR : l.avgHR) === 5) anaerShare = 0.3;
+  out.anaerobic = anaerShare * load;
+  out[base] += load - out.anaerobic;
+  return out;
 }
 export function loadFocus(logs, bounds, from, to) {
   const b = { low: 0, high: 0, anaerobic: 0 };
-  for (const l of logs) { if (!LOADBEARING(l) || l.date < from || l.date > to) continue; b[loadBucketOf(l, bounds)] += sessionLoad(l, bounds); }
+  for (const l of logs) {
+    if (!LOADBEARING(l) || l.date < from || l.date > to) continue;
+    const s = loadSplit(l, bounds); b.low += s.low; b.high += s.high; b.anaerobic += s.anaerobic;
+  }
   const total = b.low + b.high + b.anaerobic;
   const opt = { low: [total * 0.55, total * 0.80], high: [total * 0.15, total * 0.35], anaerobic: [total * 0.03, total * 0.12] };
   let focus = "Well balanced";
@@ -1792,8 +1820,7 @@ export function dailyLoad(logs, bounds, from, to) {
   for (const l of logs) {
     if (!LOADBEARING(l) || l.date < from || l.date > to) continue;
     const d = (days[l.date] = days[l.date] || { low: 0, high: 0, anaerobic: 0, total: 0 });
-    const load = sessionLoad(l, bounds);
-    d[loadBucketOf(l, bounds)] += load; d.total += load;
+    const s = loadSplit(l, bounds); d.low += s.low; d.high += s.high; d.anaerobic += s.anaerobic; d.total += s.low + s.high + s.anaerobic;
   }
   const out = [];
   for (let d = from; d <= to; d = addDays(d, 1)) out.push({ date: d, ...(days[d] || { low: 0, high: 0, anaerobic: 0, total: 0 }) });

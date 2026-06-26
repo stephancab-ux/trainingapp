@@ -60,7 +60,7 @@ export function defaultSettings() {
     climbBaseAscent: 500,
     allowedTypes: {
       easyRun: true, runTempo: true, runIntervals: true, runHills: true, longRun: true, trailRun: true,
-      easyRide: true, bikeIntervals: true, bikeSprint: true, bikeClimb: true, longRide: true,
+      easyRide: true, bikeTempo: true, bikeIntervals: true, bikeSprint: true, bikeClimb: true, longRide: true,
       easySwim: true, swimDrills: true, swimEndurance: true, swimThreshold: true, swimIntervals: true,
       gymStrength: true, gymCardio: true, gymMobility: true,
     },

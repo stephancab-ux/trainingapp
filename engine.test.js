@@ -134,9 +134,10 @@ test("quality slot rotates intervals → tempo → hills; intervals still progre
   assert.equal(E.qualityTemplateFor(mk(3, "run"), "run"), "runQ1");  // back to intervals, < 4 done
   assert.equal(E.qualityTemplateFor(mk(6, "run"), "run"), "runQ2");  // interval slot upgraded
   assert.equal(E.qualityTemplateFor([], "bike"), "bikeQ1");
-  assert.equal(E.qualityTemplateFor(mk(1, "bike"), "bike"), "bikeSprint"); // bike cycle: intervals→sprint→climb
+  assert.equal(E.qualityTemplateFor(mk(1, "bike"), "bike"), "bikeSprint"); // bike cycle: intervals→sprint→climb→tempo
   assert.equal(E.qualityTemplateFor(mk(2, "bike"), "bike"), "bikeClimb");
-  assert.equal(E.qualityTemplateFor(mk(6, "bike"), "bike"), "bikeQ2");     // interval slot upgraded
+  assert.equal(E.qualityTemplateFor(mk(3, "bike"), "bike"), "bikeTempo");
+  assert.equal(E.qualityTemplateFor(mk(4, "bike"), "bike"), "bikeQ2");     // interval slot upgraded (≥ 4 done)
 });
 
 test("unlocked quality lands on Wednesday run / Thursday ride", () => {
@@ -479,7 +480,7 @@ test("rotation respects allowed families; null when none allowed", () => {
   // run cycle would be intervals→tempo→hills; with only intervals allowed it stays intervals
   assert.equal(E.qualityTemplateFor([], "run", noHills), "runQ1");
   assert.equal(E.qualityTemplateFor([{ sessions: [{ sport: "run", kind: "quality" }] }], "run", noHills), "runQ1");
-  const noBike = { bikeIntervals: false, bikeSprint: false, bikeClimb: false };
+  const noBike = { bikeIntervals: false, bikeSprint: false, bikeClimb: false, bikeTempo: false };
   assert.equal(E.qualityTemplateFor([], "bike", noBike), null);
 });
 
@@ -839,6 +840,25 @@ test("loadFocus splits into low/high/anaerobic with an optimal range", () => {
   assert.ok(lf.opt.low[1] > lf.opt.low[0]);
 });
 
+test("loadFocus anaerobic comes from max-HR Z5 or an entered anaerobic TE", () => {
+  const z3 = extra => ({ date: "2026-06-02", sport: "bike", min: 60, avgHR: 135, source: "manual", ...extra });
+  assert.equal(E.loadFocus([z3()], BOUNDS, "2026-06-01", "2026-06-07").anaerobic, 0); // steady Z3, no peak/TE
+  const lfPeak = E.loadFocus([z3({ maxHR: 175 })], BOUNDS, "2026-06-01", "2026-06-07"); // max HR → Z5
+  assert.ok(lfPeak.anaerobic > 0);
+  const lfTE = E.loadFocus([z3({ anaerobicTE: 4 })], BOUNDS, "2026-06-01", "2026-06-07");
+  assert.ok(lfTE.anaerobic > lfPeak.anaerobic); // TE 4 → bigger slice than a Z5 spike
+});
+
+test("bikeTempo segments: warm + Z3/Z4/Z5 segments + cool sum to targetMin", () => {
+  const s = { sport: "bike", kind: "quality", qualityTemplate: "bikeTempo", targetMin: 50, zone: 3 };
+  const tl = E.sessionTimeline(s, BOUNDS);
+  const zones = tl.map(p => p.zone);
+  assert.ok(zones.includes(3) && zones.includes(4) && zones.includes(5), "has Z3, Z4 and Z5 phases");
+  assert.equal(tl.reduce((a, p) => a + p.seconds, 0), 50 * 60);
+  const st = E.workoutSteps(s, BOUNDS);
+  assert.ok(st.length >= 7 && !st.some(x => x.type === "repeat")); // segments emit one step each, no repeat marker
+});
+
 test("vo2Category: 43 for a 35-yr-old man is 'Fair'", () => {
   const c = E.vo2Category(43, 35, "male");
   assert.equal(c.label, "Fair");
@@ -1006,12 +1026,17 @@ test("effectiveAerobicTE prefers the real value, else a labeled estimate", () =>
   assert.equal(E.teBand(5).label, "Overreaching");
 });
 
-test("primaryBenefit derives a coarse label, merging the top end", () => {
+test("primaryBenefit labels by peak intensity + anaerobic TE (Garmin-style)", () => {
   // BOUNDS (max 183): Z2 110-128, Z3 128-146, Z4 146-165, Z5 165-183
   assert.equal(E.primaryBenefit({ sport: "run", min: 20, avgHR: 100 }, BOUNDS), "Recovery");
   assert.equal(E.primaryBenefit({ sport: "run", type: "long", min: 120, avgHR: 120 }, BOUNDS), "Base");
   assert.equal(E.primaryBenefit({ sport: "run", type: "tempo", min: 40, avgHR: 150 }, BOUNDS), "Threshold");
-  assert.equal(E.primaryBenefit({ sport: "run", type: "intervals", min: 45, avgHR: 172 }, BOUNDS), "VO₂max / hard");
+  assert.equal(E.primaryBenefit({ sport: "run", type: "intervals", min: 45, avgHR: 172 }, BOUNDS), "VO₂ Max");
+  // peak (max HR) escalates a moderate-average session
+  assert.equal(E.primaryBenefit({ sport: "bike", min: 60, avgHR: 135, maxHR: 175 }, BOUNDS), "VO₂ Max");
+  // entered anaerobic TE splits the top end
+  assert.equal(E.primaryBenefit({ sport: "bike", min: 50, avgHR: 140, anaerobicTE: 3 }, BOUNDS), "Anaerobic");
+  assert.equal(E.primaryBenefit({ sport: "run", min: 30, avgHR: 150, anaerobicTE: 4.2 }, BOUNDS), "Sprint");
 });
 
 test("training load / intensity exclude a no-HR gym but include an HR gym", () => {

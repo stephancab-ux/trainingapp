@@ -456,6 +456,9 @@ body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area
 .streakgrid span{font-size:10px;color:var(--mut);line-height:1.2;display:block;margin-top:2px}
 /* v1.7.1 — Today activity summary cards */
 .benefitc{background:rgba(143,161,179,.14);color:var(--sub)}
+.lg-benefit{margin:2px 2px 8px}
+.benefit-chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 2px 8px}
+.benefit-chips .bchip{flex:0 0 auto;padding:8px 12px;border-radius:11px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:13px;font-weight:650}
 .actcard{display:block;width:100%;text-align:left;padding:14px 16px;margin-top:10px}
 .act-top{display:flex;align-items:center;gap:10px}
 .act-top .ic{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none}

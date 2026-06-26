@@ -97,6 +97,7 @@ const WORKOUT_TOGGLES = [
   ["longRun", "Long run", "the weekend distance"],
   ["trailRun", "Trail run", "off-road, with climbing"],
   ["easyRide", "Easy ride", "aerobic spin"],
+  ["bikeTempo", "Tempo ride", "Z3 tempo with Z4–Z5 surges"],
   ["bikeIntervals", "Sweet spot", "Z3–Z4 ride intervals"],
   ["bikeSprint", "Sprint ride", "all-out Z5 surges"],
   ["bikeClimb", "Climbing ride", "long sustained climbs"],
@@ -111,7 +112,7 @@ const WORKOUT_TOGGLES = [
   ["gymMobility", "Mobility", "warm-ups + cooldowns"],
 ];
 const RUN_BASE = ["easyRun", "runTempo", "runIntervals", "runHills", "longRun", "trailRun"];
-const RIDE_BASE = ["easyRide", "bikeIntervals", "bikeSprint", "bikeClimb", "longRide"];
+const RIDE_BASE = ["easyRide", "bikeTempo", "bikeIntervals", "bikeSprint", "bikeClimb", "longRide"];
 const SWIM_BASE = ["easySwim", "swimDrills", "swimEndurance", "swimThreshold", "swimIntervals"];
 const GYM_BASE = ["gymStrength", "gymCardio", "gymMobility"];
 
@@ -119,14 +120,14 @@ const GYM_BASE = ["gymStrength", "gymCardio", "gymMobility"];
 const LOG_TYPES = {
   run:   [["easy", "Easy"], ["tempo", "Tempo"], ["intervals", "Intervals"], ["hills", "Hills"], ["long", "Long"]],
   trail: [["easy", "Easy"], ["long", "Long"], ["intervals", "Intervals"]],
-  bike:  [["easy", "Easy"], ["climb", "Climbing"], ["intervals", "Intervals"], ["long", "Long"]],
+  bike:  [["easy", "Easy"], ["tempo", "Tempo"], ["climb", "Climbing"], ["intervals", "Intervals"], ["long", "Long"]],
   hike:  [["easy", "Hike"], ["long", "Big day"]],
   swim:  [["easy", "Easy"], ["drills", "Technique"], ["endurance", "Endurance"], ["intervals", "Intervals"], ["threshold", "Threshold"]],
 };
 const TYPE_NAME = {
   run:   { easy: "Easy run", tempo: "Tempo run", intervals: "Interval run", hills: "Hill run", long: "Long run" },
   trail: { easy: "Trail run", long: "Long trail run", intervals: "Trail intervals" },
-  bike:  { easy: "Easy ride", climb: "Climbing ride", intervals: "Interval ride", long: "Long ride" },
+  bike:  { easy: "Easy ride", tempo: "Tempo ride", climb: "Climbing ride", intervals: "Interval ride", long: "Long ride" },
   hike:  { easy: "Hike", long: "Big hike" },
   swim:  { easy: "Easy swim", drills: "Technique/drills", endurance: "Endurance swim", intervals: "Swim intervals", threshold: "Threshold swim" },
 };
@@ -1214,6 +1215,8 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <div class="frow"><span class="l">Max HR</span><input type="text" inputmode="numeric" id="lg-maxhr" placeholder="—" value="${isEdit && log.maxHR != null ? log.maxHR : ""}"><span class="suffix">bpm</span></div>
     <div class="frow"><span class="l">Calories</span><input type="text" inputmode="numeric" id="lg-cal" placeholder="—" value="${isEdit && log.calories != null ? log.calories : ""}"><span class="suffix">kcal</span></div>
     ${sport === "other" ? "" : `<div class="frow"><span class="l">Aerobic TE</span><input type="text" inputmode="decimal" id="lg-te" placeholder="—" value="${isEdit && log.aerobicTE != null ? log.aerobicTE : ""}"><span class="suffix">/ 5</span></div>`}
+    ${sport === "other" ? "" : `<div class="frow"><span class="l">Anaerobic TE</span><input type="text" inputmode="decimal" id="lg-ante" placeholder="—" value="${isEdit && log.anaerobicTE != null ? log.anaerobicTE : ""}"><span class="suffix">/ 5</span></div>`}
+    ${sport === "other" ? "" : `<div class="lg-benefit" id="lg-benefit"></div>`}
     <div class="rpe-row"><span class="l">RPE</span>${Array.from({ length: 10 }, (_, i) =>
       `<button data-rpe="${i + 1}" class="${rpe === i + 1 ? "on" : ""}" style="--h:${RPE_META(i + 1).hue}">${i + 1}</button>`).join("")}</div>
     <div class="rpe-ends"><span>😌 easy</span><span>all-out 🥵</span></div>
@@ -1222,7 +1225,18 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     <button class="btn" id="lg-save">${isEdit ? "Save changes" : "Save session"}</button>
     ${isEdit ? `<button class="btn danger" id="lg-del">Delete this log</button>` : ""}
   `);
-  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 1200, coarseFrom: 180, value: min, onChange: () => { if (isSwim) showSwimPace(); } });
+  const readMin = buildDurationWheel(sheet.querySelector("#lg-min-wheel"), { min: 1, max: 1200, coarseFrom: 180, value: min, onChange: () => { if (isSwim) showSwimPace(); updateBenefit(); } });
+  // live Garmin-style Primary Benefit estimate from the entered HR / TE (read-only)
+  const updateBenefit = () => {
+    const el = sheet.querySelector("#lg-benefit"); if (!el) return;
+    const draft = { sport, type: typ, min: readMin(),
+      avgHR: num(sheet.querySelector("#lg-hr")?.value) ?? undefined,
+      maxHR: num(sheet.querySelector("#lg-maxhr")?.value) ?? undefined,
+      aerobicTE: num(sheet.querySelector("#lg-te")?.value) ?? undefined,
+      anaerobicTE: num(sheet.querySelector("#lg-ante")?.value) ?? undefined };
+    const b = E.primaryBenefit(draft, bounds());
+    el.innerHTML = b ? `<span class="chip benefitc">Primary benefit · ${b} · est</span>` : "";
+  };
   // swim: live pace per 100 m readout under the metres field
   const showSwimPace = () => {
     const pl = sheet.querySelector("#lg-pace"); if (!pl) return;
@@ -1238,7 +1252,10 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
   sheet.querySelectorAll("[data-ty]").forEach(b => b.addEventListener("click", () => {
     typ = b.dataset.ty;
     sheet.querySelectorAll("[data-ty]").forEach(x => x.classList.toggle("on", x.dataset.ty === typ));
+    updateBenefit();
   }));
+  ["#lg-hr", "#lg-maxhr", "#lg-te", "#lg-ante"].forEach(sel => sheet.querySelector(sel)?.addEventListener("input", updateBenefit));
+  updateBenefit();
   sheet.querySelectorAll("[data-venue]").forEach(b => b.addEventListener("click", () => {
     venue = b.dataset.venue;
     sheet.querySelectorAll("[data-venue]").forEach(x => x.classList.toggle("on", x.dataset.venue === venue));
@@ -1261,6 +1278,8 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
     const cal = num(sheet.querySelector("#lg-cal").value);
     const teEl = sheet.querySelector("#lg-te");
     const te = teEl ? num(teEl.value) : null;
+    const anteEl = sheet.querySelector("#lg-ante");
+    const ante = anteEl ? num(anteEl.value) : null;
     const note = sheet.querySelector("#lg-note").value.trim();
     closeOverlay();
     persist(() => {
@@ -1268,7 +1287,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
         Object.assign(log, { sport, min, km: isSwim ? undefined : (km ?? undefined), m: isSwim ? (swimM ?? undefined) : undefined,
                              avgHR: hr ?? undefined, maxHR: mhr ?? undefined,
                              ascent: asc ?? undefined, descent: desc ?? undefined, calories: cal ?? undefined,
-                             aerobicTE: te ?? undefined,
+                             aerobicTE: te ?? undefined, anaerobicTE: ante ?? undefined,
                              rpe: rpe ?? undefined, note: note || undefined, type: typ ?? undefined,
                              venue: (isGym || isSwim) ? venue : undefined });
       } else {
@@ -1276,7 +1295,7 @@ function openLogSheet({ date, sport, prefillMin = 45, title = "", log = null, ty
         doc.logs.push({ id, date, sport, min, km: isSwim ? undefined : (km ?? undefined), m: isSwim ? (swimM ?? undefined) : undefined,
                         avgHR: hr ?? undefined, maxHR: mhr ?? undefined, ascent: asc ?? undefined,
                         descent: desc ?? undefined, calories: cal ?? undefined, rpe: rpe ?? undefined,
-                        aerobicTE: te ?? undefined,
+                        aerobicTE: te ?? undefined, anaerobicTE: ante ?? undefined,
                         note: note || undefined, type: typ ?? undefined,
                         venue: (isGym || isSwim) ? venue : undefined, source: "manual" });
         doc.logs.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -1937,6 +1956,7 @@ function sessionTypeOptions(sport) {
   ].filter(Boolean);
   return [
     a.easyRide !== false && { id: "easy", label: "Easy", kind: "easy" },
+    a.bikeTempo !== false && { id: "bikeTempo", label: "Tempo", kind: "quality", tpl: "bikeTempo" },
     a.bikeIntervals !== false && { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" },
     a.bikeClimb !== false && { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" },
     a.longRide !== false && { id: "long", label: "Long", kind: "long" },
@@ -2778,6 +2798,14 @@ function openLogActivity() {
   sheet.querySelector("#lg-extra").addEventListener("click", () => { closeOverlay(); openUnplannedLog(); });
 }
 
+function adhocLaunch(sp, benefit) {
+  if (sp === "gym") {
+    openWorkoutPage(null, { sport: "gym", kind: "easy", targetMin: 45, venue: doc.settings.gymVenueDefault || "home",
+      gym: { seed: (Math.random() * 4294967296) >>> 0, avoidIds: [], swaps: {}, focus: "full" } }, todayISO());
+    return;
+  }
+  openAdhocSession(sp, benefit ? { benefit } : {});
+}
 function openAdhocWorkout() {
   // every activity is offered — the "Workouts allowed" toggles are for the PLAN,
   // not for spontaneously doing a workout today (the two are independent)
@@ -2786,15 +2814,21 @@ function openAdhocWorkout() {
     <div class="sh-title">Do a workout</div>
     <div class="sh-sub">A one-off for today — not part of your program. We'll suggest one sized to your training.</div>
     <div class="adhoc-acts">${acts.map(([sp, l]) => `<button class="btn ghost adhoc-act" data-asp="${sp}">${l}</button>`).join("")}</div>
+    <div class="gh" style="margin:14px 4px 2px">Or train a benefit</div>
+    <div class="benefit-chips">${BENEFITS.map(b => `<button class="bchip" data-ben="${esc(b)}">${b}</button>`).join("")}</div>
   `);
-  sheet.querySelectorAll("[data-asp]").forEach(b => b.addEventListener("click", () => {
-    const sp = b.dataset.asp;
-    closeOverlay();
-    if (sp === "gym") {
-      openWorkoutPage(null, { sport: "gym", kind: "easy", targetMin: 45, venue: doc.settings.gymVenueDefault || "home",
-        gym: { seed: (Math.random() * 4294967296) >>> 0, avoidIds: [], swaps: {}, focus: "full" } }, todayISO());
-    } else openAdhocSession(sp);
-  }));
+  sheet.querySelectorAll("[data-asp]").forEach(b => b.addEventListener("click", () => { const sp = b.dataset.asp; closeOverlay(); adhocLaunch(sp); }));
+  sheet.querySelectorAll("[data-ben]").forEach(b => b.addEventListener("click", () => { closeOverlay(); openBenefitSportPick(b.dataset.ben); }));
+}
+/* Step two of the by-goal path: pick a sport for the chosen benefit (endurance only). */
+function openBenefitSportPick(benefit) {
+  const acts = [["run", "Run"], ["trail", "Trail"], ["bike", "Ride"], ["swim", "Swim"], ["hike", "Hike"]];
+  const sheet = openSheet(`
+    <div class="sh-title">${esc(benefit)}</div>
+    <div class="sh-sub">Pick a sport — we'll propose a ${esc(benefit)} workout you can refresh for another.</div>
+    <div class="adhoc-acts">${acts.map(([sp, l]) => `<button class="btn ghost adhoc-act" data-asp="${sp}">${l}</button>`).join("")}</div>
+  `);
+  sheet.querySelectorAll("[data-asp]").forEach(b => b.addEventListener("click", () => { const sp = b.dataset.asp; closeOverlay(); adhocLaunch(sp, benefit); }));
 }
 
 /* Run/ride one-off: an adaptive prescription (suggestSession) you can adjust,
@@ -2804,26 +2838,46 @@ function openAdhocWorkout() {
 const ADHOC_TYPES = {
   run:   [{ id: "easy", label: "Easy", kind: "easy" }, { id: "runTempo", label: "Tempo", kind: "quality", tpl: "runTempo" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "runHills", label: "Hills", kind: "quality", tpl: "runHills" }, { id: "long", label: "Long", kind: "long" }],
   trail: [{ id: "easy", label: "Easy", kind: "easy" }, { id: "long", label: "Long", kind: "long" }, { id: "runQ1", label: "Intervals", kind: "quality", tpl: "runQ1" }, { id: "trailHilly", label: "Hilly", kind: "easy" }],
-  bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
+  bike:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "bikeTempo", label: "Tempo", kind: "quality", tpl: "bikeTempo" }, { id: "bikeQ1", label: "Sweet spot", kind: "quality", tpl: "bikeQ1" }, { id: "bikeClimb", label: "Climb", kind: "quality", tpl: "bikeClimb" }, { id: "long", label: "Long", kind: "long" }],
   hike:  [{ id: "short", label: "Short", kind: "easy" }, { id: "day", label: "Day hike", kind: "easy" }, { id: "bigday", label: "Big day", kind: "long" }],
   swim:  [{ id: "easy", label: "Easy", kind: "easy" }, { id: "drills", label: "Technique", kind: "easy" }, { id: "endurance", label: "Endurance", kind: "easy" }, { id: "threshold", label: "Threshold", kind: "quality" }, { id: "intervals", label: "Intervals", kind: "quality" }],
 };
+/* The Garmin-style benefit set, and the ad-hoc workout types (best-first) that deliver
+   each benefit per sport — used by the "Train a benefit" picker + its Propose-another. */
+const BENEFITS = ["Recovery", "Base", "Tempo", "Threshold", "VO₂ Max", "Anaerobic", "Sprint"];
+function benefitTypeIds(sport, benefit) {
+  const M = {
+    run:   { Recovery: ["easy"], Base: ["easy", "long"], Tempo: ["runTempo", "runQ1"], Threshold: ["runQ1", "runTempo"], "VO₂ Max": ["runQ1", "runHills"], Anaerobic: ["runHills", "runQ1"], Sprint: ["runHills", "runQ1"] },
+    trail: { Recovery: ["easy"], Base: ["easy", "long"], Tempo: ["easy", "long"], Threshold: ["runQ1", "long"], "VO₂ Max": ["runQ1"], Anaerobic: ["runQ1"], Sprint: ["runQ1"] },
+    bike:  { Recovery: ["easy"], Base: ["easy", "long"], Tempo: ["bikeTempo", "bikeQ1"], Threshold: ["bikeQ1", "bikeTempo"], "VO₂ Max": ["bikeSprint", "bikeQ1"], Anaerobic: ["bikeSprint", "bikeQ1"], Sprint: ["bikeSprint"] },
+    swim:  { Recovery: ["easy"], Base: ["easy", "endurance"], Tempo: ["threshold", "endurance"], Threshold: ["threshold", "intervals"], "VO₂ Max": ["intervals", "threshold"], Anaerobic: ["intervals"], Sprint: ["intervals"] },
+    hike:  { Recovery: ["short"], Base: ["day", "bigday"], Tempo: ["day"], Threshold: ["bigday"], "VO₂ Max": ["bigday"], Anaerobic: ["bigday"], Sprint: ["bigday"] },
+  };
+  const avail = new Set((ADHOC_TYPES[sport] || ADHOC_TYPES.run).map(o => o.id));
+  const ids = ((M[sport] || M.run)[benefit] || ["easy"]).filter(id => avail.has(id));
+  return ids.length ? ids : [(ADHOC_TYPES[sport] || ADHOC_TYPES.run)[0].id];
+}
 function openAdhocSession(sport, opts = {}) {
   const vo2 = !!opts.vo2;
+  const benefit = opts.benefit || null;
   const types = ADHOC_TYPES[sport] || ADHOC_TYPES.run;
-  const rec = vo2 ? null : E.recommendWorkout(doc, sport, todayISO());
+  const benefitIds = benefit ? benefitTypeIds(sport, benefit) : null;
+  let benefitIdx = 0;
+  const rec = (vo2 || benefit) ? null : E.recommendWorkout(doc, sport, todayISO());
   const prefFor = kind => kind === "long" ? ["long", "easy"]
-    : kind === "tempo" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runTempo", "runQ1", "long", "easy"])
+    : kind === "tempo" ? (sport === "bike" ? ["bikeTempo", "bikeQ1", "easy"] : ["runTempo", "runQ1", "long", "easy"])
     : kind === "intervals" ? (sport === "bike" ? ["bikeQ1", "easy"] : ["runQ1", "runTempo", "long", "easy"])
     : ["easy"];
   let chosen = vo2 ? (types.find(o => o.id === "runTempo") || types[0])
+    : benefit ? (types.find(o => o.id === benefitIds[0]) || types[0])
     : ((rec && prefFor(rec.kind).map(id => types.find(o => o.id === id)).find(Boolean)) || types[0]);
   const presc = () => E.suggestSession(doc.logs, sport, chosen.id, { settings: doc.settings, weekNum: currentWeek()?.weekNum || 1 });
   let p = presc(), dur = vo2 ? 20 : p.targetMin, zone = vo2 ? 4 : p.zone;
   const sheet = openSheet(`
-    <div class="sh-title">${vo2 ? "VO₂ test run" : SPORT_NAME[sport] + " today"}</div>
-    <div class="sh-sub">${vo2 ? "A field test to estimate your VO₂ max." : "A suggestion sized from your recent training — adjust anything, then do it."}</div>
+    <div class="sh-title">${vo2 ? "VO₂ test run" : benefit ? `${esc(benefit)} · ${SPORT_NAME[sport]}` : SPORT_NAME[sport] + " today"}</div>
+    <div class="sh-sub">${vo2 ? "A field test to estimate your VO₂ max." : benefit ? `A ${esc(benefit)} workout sized to you — refresh for another, or tweak it.` : "A suggestion sized from your recent training — adjust anything, then do it."}</div>
     ${vo2 ? `<div class="callout" style="border-color:rgba(86,219,232,.32)"><b>VO₂ test</b> — run this all-out as a ~5 km or 20-minute time trial (steady and as hard as you can hold). Log it with distance and we'll estimate your VO₂ from the pace.</div>`
+      : benefit ? `<div class="callout" id="ah-rec" style="border-color:rgba(86,219,232,.32)">For <b>${esc(benefit)}</b> · proposing <b>${chosen.label}</b></div>`
       : rec ? `<div class="callout" id="ah-rec" style="border-color:rgba(86,219,232,.32)">Recommended · <b>${chosen.label}</b> — ${rec.reason}</div>` : ""}
     <div class="type-row"><span class="l">Type</span><span class="opts" id="ah-types">${types.map(o =>
       `<button data-ah="${o.id}" class="${o.id === chosen.id ? "on" : ""}">${o.label}</button>`).join("")}</span></div>
@@ -2832,6 +2886,7 @@ function openAdhocSession(sport, opts = {}) {
     <div class="type-row"><span class="l">Target zone</span><span class="opts" id="ah-zones">${[1, 2, 3, 4, 5].map(z =>
       `<button data-z="${z}" class="${z === zone ? "on" : ""}">Z${z}</button>`).join("")}</span></div>
     <div id="ah-detail" class="callout"></div>
+    ${benefit && benefitIds.length > 1 ? `<button class="btn ghost" id="ah-another">↻ Propose another</button>` : ""}
     ${vo2 ? "" : `<button class="btn" id="ah-start">▶ Start guided workout</button>`}
     <button class="btn ${vo2 ? "" : "ghost"}" id="ah-watch">Send to watch (.FIT)</button>
     <button class="btn ${vo2 ? "" : "ghost"}" id="ah-log">Log it now</button>
@@ -2859,6 +2914,15 @@ function openAdhocSession(sport, opts = {}) {
     sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", +x.dataset.z === zone));
     refresh();
   }));
+  sheet.querySelector("#ah-another")?.addEventListener("click", () => {
+    benefitIdx = (benefitIdx + 1) % benefitIds.length;
+    chosen = types.find(o => o.id === benefitIds[benefitIdx]) || chosen;
+    sheet.querySelectorAll("[data-ah]").forEach(x => x.classList.toggle("on", x.dataset.ah === chosen.id));
+    p = presc(); dur = p.targetMin; zone = p.zone; readMin.set(dur);
+    sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", +x.dataset.z === zone));
+    const rc = sheet.querySelector("#ah-rec"); if (rc) rc.innerHTML = `For <b>${esc(benefit)}</b> · proposing <b>${chosen.label}</b>`;
+    refresh();
+  });
   sheet.querySelectorAll("[data-z]").forEach(b => b.addEventListener("click", () => {
     zone = +b.dataset.z; sheet.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", x === b)); refresh();
   }));
